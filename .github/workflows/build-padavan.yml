@@ -32,15 +32,15 @@ jobs:
         pkg-config zlib1g-dev libgmp3-dev libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget
     - name: Clone source code
       run: |
-        git clone --depth=1 https://github.com/keke1023/Padavan.git /opt/Padavan
-        cd /opt/Padavan/toolchain-mipsel
+        git clone --depth=1 https://github.com/OrdinaryJoys/Padavan-SUSU.git /opt/Padavan-SUSU
+        cd /opt/Padavan-SUSU/toolchain-mipsel
         sh dl_toolchain.sh
         mkdir -p /opt/images/
     - name: Build Firmware
       env:
         TNAME: PSG1218
       run: |
-        cd /opt/Padavan/trunk
+        cd /opt/Padavan-SUSU/trunk
         if [ ! -f configs/templates/$TNAME.config ] ; then
                echo "configs/templates/$TNAME.config not found "
                exit 1
