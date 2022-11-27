@@ -97,6 +97,7 @@ jobs:
         echo "CONFIG_FIRMWARE_INCLUDE_OPENVPN=n" >> .config #openvpn
         echo "CONFIG_FIRMWARE_INCLUDE_ACCEL-PPTPD=n" >> .config #accel-pptpd
         echo "CONFIG_FIRMWARE_INCLUDE_XL2TPD=n" >> .config #xl2tpd
+        echo "CONFIG_FIRMWARE_WEBUI_HIDE_VPN =n" >> .config
         #########################################################################################
         #自定义添加其它功能请参考源码configs/templates/目录下的config文件。按照上面的格式添加即可
         #格式如下：
