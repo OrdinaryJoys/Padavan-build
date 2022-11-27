@@ -39,15 +39,15 @@ jobs:
         else
         git clone --depth=1 https://e.coding.net/hanwckf/rt-n56u/padavan.git /opt/rt-n56u
         fi
-        cd /opt/padavan-4.4/toolchain-mipsel
-        sh dl_toolchain.sh
+        cd padavan-4.4/toolchain-mipsel
+        ./dl_toolchain.sh
         mkdir -p /opt/images/
     - name: Build Firmware
       env:
         TNAME: K2P_nano
         KERNEL: 4.4
       run: |
-        cd /opt/padavan-4.4/trunk
+        cd padavan-4.4/trunk
         if [ ! -f configs/templates/$TNAME.config ] ; then
         echo "configs/templates/$TNAME.config not found "
         exit 1
