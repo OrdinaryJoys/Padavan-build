@@ -26,7 +26,6 @@ jobs:
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo apt update
         sudo apt install unzip libtool-bin ccache curl cmake gperf gawk flex bison nano xxd \
              fakeroot kmod cpio git python3-docutils gettext automake autopoint \
              texinfo build-essential help2man pkg-config zlib1g-dev libgmp3-dev \
@@ -34,11 +33,11 @@ jobs:
     - name: Clone source code
       run: |
         git clone https://github.com/KK97ORY/padavan-tsl0922.git
-        cd /opt/padavan-tsl0922/toolchain-mipsel
+        cd padavan-tsl0922/toolchain-mipsel
         mkdir -p /opt/images/
     - name: Build Firmware
       env:
-        TNAME: K2P
+        TNAME:K2P
       run: |
         cd padavan-tsl0922/trunk
         if [ ! -f configs/templates/$TNAME.config ] ; then
@@ -108,9 +107,9 @@ jobs:
         #sed -i '/自定义项/d' .config
         #echo "自定义项=y" >> .config
         #########################################################################################
-        sudo make clean
-        sudo make $TNAME 0
-        sudo mv -f images/*.trx /opt/images/
+        make clean
+        make $TNAME 0
+        trunk/images/*.trx /opt/images/
     - name : Upload packages
       uses: actions/upload-artifact@master
       if: always()
