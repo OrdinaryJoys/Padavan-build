@@ -108,9 +108,9 @@ jobs:
         #sed -i '/自定义项/d' .config
         #echo "自定义项=y" >> .config
         #########################################################################################
-        sudo make $TNAME 0
         sudo make clean
-        sudo trunk/images/*.trx /opt/images/
+        sudo make K2P
+        sudo mv -f images/*.trx /opt/images/
     - name : Upload packages
       uses: actions/upload-artifact@master
       if: always()
