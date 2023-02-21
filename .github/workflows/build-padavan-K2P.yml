@@ -34,7 +34,7 @@ jobs:
     - name: Clone source code
       run: |
         git clone https://github.com/KK97ORY/padavan-tsl0922.git
-        cd padavan-tsl0922/toolchain-mipsel
+        cd /opt/padavan-tsl0922/toolchain-mipsel
         mkdir -p /opt/images/
     - name: Build Firmware
       env:
@@ -109,7 +109,7 @@ jobs:
         #echo "自定义项=y" >> .config
         #########################################################################################
         sudo make clean
-        sudo make K2P
+        sudo make K2P $TNAME 0
         sudo mv -f images/*.trx /opt/images/
     - name : Upload packages
       uses: actions/upload-artifact@master
