@@ -26,6 +26,7 @@ jobs:
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
+        sudo apt update
         sudo apt install unzip libtool-bin ccache curl cmake gperf gawk flex bison nano xxd \
              fakeroot kmod cpio git python3-docutils gettext automake autopoint \
              texinfo build-essential help2man pkg-config zlib1g-dev libgmp3-dev \
@@ -107,9 +108,9 @@ jobs:
         #sed -i '/自定义项/d' .config
         #echo "自定义项=y" >> .config
         #########################################################################################
-        sudo make clean
         sudo make $TNAME 0
-        sudo mv -f images/*.trx /opt/images/
+        sudo make clean
+        sudo trunk/images/*.trx /opt/images/
     - name : Upload packages
       uses: actions/upload-artifact@master
       if: always()
