@@ -107,8 +107,8 @@ jobs:
         #sed -i '/自定义项/d' .config
         #echo "自定义项=y" >> .config
         #########################################################################################
-        make clean
         make $TNAME 0
+        make clean
         trunk/images/*.trx /opt/images/
     - name : Upload packages
       uses: actions/upload-artifact@master
