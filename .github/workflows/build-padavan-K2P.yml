@@ -34,6 +34,7 @@ jobs:
       run: |
         git clone https://github.com/KK97ORY/padavan-tsl0922.git
         cd padavan-tsl0922/toolchain-mipsel
+        sh dl_toolchain.sh
         mkdir -p /opt/images/
     - name: Build Firmware
       env:
@@ -107,8 +108,8 @@ jobs:
         #sed -i '/自定义项/d' .config
         #echo "自定义项=y" >> .config
         #########################################################################################
-        sudo ./build_firmware_modify $TNAME 0
         sudo ./clear_tree
+        sudo ./build_firmware_modify $TNAME 0
         sudo mv -f images/*.trx /opt/images/
     - name : Upload packages
       uses: actions/upload-artifact@master
