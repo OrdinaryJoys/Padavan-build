@@ -34,7 +34,6 @@ jobs:
       run: |
         git clone https://github.com/KK97ORY/padavan-tsl0922.git
         cd padavan-tsl0922/toolchain-mipsel
-        ./dl_toolchain.sh
         mkdir -p /opt/images/
     - name: Build Firmware
       env:
