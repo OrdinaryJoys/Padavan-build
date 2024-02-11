@@ -33,15 +33,15 @@ jobs:
                  libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget libc-dev-bin
     - name: Clone source code
       run: |
-        git clone --depth=1 https://github.com/keke1023/Padavan.git /opt/Padavan
-        cd /opt/Padavan/toolchain-mipsel
+        git clone --depth=1 https://github.com/OrdinaryJoys/Padavan-SUSU.git
+        cd /opt/Padavan-SUSU/toolchain-mipsel
         sh dl_toolchain.sh
         mkdir -p /opt/images/
     - name: Build Firmware
       env:
         TNAME: K2P
       run: |
-        cd /opt/Padavan/trunk
+        cd /opt/Padavan-SUSU/trunk
         if [ ! -f configs/templates/$TNAME.config ] ; then
                echo "configs/templates/$TNAME.config not found "
                exit 1
