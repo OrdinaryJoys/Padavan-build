@@ -32,7 +32,7 @@ jobs:
              libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget libc-dev-bin
     - name: Clone source code
       run: |
-        git clone https://github.com/hanwckf/padavan-4.4.git
+        git clone https://github.com/OrdinaryJoys/padavan-4.4.git
         cd padavan-4.4/toolchain-mipsel
         sh dl_toolchain.sh
         mkdir -p /opt/images/
