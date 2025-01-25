@@ -39,8 +39,8 @@ jobs:
 
     # ========== 配置阶段 ==========
     - name: Configure firmware
-      shell: bash  # 强制使用Bash解释器
-      run: |
+      shell: bash
+      run: |  # 缩进两个空格
         cd padavan-4.4/trunk
 
         # 验证配置模板存在
@@ -61,7 +61,7 @@ jobs:
           sed -i "/^${item}=/d" .config
         done
 
-        # 写入新配置 (关键修复: EOF必须顶格)
+        # 写入新配置（EOF顶格）
         cat << 'EOF' >> .config
 CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
 CONFIG_FIRMWARE_INCLUDE_ZEROTIER=${ZT_ENABLED}
