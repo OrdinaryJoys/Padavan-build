@@ -1,130 +1,124 @@
 name: Padavan Builder
 
 on:
-  release:
-    types: [published]
   push:
     tags: ['v*']
   workflow_dispatch:
 
 jobs:
-  firmware-build:
+  build-padavan:
     runs-on: ubuntu-22.04
     timeout-minutes: 120
 
     env:
-      BUILD_DIR: padavan-4.4
-      OUTPUT_DIR: /opt/images
-      DEVICE_MODEL: K2P
+      DEVICE_MODEL: K2P  # 可修改为 PSG1218 等其他设备
       REPO_URL: https://github.com/MeIsReallyBa/padavan-4.4.git
 
     steps:
-    # ==================== 环境准备阶段 ====================
-    - name: Checkout source
+    # ==================== 1. 环境准备 ====================
+    - name: Setup environment
+      run: |
+        # 设置国内镜像源
+        sudo sed -i 's/archive.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
+        sudo sed -i 's/security.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
+        
+        # 安装官方要求的依赖
+        sudo apt update -y
+        sudo apt install -y \
+          unzip libtool-bin curl cmake gperf gawk flex bison nano xxd \
+          fakeroot kmod cpio git python3-docutils gettext automake autopoint \
+          texinfo build-essential help2man pkg-config zlib1g-dev libgmp3-dev \
+          libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget
+
+        # 额外添加验证工具
+        sudo apt install -y binwalk squashfs-tools
+
+    # ==================== 2. 获取源码 ====================
+    - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Configure environment
+    - name: Clone Padavan repo
       run: |
-        # 系统更新与依赖安装
-        sudo sed -i 's/archive.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
-        sudo apt update -y
-        sudo apt install -y --no-install-recommends \
-          squashfs-tools=1:4.5-1ubuntu1 \
-          binwalk \
-          liblz4-tool \
-          zstd \
-          unzip libtool-bin cmake gperf flex bison \
-          git automake autoconf build-essential \
-          zlib1g-dev libgmp-dev libmpc-dev libmpfr-dev \
-          gettext texinfo help2man xxd vim-common \
-          python3-docutils fakeroot kmod cpio \
-          libssl-dev libjson-c-dev libhttp-parser-dev
+        git clone --depth=1 ${{ env.REPO_URL }} padavan-4.4
 
-        # 备用xxd安装方案
-        if ! command -v xxd &> /dev/null; then
-          wget http://archive.ubuntu.com/ubuntu/pool/main/v/vim/vim_8.2.3995-1ubuntu2.21_amd64.deb
-          sudo dpkg -i vim_8.2.3995-1ubuntu2.21_amd64.deb || true
-          sudo apt install -y -f
-        fi
-
-    # ==================== 工具链准备阶段 ====================
-    - name: Prepare toolchain
+    # ==================== 3. 准备工具链 ====================
+    - name: Setup toolchain
       run: |
-        git clone --depth=1 ${{ env.REPO_URL }}
-        cd ${{ env.BUILD_DIR }}/toolchain-mipsel
+        cd padavan-4.4/toolchain-mipsel
         ./dl_toolchain.sh
-        sudo mkdir -p ${{ env.OUTPUT_DIR }} && sudo chmod 777 ${{ env.OUTPUT_DIR }}
+        echo "工具链版本信息："
+        ../toolchain-mipsel/mipsel-linux-uclibc/bin/mipsel-linux-uclibc-gcc --version
 
-    # ==================== 固件构建阶段 ====================
+    # ==================== 4. 编译固件 ====================
     - name: Build firmware
       run: |
-        cd ${{ env.BUILD_DIR }}/trunk
+        cd padavan-4.4/trunk
+        
+        # 检查设备配置文件
+        if [ ! -f "configs/templates/$DEVICE_MODEL.config" ]; then
+          echo "::error::找不到 $DEVICE_MODEL 的配置文件"
+          exit 1
+        fi
 
-        # 内核Squashfs配置
-        KERNEL_CFG="configs/boards/${{ env.DEVICE_MODEL }}/kernel-4.4.x.config"
-        echo "CONFIG_SQUASHFS=y" >> $KERNEL_CFG
-        echo "CONFIG_SQUASHFS_XZ=y" >> $KERNEL_CFG
-        echo "CONFIG_SQUASHFS_EMBEDDED=y" >> $KERNEL_CFG
-        echo "CONFIG_SQUASHFS_FRAGMENT_CACHE_SIZE=3" >> $KERNEL_CFG
-
-        # 固件配置（保持原有功能配置）
-        cp configs/templates/${{ env.DEVICE_MODEL }}.config .config
-        sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
+        # 初始化配置
+        cp -v configs/templates/$DEVICE_MODEL.config .config
+        
+        # 添加额外功能（示例：启用IPv6 NAT）
+        echo "CONFIG_FIRMWARE_INCLUDE_IPV6_NAT=y" >> .config
         
         # 清理并编译
-        sudo ./clear_tree
-        echo "=== 开始编译（单线程模式）==="
-        sudo ./build_firmware_modify ${{ env.DEVICE_MODEL }} 0 -j1 | tee build.log
+        fakeroot ./build_firmware_modify $DEVICE_MODEL
+        
+        # 检查生成文件
+        if [ ! -d images ]; then
+          echo "::error::编译失败，未生成固件文件"
+          exit 1
+        fi
 
-        # 日志分析
-        grep -iE 'error|warning' build.log | grep -iv 'deprecated' || true
-        [ ! -d images ] && echo "::error::编译输出目录缺失" && exit 1
-
-        # 生成元数据
-        TRX_FILE=$(ls images/*.trx | head -n1)
-        echo "TRX_FILE=$TRX_FILE" >> $GITHUB_ENV
-        sudo mv $TRX_FILE ${{ env.OUTPUT_DIR }}/
-
-    # ==================== 固件验证阶段 ====================
+    # ==================== 5. 验证固件 ====================
     - name: Verify firmware
       run: |
-        # 基础校验
-        TRX_PATH="${{ env.OUTPUT_DIR }}/$(ls ${{ env.OUTPUT_DIR }} | grep .trx)"
-        [ $(stat -c%s "$TRX_PATH") -lt 8000000 ] && echo "::error::固件大小异常" && exit 1
+        # 基础验证
+        TRX_FILE=$(ls padavan-4.4/trunk/images/*.trx | head -n1)
+        
+        # 文件大小检查（正常应大于8MB）
+        if [ $(stat -c%s "$TRX_FILE") -lt 8000000 ]; then
+          echo "::error::固件文件大小异常"
+          exit 1
+        fi
 
-        # 多重验证方法
-        echo "=== 方法1: 文件头验证 ==="
-        HEADER_HEX=$(xxd -p -l 4 $TRX_PATH)
-        [ "$HEADER_HEX" != "68737173" ] && echo "::error::无效Squashfs头" && exit 1
+        # 使用binwalk验证文件结构
+        if ! binwalk $TRX_FILE | grep -q 'Squashfs filesystem'; then
+          echo "::error::无效的Squashfs文件系统"
+          exit 1
+        fi
 
-        echo "=== 方法2: Binwalk分析 ==="
-        binwalk -t -v $TRX_PATH | grep 'Squashfs filesystem' || {
-          echo "::error::Binwalk验证失败";
-          exit 1;
-        }
-
-        echo "=== 方法3: 部分解压验证 ==="
+        # 关键文件检查
         TEMP_DIR=$(mktemp -d)
-        dd if=$TRX_PATH bs=1M count=2 2>/dev/null | unsquashfs -d $TEMP_DIR - || {
-          echo "::error::部分解压失败";
-          exit 1;
-        }
-        [ ! -f "$TEMP_DIR/usr/bin/zerotier-one" ] && echo "::error::关键文件缺失" && exit 1
+        unsquashfs -d $TEMP_DIR $TRX_FILE
+        REQUIRED_FILES=(
+          "/usr/bin/zerotier-one"
+          "/sbin/rc"
+          "/etc/storage/ddns/aliddns.sh"
+        )
+        for file in "${REQUIRED_FILES[@]}"; do
+          if [ ! -f "$TEMP_DIR$file" ]; then
+            echo "::error::缺失关键文件: $file"
+            exit 1
+          fi
+        done
         rm -rf $TEMP_DIR
 
-        echo "✓ 固件验证通过"
-
-    # ==================== 产物上传阶段 ====================
+    # ==================== 6. 发布产物 ====================
     - name: Upload artifact
       uses: actions/upload-artifact@v3
       with:
-        name: ${{ env.DEVICE_MODEL }}-$(date +%Y%m%d)
-        path: ${{ env.OUTPUT_DIR }}/*.trx
-        retention-days: 5
+        name: ${{ env.DEVICE_MODEL }}-firmware
+        path: padavan-4.4/trunk/images/*.trx
+        retention-days: 7
 
-    # ==================== 后清理阶段 ====================
+    # ==================== 7. 清理环境 ====================
     - name: Cleanup
       if: always()
       run: |
-        sudo rm -rf ${{ env.BUILD_DIR }}
-        sudo rm -f ${{ env.OUTPUT_DIR }}/*
+        sudo rm -rf padavan-4.4
