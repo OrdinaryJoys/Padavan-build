@@ -1,0 +1,89 @@
+name: Padavan AutoBuilder
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    env:
+      DEVICE: K2P
+      BLOCK_SIZE: 15872
+      ZT_ENABLED: "y"
+      TOOLCHAIN_DIR: ${{ github.workspace }}/padavan-4.4/toolchain-mipsel/toolchain-4.4.x
+      ZT_UI_REPO: "https://github.com/padavan-addons/zerotier-ui.git"
+
+    steps:
+    - name: Set build timestamp
+      run: |
+        echo "BUILD_TIMESTAMP=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_ENV
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update -y
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+          unzip libtool-bin curl cmake gperf gawk flex bison \
+          fakeroot kmod cpio git python3-docutils gettext automake autopoint \
+          texinfo build-essential help2man pkg-config zlib1g-dev libgmp3-dev \
+          libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget libc-dev-bin \
+          libssl-dev libjson-c-dev libc6-i386
+
+    - name: Prepare source
+      run: |
+        git clone --depth=1 https://github.com/hanwckf/padavan-4.4.git || { echo "::error::Clone failed"; exit 1; }
+        cd padavan-4.4/toolchain-mipsel
+        ./dl_toolchain.sh || { echo "::error::Toolchain download failed"; exit 1; }
+        chmod -R +x toolchain-4.4.x/bin
+        [ -x "toolchain-4.4.x/bin/mipsel-linux-uclibc-gcc" ] || { echo "::error::Compiler missing"; exit 1; }
+        sudo mkdir -p /opt/images
+
+    - name: Apply ZeroTier UI patch
+      run: |
+        git clone --depth=1 $ZT_UI_REPO zerotier-patch
+        cd padavan-4.4/trunk
+        for patch in ../../zerotier-patch/*.patch; do
+          patch -p1 < $patch || { echo "::error::Patch failed"; exit 1; }
+        done
+        [ -f user/www/n56u_ribbon_fixed/zerotier.asp ] || { echo "::error::UI missing"; exit 1; }
+
+    - name: Fix toolchain paths
+      run: |
+        cd padavan-4.4/trunk
+        sed -i "s|/toolchain-4.4.x|$TOOLCHAIN_DIR|g" linux-4.4.x/Makefile
+        sed -i "s|CROSS_COMPILE := .*|CROSS_COMPILE := $TOOLCHAIN_DIR/bin/mipsel-linux-uclibc-|g" linux-4.4.x/arch/mips/Makefile
+        sed -i "s|CROSS_COMPILE = .*|CROSS_COMPILE = $TOOLCHAIN_DIR/bin/mipsel-linux-uclibc-|g" Makefile
+
+    - name: Configure firmware
+      run: |
+        cd padavan-4.4/trunk
+        cp -vf configs/templates/${DEVICE}.config .config
+        sed -i "/CONFIG_FIRMWARE_INCLUDE_ZEROTIER/d" .config
+        {
+          echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=$ZT_ENABLED"
+          echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER_UI=y"
+          echo "CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y"
+        } >> .config
+        echo "export PATH=$TOOLCHAIN_DIR/bin:$PATH" >> build_env
+        echo "export CROSS_COMPILE=$TOOLCHAIN_DIR/bin/mipsel-linux-uclibc-" >> build_env
+        source build_env
+
+    - name: Build firmware
+      run: |
+        cd padavan-4.4/trunk
+        source build_env
+        fakeroot ./build_firmware_modify ${DEVICE} ${BLOCK_SIZE} 2>&1 | tee build.log
+        if [ ! -f images/*.trx ]; then
+          tail -n 50 build.log && exit 1
+        fi
+        sudo mv images/*.trx /opt/images/
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.DEVICE }}-ZeroTierUI-${{ env.BUILD_TIMESTAMP }}
+        path: /opt/images/*.trx
