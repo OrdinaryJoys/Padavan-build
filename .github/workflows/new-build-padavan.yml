@@ -9,9 +9,9 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     env:
-      DEVICE: K2P        # 设备型号
-      BLOCK_SIZE: 15872  # 块大小（单位KB）
-      ZT_ENABLED: "y"    # ZeroTier开关
+      DEVICE: K2P
+      BLOCK_SIZE: 15872
+      ZT_ENABLED: "y"
 
     steps:
     # ========== 代码检出 ==========
@@ -40,19 +40,16 @@ jobs:
     # ========== 配置阶段 ==========
     - name: Configure firmware
       shell: bash
-      run: |  # 关键修复区：统一缩进规则
+      run: |
         cd padavan-4.4/trunk || { echo "::error::Can't enter trunk"; exit 1; }
 
-        # 模板验证（修复if语句格式）
         if [ ! -f "configs/templates/${DEVICE}.config" ]; then
           echo "::error::[${DEVICE}] Template not found"
           exit 1
         fi
 
-        # 应用基础配置
         cp -vf "configs/templates/${DEVICE}.config" .config
 
-        # 清理配置项（修复数组声明）
         declare -a CONFIG_CLEAN=(
           "CONFIG_FIRMWARE_INCLUDE_ZEROTIER"
           "CONFIG_FIRMWARE_INCLUDE_ADBYBY"
@@ -61,16 +58,14 @@ jobs:
           sed -i "/^${target}=/d" .config
         done
 
-        # 写入新配置（最终修复：Heredoc零缩进）
-        cat << 'EOF' >> .config
-CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
-CONFIG_FIRMWARE_INCLUDE_ZEROTIER=${ZT_ENABLED}
-CONFIG_FIRMWARE_INCLUDE_ADBYBY=n
-EOF
+        # 改用echo写入避免heredoc缩进问题
+        echo "CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y" >> .config
+        echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=${ZT_ENABLED}" >> .config
+        echo "CONFIG_FIRMWARE_INCLUDE_ADBYBY=n" >> .config
 
     # ========== 构建阶段 ==========
     - name: Build firmware
-      run: |  # 修复命令缩进
+      run: |
         cd padavan-4.4/trunk || { echo "::error::Trunk missing"; exit 1; }
         sudo ./clear_tree || { echo "::error::Clean failed"; exit 1; }
 
@@ -92,7 +87,6 @@ EOF
         fi
         echo "::endgroup::"
 
-        # 产物验证（修复find命令格式）
         if [ -z "$(find images/ -maxdepth 1 -name '*.trx' -print -quit)" ]; then
           echo "::error::No firmware generated"
           exit 1
