@@ -1,103 +1,121 @@
-name: Padavan-ZeroTier-Build
+name: Build Padavan
 
-on:
-  workflow_dispatch:
+on: 
+  release:
+    types: [published]
   push:
     tags:
-      - 'v*'
+    - 'v*'
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 120
-
-    env:
-      DEVICE_MODEL: K2P          # 需修改为你的设备型号
-      BLOCK_SIZE: 16064          # 设备闪存块大小（单位KB）
-      UI_ENABLE: true            # 启用Web界面控制
+    if: github.event.repository.owner.id == github.event.sender.id
 
     steps:
     - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Setup Environment
+    - name: Initialization environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
       run: |
+        # 修复镜像源
         sudo sed -i 's/azure.archive.ubuntu.com/archive.ubuntu.com/g' /etc/apt/sources.list
+        sudo sed -i 's/security.ubuntu.com/security.ubuntu.com/g' /etc/apt/sources.list
+        
+        # 安装依赖（新增 ZeroTier 所需依赖）
         sudo apt update -y
-        sudo apt install -y \
-          cmake libssl-dev libnatpmp-dev \
-          python2.7 python3-pip
+        sudo apt install -y --fix-missing \
+          unzip libtool-bin curl cmake gperf gawk flex bison nano xxd \
+          fakeroot kmod cpio git python3-docutils gettext automake autopoint \
+          texinfo build-essential help2man pkg-config zlib1g-dev libgmp3-dev \
+          libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget libc-dev-bin \
+          libssl-dev libnatpmp-dev
 
-    - name: Clone Source
+    - name: Clone source code
       run: |
-        git clone --depth=1 --shallow-submodules https://github.com/hanwckf/padavan-4.4.git
+        git clone --depth=1 https://github.com/hanwckf/padavan-4.4.git
         cd padavan-4.4/toolchain-mipsel
-        ./dl_toolchain.sh
-
-    - name: Configure Build
-      run: |
-        cd padavan-4.4/trunk
-        
-        # 验证设备配置模板
-        [ ! -f "configs/templates/$DEVICE_MODEL.config" ] && exit 1
-        
-        # 应用基础配置
-        cp configs/templates/$DEVICE_MODEL.config .config
-        
-        # 空间优化配置
-        sed -i '/CONFIG_FIRMWARE_PRODUCT_ID/d' .config
-        echo "CONFIG_FIRMWARE_PRODUCT_ID=\"$DEVICE_MODEL-ZT\"" >> .config
-        
-        # 功能开关清理
-        declare -a CONFIG_CLEAN=(
-          "CONFIG_FIRMWARE_INCLUDE_ZEROTIER"
-          "CONFIG_FIRMWARE_INCLUDE_ADBYBY"
-          "CONFIG_FIRMWARE_INCLUDE_XRAY"
-          "CONFIG_FIRMWARE_INCLUDE_V2RAY"
-        )
-        for item in "${CONFIG_CLEAN[@]}"; do
-          sed -i "/$item/d" .config
-        done
-
-        # 写入ZeroTier配置
-        cat >> .config <<EOF
-# ZeroTier核心功能
-CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y
-CONFIG_FIRMWARE_INCLUDE_ZEROTIER_CLI=y
-
-# Web界面支持
-CONFIG_FIRMWARE_INCLUDE_ZEROTIER_UI=$([[ "$UI_ENABLE" == "true" ]] && echo "y" || echo "n")
-
-# 空间优化配置
-CONFIG_FIRMWARE_INCLUDE_ADBYBY=n
-CONFIG_FIRMWARE_INCLUDE_XRAY=n
-CONFIG_FIRMWARE_INCLUDE_V2RAY=n
-CONFIG_FIRMWARE_INCLUDE_SSSERVER=n
-EOF
+        sh dl_toolchain.sh
+        mkdir -p /opt/images/
 
     - name: Build Firmware
+      env:
+        TNAME: K2P  # 修改为实际型号
+        BLOCK_SIZE: 15872  # K2P专用块大小
       run: |
         cd padavan-4.4/trunk
-        sudo ./clear_tree
-        
-        # 带块大小限制的构建命令
-        if ! sudo ./build_firmware_modify $DEVICE_MODEL $BLOCK_SIZE ; then
-          echo "::warning::首次构建失败，尝试空间优化重建..."
-          make clean
-          sudo ./build_firmware_modify $DEVICE_MODEL $((BLOCK_SIZE - 1024))
+        if [ ! -f configs/templates/$TNAME.config ]; then
+          echo "::error::模板文件 configs/templates/$TNAME.config 不存在"
+          exit 1
         fi
         
-        # 产物验证
-        if ls images/*.trx; then
-          sudo mkdir -p /opt/output/
-          sudo mv images/*.trx /opt/output/
+        # 基础配置
+        cp -f configs/templates/$TNAME.config .config
+        sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
+
+        # 清理旧配置（新增 ZeroTier 相关项）
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_MENTOHUST/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SCUTCLIENT/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SSSERVER/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_DNSFORWARDER/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_ADBYBY/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_FRPC/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_FRPS/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_TUNSAFE/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_ALIDDNS/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SMARTDNS/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SRELAY/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_ZEROTIER/d' .config  # 新增清理项
+
+        # 写入新配置（启用 ZeroTier）
+        cat >> .config <<EOF
+CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y
+CONFIG_FIRMWARE_INCLUDE_MENTOHUST=n
+CONFIG_FIRMWARE_INCLUDE_SCUTCLIENT=n
+CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS=n
+CONFIG_FIRMWARE_INCLUDE_SSOBFS=n
+CONFIG_FIRMWARE_INCLUDE_ADBYBY=n
+CONFIG_FIRMWARE_INCLUDE_DNSFORWARDER=n
+CONFIG_FIRMWARE_INCLUDE_SRELAY=n
+CONFIG_FIRMWARE_INCLUDE_XRAY=n
+CONFIG_FIRMWARE_INCLUDE_V2RAY=n
+CONFIG_FIRMWARE_INCLUDE_DDNSTO=n
+CONFIG_FIRMWARE_INCLUDE_ALDRIVER=n
+CONFIG_FIRMWARE_INCLUDE_ALIDDNS=n
+CONFIG_FIRMWARE_INCLUDE_SMARTDNS=n
+CONFIG_FIRMWARE_INCLUDE_SMARTDNSBIN=n
+CONFIG_FIRMWARE_INCLUDE_TROJAN=n
+CONFIG_FIRMWARE_INCLUDE_KOOLPROXY=n
+CONFIG_FIRMWARE_INCLUDE_CADDY=n
+CONFIG_FIRMWARE_INCLUDE_CADDYBIN=n
+CONFIG_FIRMWARE_INCLUDE_ADGUARDHOME=n
+CONFIG_FIRMWARE_INCLUDE_WYY=n
+CONFIG_FIRMWARE_INCLUDE_WYYBIN=n
+CONFIG_FIRMWARE_INCLUDE_WIREGUARD=n
+EOF
+
+        # 空间优化构建
+        sudo ./clear_tree
+        if ! sudo ./build_firmware_modify $TNAME $BLOCK_SIZE; then
+          echo "::warning::构建失败，尝试缩减 1MB 空间重试..."
+          sudo ./build_firmware_modify $TNAME $(($BLOCK_SIZE - 1024))
+        fi
+
+        # 产物处理
+        if ls images/*.trx >/dev/null 2>&1; then
+          sudo mv -f images/*.trx /opt/images/
         else
-          echo "::error::未找到固件文件"
+          echo "::error::未找到固件文件！"
           exit 1
         fi
 
-    - name: Upload Artifact
+    - name: Upload packages
       uses: actions/upload-artifact@v3
+      if: always()
       with:
-        name: ${{ env.DEVICE_MODEL }}-Firmware
-        path: /opt/output/*.trx
+        name: Padavan-${{ env.TNAME }}-$(date +%Y%m%d)
+        path: /opt/images/*.trx
