@@ -6,7 +6,7 @@ on:
   push:
     tags:
     - 'v*'
-  workflow_dispatch:  # 新增手动触发
+  workflow_dispatch:
 
 jobs:
   build:
@@ -15,7 +15,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v4  # 更新至v4版本
+      uses: actions/checkout@v4
 
     - name: Initialization environment
       env:
@@ -37,16 +37,19 @@ jobs:
     - name: Build Firmware
       env:
         TNAME: K2P  # 确保与模板名称一致
-        BLOCK_SIZE: 15872  # 新增块大小参数
-      run: |
+        BLOCK_SIZE: 15872
+      run: |  # 这是第70行，修复缩进问题
         cd padavan-4.4/trunk
-        if [ ! -f configs/templates/$TNAME.config ] ; then
-          echo "::error file=configs/templates/$TNAME.config::Template file not found"
+        # 验证模板文件存在
+        if [ ! -f "configs/templates/$TNAME.config" ]; then
+          echo "::error::模板文件 configs/templates/$TNAME.config 不存在"
           exit 1
         fi
-        cp -f configs/templates/$TNAME.config .config
         
-        # 清理配置项
+        # 应用基础配置
+        cp -f "configs/templates/$TNAME.config" .config
+        
+        # 清理旧配置项
         declare -a CONFIG_CLEAN=(
           "CONFIG_FIRMWARE_INCLUDE_MENTOHUST"
           "CONFIG_FIRMWARE_INCLUDE_SCUTCLIENT"
@@ -60,15 +63,16 @@ jobs:
           "CONFIG_FIRMWARE_INCLUDE_ALIDDNS"
           "CONFIG_FIRMWARE_INCLUDE_SMARTDNS"
           "CONFIG_FIRMWARE_INCLUDE_SRELAY"
+          "CONFIG_FIRMWARE_INCLUDE_ZEROTIER"  # 新增清理项
         )
         for item in "${CONFIG_CLEAN[@]}"; do
           sed -i "/$item/d" .config
         done
 
-        # 写入新配置（修复多行语法）
-        cat <<EOF >> .config
+        # 写入新配置（修复EOF缩进）
+        cat << 'EOF' >> .config
 CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
-CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y  # 新增ZeroTier
+CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y
 CONFIG_FIRMWARE_INCLUDE_MENTOHUST=n
 CONFIG_FIRMWARE_INCLUDE_SCUTCLIENT=n
 CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS=n
@@ -93,12 +97,23 @@ CONFIG_FIRMWARE_INCLUDE_WYYBIN=n
 CONFIG_FIRMWARE_INCLUDE_WIREGUARD=n
 EOF
 
+        # 构建命令（修复缩进）
         sudo ./clear_tree
-        sudo ./build_firmware_modify $TNAME $BLOCK_SIZE  # 使用块大小参数
-        sudo mv -f images/*.trx /opt/images/
+        if ! sudo ./build_firmware_modify "$TNAME" "$BLOCK_SIZE"; then
+          echo "::warning::构建失败，尝试缩减空间重试..."
+          sudo ./build_firmware_modify "$TNAME" $((BLOCK_SIZE - 1024))
+        fi
+        
+        # 移动产物（修复路径处理）
+        if ls images/*.trx >/dev/null 2>&1; then
+          sudo mv -v images/*.trx /opt/images/
+        else
+          echo "::error::未找到固件文件"
+          exit 1
+        fi
 
-    - name: Upload packages  # 修复冒号格式（原错误点）
-      uses: actions/upload-artifact@v3  # 更新至v3版本
+    - name: Upload packages
+      uses: actions/upload-artifact@v3
       with:
-        name: Padavan-${{ env.TNAME }}-$(date +%s)
+        name: Padavan-${{ env.TNAME }}
         path: /opt/images/*.trx
