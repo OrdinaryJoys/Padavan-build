@@ -9,26 +9,31 @@ env:
   DEVICE: K2P
   BLOCK_SIZE: 15872
   ZT_REPO: https://github.com/zerotier/ZeroTierOne.git
-  PADAVAN_REPO: https://github.com/hanwckf/padavan-4.4.git
+  GIT_TRACE: 1  # 启用Git调试日志
 
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
+
     steps:
-    # ========== Repository Setup ==========
-    - name: Clone Padavan base
+    # ========== 仓库克隆 ==========
+    - name: Clone Padavan base (with retry)
       uses: actions/checkout@v4
       with:
         repository: hanwckf/padavan-4.4
         path: padavan
-        ref: master
+        ref: main  # 确认分支名称
+        fetch-depth: 0  # 完整克隆
+        retries: 3
+        retry-wait-time: 30
 
-    - name: Checkout current repo
+    - name: Checkout current repository
       uses: actions/checkout@v4
       with:
         submodules: recursive
 
-    # ========== Build Environment ==========
+    # ========== 环境准备 ==========
     - name: Set build timestamp
       id: timestamp
       run: echo "BUILD_TIMESTAMP=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
@@ -43,7 +48,7 @@ jobs:
           libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev libssl-dev \
           libjson-c-dev jq upx libatomic1
 
-    # ========== ZeroTier Source ==========
+    # ========== ZeroTier源码 ==========
     - name: Prepare ZeroTier source
       run: |
         for i in {1..3}; do
@@ -53,7 +58,7 @@ jobs:
         [ -d "zerotier-src" ] || { echo "::error::ZeroTier clone failed"; exit 1; }
         echo "ZT_VERSION=$(cd zerotier-src && git describe --tags)" >> $GITHUB_ENV
 
-    # ========== Toolchain Management ==========
+    # ========== 工具链管理 ==========
     - name: Cache toolchain
       uses: actions/cache@v3
       id: toolchain-cache
@@ -67,44 +72,40 @@ jobs:
         cd padavan/toolchain
         chmod +x scripts/dl_toolchain.sh
         
+        # 增强下载重试逻辑
         for i in {1..5}; do
-          echo "Attempt $i/5"
-          if ./scripts/dl_toolchain.sh mipsel 2>&1 | tee toolchain.log; then
-            echo "::notice::Toolchain downloaded successfully"
-            break
-          else
-            echo "::warning::Download failed, retrying in 30s..."
-            sleep 30
+          echo "Toolchain download attempt $i/5"
+          if ./scripts/dl_toolchain.sh mipsel 2>&1 | tee toolchain_$i.log; then
+            [ -d "toolchain-4.4.x/bin" ] && break
           fi
+          sleep $((30 + RANDOM % 30))  # 随机等待防止请求风暴
         done
 
         if [ ! -d "toolchain-4.4.x/bin" ]; then
-          echo "::error::❌ All download attempts failed!"
-          echo "=== Log Dump ==="
-          cat toolchain.log
+          echo "::error::All toolchain download attempts failed!"
+          echo "=== Error Logs ==="
+          cat toolchain_*.log
           exit 1
         fi
         echo "TOOLCHAIN_PATH=$(pwd)/toolchain-4.4.x/bin" >> $GITHUB_ENV
 
-    # ========== Integration ==========
+    # ========== 固件集成 ==========
     - name: Integrate ZeroTier
       run: |
-        # Copy custom modifications
-        cp -rv zerotier-src padavan/trunk/user/zerotier
+        mkdir -p padavan/trunk/user/zerotier
+        cp -rv zerotier-src/* padavan/trunk/user/zerotier/
         
-        # Apply patches
         cd padavan/trunk
         sed -i '/CFLAGS += -Os/s/$/ -Wno-error=format-truncation/' user/zerotier/Makefile
         echo "LIBS += -ljson-c -latomic" >> user/zerotier/Makefile
         
-        # Update firmware config
         cat << EOF >> .config
         CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y
         CONFIG_FIRMWARE_INCLUDE_ZEROTIER_UI=y
         CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
         EOF
 
-    # ========== Build Process ==========
+    # ========== 固件编译 ==========
     - name: Build firmware
       run: |
         cd padavan/trunk
@@ -114,26 +115,27 @@ jobs:
         export CC=mipsel-linux-uclibc-gcc
         export STRIP=mipsel-linux-uclibc-strip
         
-        fakeroot ./build_firmware_modify $DEVICE $BLOCK_SIZE 2>&1 | tee build.log
+        timeout 25m fakeroot ./build_firmware_modify $DEVICE $BLOCK_SIZE 2>&1 | tee build.log || {
+          echo "::warning::Build timeout detected"
+          exit 1
+        }
         
         if [ ! -f "images/$DEVICE.trx" ]; then
           echo "::error::Firmware build failed"
-          echo "=== Build Log Tail ==="
-          tail -n 100 build.log
+          echo "=== Last 100 lines of build log ==="
+          tail -100 build.log
           exit 1
         fi
 
-    # ========== Artifacts ==========
-    - name: Package release
+    # ========== 制品处理 ==========
+    - name: Package artifacts
       run: |
         cd padavan/trunk/images
         upx --best --lzma $DEVICE.trx
         
-        # Generate checksums
         md5sum $DEVICE.trx > checksum.md5
         sha256sum $DEVICE.trx > checksum.sha256
         
-        # Create archive
         tar czvf $DEVICE-zt-${{ env.ZT_VERSION }}.tar.gz \
           $DEVICE.trx \
           checksum.md5 \
