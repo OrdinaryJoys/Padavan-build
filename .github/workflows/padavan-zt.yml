@@ -1,70 +1,150 @@
+name: Padavan-ZeroTier-Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+  schedule:
+    - cron: '0 3,20 * * *'
+
+env:
+  DEVICE: K2P
+  BLOCK_SIZE: 15872
+  ZT_REPO: https://github.com/zerotier/ZeroTierOne.git
+  PADAVAN_REPO: https://github.com/hanwckf/padavan-4.4.git
+  TZ: Asia/Shanghai
+
+permissions:
+  contents: write
+  actions: write
+
 jobs:
-  build:
+  version_check:
+    runs-on: ubuntu-latest
+    outputs:
+      zt_version: ${{ steps.get_version.outputs.zt_version }}
+      current_version: ${{ steps.get_version.outputs.current_version }}
     steps:
-    # ========== 仓库克隆优化 ==========
-    - name: Clone Padavan base
-      uses: actions/checkout@v4
-      with:
-        repository: hanwckf/padavan-4.4
-        path: padavan-src  # 修改存储路径避免冲突
-        ref: main
-        fetch-depth: 0
-        retries: 3
+      - name: Check ZeroTier updates
+        id: get_version
+        run: |
+          latest_ver=$(curl -s https://api.github.com/repos/zerotier/ZeroTierOne/releases/latest | jq -r '.tag_name')
+          current_ver=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.tag_name')
+          echo "zt_version=$latest_ver" >> $GITHUB_OUTPUT
+          echo "current_version=$current_ver" >> $GITHUB_OUTPUT
 
-    # ========== 新增路径验证步骤 ==========
-    - name: Validate directory structure
-      run: |
-        echo "当前工作目录: $(pwd)"
-        echo "目录结构:"
-        ls -la
-        echo "Padavan源码目录:"
-        ls -la padavan-src/
-        
-        [ -d "padavan-src/toolchain" ] || {
-          echo "::error::关键目录缺失: padavan-src/toolchain 不存在"
-          exit 1
-        }
+  build:
+    needs: version_check
+    if: ${{ needs.version_check.outputs.zt_version != needs.version_check.outputs.current_version }}
+    strategy:
+      matrix:
+        target: ['mipsel', 'arm7l']
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
 
-    # ========== 修正后的工具链步骤 ==========
-    - name: Setup toolchain
-      if: steps.toolchain-cache.outputs.cache-hit != 'true'
-      run: |
-        cd padavan-src/toolchain  # 修正路径
-        echo "当前工具链目录: $(pwd)"
-        
-        # 添加权限验证
-        [ -x "scripts/dl_toolchain.sh" ] || {
-          echo "::error::dl_toolchain.sh 缺少执行权限"
-          chmod +x scripts/dl_toolchain.sh || exit 1
-        }
-        
-        # 增强版下载逻辑
-        max_retries=5
-        success=false
-        
-        for ((i=1; i<=max_retries; i++)); do
-          echo "▶️ 第 $i 次尝试下载工具链 (剩余重试次数: $((max_retries - i)))"
-          log_file="toolchain_attempt_${i}.log"
+    steps:
+      # ========== Repository Setup ==========
+      - name: Clone Padavan base
+        uses: actions/checkout@v4
+        with:
+          repository: hanwckf/padavan-4.4
+          path: padavan-src
+          ref: main
+          fetch-depth: 0
+          retries: 3
+
+      - name: Verify directory structure
+        run: |
+          [ -d "padavan-src/toolchain" ] || {
+            echo "::error::Missing toolchain directory"
+            exit 1
+          }
+
+      # ========== Toolchain Setup ==========
+      - name: Setup toolchain
+        run: |
+          cd padavan-src/toolchain
+          chmod +x scripts/dl_toolchain.sh
           
-          if ./scripts/dl_toolchain.sh mipsel 2>&1 | tee "$log_file"; then
-            if [ -d "toolchain-4.4.x/bin" ]; then
-              success=true
-              echo "✅ 工具链下载验证通过"
-              break
-            else
-              echo "⚠️ 脚本执行成功但目录未生成，检查日志: $log_file"
+          # Enhanced retry logic
+          max_retries=5
+          success=false
+          
+          for ((i=1; i<=max_retries; i++)); do
+            echo "▶️ Toolchain download attempt $i/$max_retries"
+            log_file="toolchain_$i.log"
+            
+            if ./scripts/dl_toolchain.sh mipsel 2>&1 | tee "$log_file"; then
+              if [ -d "toolchain-4.4.x/bin" ]; then
+                success=true
+                break
+              fi
             fi
-          else
-            echo "⚠️ 下载失败，等待随机时间后重试..."
             sleep $((20 + RANDOM % 40))
-          fi
-        done
+          done
 
-        if [ "$success" = false ]; then
-          echo "::error::❌ 所有下载尝试均失败！"
-          echo "=== 最后日志摘要 ==="
-          tail -n 100 toolchain_attempt_*.log
-          exit 1
-        fi
-        
-        echo "TOOLCHAIN_PATH=$(pwd)/toolchain-4.4.x/bin" >> $GITHUB_ENV
+          if [ "$success" = false ]; then
+            echo "::error::Toolchain download failed"
+            exit 1
+          fi
+          echo "TOOLCHAIN_PATH=$(pwd)/toolchain-4.4.x/bin" >> $GITHUB_ENV
+
+      # ========== ZeroTier Integration ==========
+      - name: Prepare ZeroTier source
+        run: |
+          git clone --depth 1 --branch ${{ needs.version_check.outputs.zt_version }} $ZT_REPO zerotier-src
+          [ -d "zerotier-src" ] || { echo "::error::ZeroTier clone failed"; exit 1; }
+
+      - name: Integrate ZeroTier
+        run: |
+          mkdir -p padavan-src/trunk/user/zerotier
+          cp -rv zerotier-src/* padavan-src/trunk/user/zerotier/
+          
+          cd padavan-src/trunk
+          sed -i '/CFLAGS += -Os/s/$/ -Wno-error=format-truncation/' user/zerotier/Makefile
+          echo "LIBS += -ljson-c -latomic" >> user/zerotier/Makefile
+          
+          cat << EOF >> .config
+          CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y
+          CONFIG_FIRMWARE_INCLUDE_ZEROTIER_UI=y
+          CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
+          EOF
+
+      # ========== Firmware Compilation ==========
+      - name: Build firmware
+        run: |
+          cd padavan-src/trunk
+          ./clear_tree
+          
+          export PATH="$TOOLCHAIN_PATH:$PATH"
+          export CC=mipsel-linux-uclibc-gcc
+          
+          timeout 45m fakeroot ./build_firmware_modify $DEVICE $BLOCK_SIZE 2>&1 | tee build.log
+          
+          [ -f "images/$DEVICE.trx" ] || { 
+            echo "::error::Build failed"
+            tail -n 100 build.log
+            exit 1
+          }
+
+      # ========== Artifact Packaging ==========
+      - name: Package artifacts
+        run: |
+          cd padavan-src/trunk/images
+          upx --best --lzma $DEVICE.trx
+          
+          md5sum $DEVICE.trx > checksum.md5
+          sha256sum $DEVICE.trx > checksum.sha256
+          
+          tar czvf $DEVICE-zt-${{ needs.version_check.outputs.zt_version }}.tar.gz \
+            $DEVICE.trx \
+            checksum.md5 \
+            checksum.sha256
+
+      - name: Upload release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version_check.outputs.zt_version }}
+          files: |
+            padavan-src/trunk/images/*.tar.gz
+            padavan-src/trunk/images/checksum.*
