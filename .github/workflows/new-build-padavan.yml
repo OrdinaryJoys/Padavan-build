@@ -37,21 +37,22 @@ jobs:
         ./dl_toolchain.sh
         sudo mkdir -p /opt/images
 
-    # ========== 配置阶段 ========== (关键修复区域)
+    # ========== 配置阶段 ==========
     - name: Configure firmware
-      run: |  # 第57行
-        cd padavan-4.4/trunk  # 第58行（正确缩进两个空格）
+      shell: bash  # 强制使用Bash解释器
+      run: |
+        cd padavan-4.4/trunk
 
-        # ===== 模板验证 =====
-        [ ! -f "configs/templates/${DEVICE}.config" ] && {
+        # 验证配置模板存在
+        if [ ! -f "configs/templates/${DEVICE}.config" ]; then
           echo "::error::Template ${DEVICE}.config not found"
           exit 1
-        }
+        fi
 
-        # ===== 应用基础配置 =====
+        # 应用基础配置
         cp -v "configs/templates/${DEVICE}.config" .config
 
-        # ===== 清理旧配置 =====
+        # 清理旧配置项
         declare -a CONFIG_CLEAN=(
           "CONFIG_FIRMWARE_INCLUDE_ZEROTIER"
           "CONFIG_FIRMWARE_INCLUDE_ADBYBY"
@@ -60,8 +61,8 @@ jobs:
           sed -i "/^${item}=/d" .config
         done
 
-        # ===== 写入新配置 =====
-        cat << 'EOF' >> .config  # heredoc正确用法
+        # 写入新配置 (关键修复: EOF必须顶格)
+        cat << 'EOF' >> .config
 CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
 CONFIG_FIRMWARE_INCLUDE_ZEROTIER=${ZT_ENABLED}
 CONFIG_FIRMWARE_INCLUDE_ADBYBY=n
@@ -90,11 +91,11 @@ EOF
         fi
         echo "::endgroup::"
 
-        # 产物处理
-        [ -n "$(ls images/*.trx 2>/dev/null)" ] || {
+        # 产物验证
+        if [ -z "$(ls images/*.trx 2>/dev/null)" ]; then
           echo "::error::No firmware files generated"
           exit 1
-        }
+        fi
         sudo mv -v images/*.trx /opt/images/
 
     # ========== 产物上传 ==========
