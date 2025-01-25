@@ -9,14 +9,16 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     env:
-      DEVICE: K2P
-      BLOCK_SIZE: 15872
-      ZT_ENABLED: "y"
+      DEVICE: K2P        # 设备型号
+      BLOCK_SIZE: 15872  # 块大小（单位KB）
+      ZT_ENABLED: "y"    # ZeroTier开关
 
     steps:
+    # ========== 代码检出 ==========
     - name: Checkout code
       uses: actions/checkout@v4
 
+    # ========== 依赖安装 ==========
     - name: Install dependencies
       run: |
         sudo apt-get update -y
@@ -27,6 +29,7 @@ jobs:
           libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget libc-dev-bin \
           libssl-dev libjson-c-dev
 
+    # ========== 源码准备 ==========
     - name: Prepare source
       run: |
         git clone --depth=1 https://github.com/hanwckf/padavan-4.4.git || { echo "::error::Clone failed"; exit 1; }
@@ -34,41 +37,71 @@ jobs:
         ./dl_toolchain.sh
         sudo mkdir -p /opt/images
 
+    # ========== 配置阶段 ==========
     - name: Configure firmware
       shell: bash
-      run: |  # 第54行（YAML缩进0级）
-          cd padavan-4.4/trunk || { echo "::error::Can't enter trunk"; exit 1; }
+      run: |  # 关键修复区：统一缩进规则
+        cd padavan-4.4/trunk || { echo "::error::Can't enter trunk"; exit 1; }
 
-          # ===== 关键修复：Heredoc绝对零缩进 =====
-          cat << 'EOF' >> .config  # YAML层级缩进2空格
-CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y      # 实际内容无缩进（第66行）
-CONFIG_FIRMWARE_INCLUDE_ZEROTIER=${ZT_ENABLED}  # 第67行（零缩进）
-CONFIG_FIRMWARE_INCLUDE_ADBYBY=n          # 第68行（零缩进）
-EOF                                      # 第69行（顶格）
+        # 模板验证（修复if语句格式）
+        if [ ! -f "configs/templates/${DEVICE}.config" ]; then
+          echo "::error::[${DEVICE}] Template not found"
+          exit 1
+        fi
 
+        # 应用基础配置
+        cp -vf "configs/templates/${DEVICE}.config" .config
+
+        # 清理配置项（修复数组声明）
+        declare -a CONFIG_CLEAN=(
+          "CONFIG_FIRMWARE_INCLUDE_ZEROTIER"
+          "CONFIG_FIRMWARE_INCLUDE_ADBYBY"
+        )
+        for target in "${CONFIG_CLEAN[@]}"; do
+          sed -i "/^${target}=/d" .config
+        done
+
+        # 写入新配置（最终修复：Heredoc零缩进）
+        cat << 'EOF' >> .config
+CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
+CONFIG_FIRMWARE_INCLUDE_ZEROTIER=${ZT_ENABLED}
+CONFIG_FIRMWARE_INCLUDE_ADBYBY=n
+EOF
+
+    # ========== 构建阶段 ==========
     - name: Build firmware
-      run: |
-          cd padavan-4.4/trunk || { echo "::error::Trunk missing"; exit 1; }
-          sudo ./clear_tree || { echo "::error::Clean failed"; exit 1; }
+      run: |  # 修复命令缩进
+        cd padavan-4.4/trunk || { echo "::error::Trunk missing"; exit 1; }
+        sudo ./clear_tree || { echo "::error::Clean failed"; exit 1; }
 
-          echo "::group::Kernel Build"
-          make kernel || exit 1
-          echo "::endgroup::"
+        echo "::group::Kernel Build"
+        make kernel || exit 1
+        echo "::endgroup::"
 
-          echo "::group::Modules Build"
-          make modules -j$(nproc) || exit 1
-          echo "::endgroup::"
+        echo "::group::Modules Build"
+        make modules -j$(nproc) || exit 1
+        echo "::endgroup::"
 
-          echo "::group::Firmware Compilation"
-          if ! sudo ./build_firmware_modify "$DEVICE" "$BLOCK_SIZE"; then
-            sudo ./build_firmware_modify "$DEVICE" $((BLOCK_SIZE - 1024)) || exit 1
+        echo "::group::Firmware Compilation"
+        if ! sudo ./build_firmware_modify "$DEVICE" "$BLOCK_SIZE"; then
+          echo "::warning::Retrying with reduced block size..."
+          if ! sudo ./build_firmware_modify "$DEVICE" $((BLOCK_SIZE - 1024)); then
+            echo "::error::Build failed after retry"
+            exit 1
           fi
-          echo "::endgroup::"
+        fi
+        echo "::endgroup::"
 
-          sudo mv -v images/*.trx /opt/images/
+        # 产物验证（修复find命令格式）
+        if [ -z "$(find images/ -maxdepth 1 -name '*.trx' -print -quit)" ]; then
+          echo "::error::No firmware generated"
+          exit 1
+        fi
+        sudo mv -v images/*.trx /opt/images/
 
+    # ========== 产物上传 ==========
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ env.DEVICE }}-Firmware-$(date +%s)
+        name: ${{ env.DEVICE }}-Firmware-$(date +%Y%m%d-%H%M%S)
         path: /opt/images/*.trx
