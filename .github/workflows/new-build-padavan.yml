@@ -1,4 +1,4 @@
-name: Build Padavan
+name: Padavan Firmware Builder
 
 on:
   push:
@@ -10,52 +10,122 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     env:
-      DEVICE: K2P        # 需修改的设备型号
-      BLOCK_SIZE: 15872  # 块大小(KB)
+      DEVICE_MODEL: K2P        # 需修改的设备型号
+      BLOCK_SIZE: 15872        # 初始块大小（单位KB）
+      ZEROTIER_ENABLED: "y"    # ZeroTier开关
 
     steps:
-    # ========== 关键修复区域 (第55行附近) ==========
-    - name: Install dependencies  # 步骤名称正确缩进
-      run: |                     # 管道符后必须换行
-        sudo apt-get update -y
-        sudo apt-get install -y \
-          unzip libtool-bin curl cmake \
-          gperf gawk flex bison \
-          fakeroot kmod cpio \
-          git python3-docutils gettext \
-          texinfo build-essential \
-          zlib1g-dev libgmp3-dev  # 第55行对应位置
+    # ========== 环境准备 ==========
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-    - name: Clone source code
+    - name: Install dependencies
       run: |
-        git clone --depth=1 \
+        sudo apt-get update -y
+        sudo apt-get install -y --no-install-recommends \
+          unzip libtool-bin curl cmake gperf gawk flex bison \
+          fakeroot kmod cpio git python3-docutils gettext automake autopoint \
+          texinfo build-essential help2man pkg-config zlib1g-dev libgmp3-dev \
+          libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget libc-dev-bin \
+          libssl-dev libjson-c-dev uuid-dev libnatpmp-dev
+
+    # ========== 源码准备 ==========
+    - name: Clone source
+      run: |
+        git clone --depth=1 --branch master \
           https://github.com/hanwckf/padavan-4.4.git
         cd padavan-4.4/toolchain-mipsel
+        echo "::group::Downloading toolchain"
         ./dl_toolchain.sh
+        echo "::endgroup::"
+        sudo mkdir -p /opt/images
 
+    # ========== 配置阶段 ==========
     - name: Configure build
       run: |
         cd padavan-4.4/trunk
-        [ ! -f "configs/templates/${DEVICE}.config" ] && exit 1
-        cp "configs/templates/${DEVICE}.config" .config
-        
-        # 清理配置项
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_ZEROTIER/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_ADBYBY/d' .config
+
+        # 验证设备模板
+        CONFIG_TEMPLATE="configs/templates/${DEVICE_MODEL}.config"
+        if [ ! -f "${CONFIG_TEMPLATE}" ]; then
+          echo "::error::Missing template: ${CONFIG_TEMPLATE}"
+          exit 1
+        fi
+
+        # 应用基础配置
+        cp -v "${CONFIG_TEMPLATE}" .config
+
+        # 清理旧配置
+        declare -a CONFIG_CLEAN=(
+          "CONFIG_FIRMWARE_INCLUDE_ZEROTIER"
+          "CONFIG_FIRMWARE_INCLUDE_ADBYBY"
+          "CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS"
+        )
+        for item in "${CONFIG_CLEAN[@]}"; do
+          sed -i "/^${item}=/d" .config
+        done
 
         # 写入新配置
-        echo "CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y" >> .config
+        cat << 'EOF' >> .config
+# 核心功能配置
+CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
+CONFIG_FIRMWARE_INCLUDE_ZEROTIER=${ZEROTIER_ENABLED}
 
+# 禁用非必要功能
+CONFIG_FIRMWARE_INCLUDE_ADBYBY=n
+CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS=n
+CONFIG_FIRMWARE_INCLUDE_SSSERVER=n
+CONFIG_FIRMWARE_INCLUDE_DNSFORWARDER=n
+CONFIG_FIRMWARE_INCLUDE_CADDYBIN=n
+EOF
+
+    # ========== 构建阶段 ==========
     - name: Build firmware
       run: |
         cd padavan-4.4/trunk
+        
+        # 清理构建环境
+        echo "::group::Clean build environment"
         sudo ./clear_tree
-        sudo ./build_firmware_modify "$DEVICE" "$BLOCK_SIZE"
-        sudo mv images/*.trx /opt/images/
+        find . -name "*.o" -exec rm -f {} \;
+        echo "::endgroup::"
 
+        # 分阶段构建
+        echo "::group::Build kernel"
+        make kernel || exit 1
+        echo "::endgroup::"
+
+        echo "::group::Build modules"
+        make modules || exit 1
+        echo "::endgroup::"
+
+        # 主构建流程
+        echo "::group::Final firmware build"
+        if ! sudo ./build_firmware_modify "${DEVICE_MODEL}" "${BLOCK_SIZE}"; then
+          echo "::warning::Retrying with reduced block size..."
+          sudo ./build_firmware_modify "${DEVICE_MODEL}" $((BLOCK_SIZE - 1024))
+        fi
+        echo "::endgroup::"
+
+        # 产物处理
+        if ls images/*.trx >/dev/null 2>&1; then
+          sudo mv -v images/*.trx /opt/images/
+        else
+          echo "::error::No firmware files generated!"
+          exit 1
+        fi
+
+    # ========== 产物上传 ==========
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ env.DEVICE }}-Firmware
+        name: ${DEVICE_MODEL}-$(date +%Y%m%d)
         path: /opt/images/*.trx
+        retention-days: 5
+
+    # ========== 清理阶段 ==========
+    - name: Cleanup
+      if: always()
+      run: |
+        sudo rm -rf padavan-4.4/
+        sudo rm -rf /opt/images/
