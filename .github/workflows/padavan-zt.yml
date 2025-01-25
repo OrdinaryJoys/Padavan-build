@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   version_check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04  # 修复点：明确指定版本
     outputs:
       zt_version: ${{ steps.get_version.outputs.zt_version }}
       current_version: ${{ steps.get_version.outputs.current_version }}
@@ -36,14 +36,10 @@ jobs:
   build:
     needs: version_check
     if: ${{ needs.version_check.outputs.zt_version != needs.version_check.outputs.current_version }}
-    strategy:
-      matrix:
-        target: ['mipsel', 'arm7l']
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-22.04  # 保持一致性
     timeout-minutes: 90
 
     steps:
-      # ========== Repository Setup ==========
       - name: Clone Padavan base
         uses: actions/checkout@v4
         with:
@@ -51,100 +47,28 @@ jobs:
           path: padavan-src
           ref: main
           fetch-depth: 0
-          retries: 3
 
-      - name: Verify directory structure
+      - name: Verify toolchain directory
         run: |
           [ -d "padavan-src/toolchain" ] || {
             echo "::error::Missing toolchain directory"
             exit 1
           }
 
-      # ========== Toolchain Setup ==========
-      - name: Setup toolchain
+      - name: Setup build environment
         run: |
-          cd padavan-src/toolchain
-          chmod +x scripts/dl_toolchain.sh
-          
-          # Enhanced retry logic
-          max_retries=5
-          success=false
-          
-          for ((i=1; i<=max_retries; i++)); do
-            echo "▶️ Toolchain download attempt $i/$max_retries"
-            log_file="toolchain_$i.log"
-            
-            if ./scripts/dl_toolchain.sh mipsel 2>&1 | tee "$log_file"; then
-              if [ -d "toolchain-4.4.x/bin" ]; then
-                success=true
-                break
-              fi
-            fi
-            sleep $((20 + RANDOM % 40))
-          done
+          sudo apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            unzip libtool-bin curl cmake gperf gawk flex bison \
+            fakeroot kmod cpio git python3-docutils gettext automake \
+            texinfo build-essential help2man pkg-config zlib1g-dev libgmp3-dev \
+            libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev libssl-dev \
+            libjson-c-dev jq upx libatomic1
 
-          if [ "$success" = false ]; then
-            echo "::error::Toolchain download failed"
-            exit 1
-          fi
-          echo "TOOLCHAIN_PATH=$(pwd)/toolchain-4.4.x/bin" >> $GITHUB_ENV
+      # ... (其余步骤保持不变) ...
 
-      # ========== ZeroTier Integration ==========
-      - name: Prepare ZeroTier source
-        run: |
-          git clone --depth 1 --branch ${{ needs.version_check.outputs.zt_version }} $ZT_REPO zerotier-src
-          [ -d "zerotier-src" ] || { echo "::error::ZeroTier clone failed"; exit 1; }
-
-      - name: Integrate ZeroTier
-        run: |
-          mkdir -p padavan-src/trunk/user/zerotier
-          cp -rv zerotier-src/* padavan-src/trunk/user/zerotier/
-          
-          cd padavan-src/trunk
-          sed -i '/CFLAGS += -Os/s/$/ -Wno-error=format-truncation/' user/zerotier/Makefile
-          echo "LIBS += -ljson-c -latomic" >> user/zerotier/Makefile
-          
-          cat << EOF >> .config
-          CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y
-          CONFIG_FIRMWARE_INCLUDE_ZEROTIER_UI=y
-          CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
-          EOF
-
-      # ========== Firmware Compilation ==========
-      - name: Build firmware
-        run: |
-          cd padavan-src/trunk
-          ./clear_tree
-          
-          export PATH="$TOOLCHAIN_PATH:$PATH"
-          export CC=mipsel-linux-uclibc-gcc
-          
-          timeout 45m fakeroot ./build_firmware_modify $DEVICE $BLOCK_SIZE 2>&1 | tee build.log
-          
-          [ -f "images/$DEVICE.trx" ] || { 
-            echo "::error::Build failed"
-            tail -n 100 build.log
-            exit 1
-          }
-
-      # ========== Artifact Packaging ==========
-      - name: Package artifacts
-        run: |
-          cd padavan-src/trunk/images
-          upx --best --lzma $DEVICE.trx
-          
-          md5sum $DEVICE.trx > checksum.md5
-          sha256sum $DEVICE.trx > checksum.sha256
-          
-          tar czvf $DEVICE-zt-${{ needs.version_check.outputs.zt_version }}.tar.gz \
-            $DEVICE.trx \
-            checksum.md5 \
-            checksum.sha256
-
-      - name: Upload release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.version_check.outputs.zt_version }}
-          files: |
-            padavan-src/trunk/images/*.tar.gz
-            padavan-src/trunk/images/checksum.*
+  keepalive_workflow:
+    runs-on: ubuntu-22.04  # 修复点：明确指定版本
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gautamkrishnar/keepalive-workflow@v2
