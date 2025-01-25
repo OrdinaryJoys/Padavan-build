@@ -8,37 +8,110 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 120
     env:
-      DEVICE: K2P
+      DEVICE: K2P  # 需与模板文件名一致
       REPO_URL: https://github.com/MeIsReallyBa/padavan-4.4.git
 
     steps:
+    # ==================== 1. 环境准备 ====================
+    - name: Setup environment
+      run: |
+        sudo sed -i 's/archive.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
+        sudo sed -i 's/security.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
+        sudo apt update -y
+        sudo apt install -y --no-install-recommends \
+          unzip libtool-bin curl cmake gperf gawk flex bison \
+          fakeroot kmod cpio git python3-docutils gettext \
+          texinfo build-essential help2man pkg-config \
+          zlib1g-dev libgmp3-dev libmpc-dev libmpfr-dev \
+          libncurses5-dev libltdl-dev xxd squashfs-tools
+
+    # ==================== 2. 获取源码 ====================
     - name: Clone repository
       run: |
-        # 方案一：如果 trunk 是分支
-        # git clone -b trunk ${{ env.REPO_URL }} padavan
-        
-        # 方案二：如果 trunk 是目录
         git clone --depth=1 ${{ env.REPO_URL }} padavan
         cd padavan
         
-        echo "=== 仓库结构验证 ==="
-        git branch -a
-        echo "1. 检查分支：" && git rev-parse --abbrev-ref HEAD
-        echo "2. 检查 trunk 目录：" && ls -ld trunk
-        echo "3. 检查模板文件：" && find . -name "$DEVICE.config"
-
-    - name: Build Setup
-      run: |
-        cd padavan
-        
-        # 动态路径处理
+        # 动态检测代码结构
         if [ -d "trunk" ]; then
-          WORK_DIR="trunk"
+          echo "WORKSPACE=trunk" >> $GITHUB_ENV
         else
-          WORK_DIR="."
+          echo "WORKSPACE=." >> $GITHUB_ENV
         fi
         
-        echo "WORK_DIR=$WORK_DIR" >> $GITHUB_ENV
-        echo "最终工作路径：$WORK_DIR"
-        ls -l $WORK_DIR/configs/templates/
+        echo "=== 结构验证 ==="
+        echo "工作目录: ${{ env.WORKSPACE }}"
+        ls -l ${{ env.WORKSPACE }}/configs/templates/
+
+    # ==================== 3. 工具链配置 ====================
+    - name: Setup toolchain
+      run: |
+        cd padavan/toolchain-mipsel
+        
+        # 清理旧文件
+        rm -rf toolchain-mipsel mipsel-linux-uclibc*
+        
+        # 下载工具链（带重试机制）
+        for i in {1..3}; do
+          ./dl_toolchain.sh && break || sleep 30
+        done
+        
+        # 解压验证
+        tar -xvf mipsel-linux-uclibc.tar.xz
+        echo "TOOLCHAIN_DIR=mipsel-linux-uclibc" >> $GITHUB_ENV
+        chmod -R +x ${{ env.TOOLCHAIN_DIR }}
+        
+        # 验证工具链
+        ${{ env.TOOLCHAIN_DIR }}/bin/mipsel-linux-uclibc-gcc --version || {
+          echo "::error::工具链异常";
+          exit 1;
+        }
+
+    # ==================== 4. 编译配置 ====================
+    - name: Configure build
+      run: |
+        cd padavan/${{ env.WORKSPACE }}
+        
+        CONFIG_FILE="configs/templates/${{ env.DEVICE }}.config"
+        if [ ! -f "$CONFIG_FILE" ]; then
+          echo "::error 找不到配置文件: $CONFIG_FILE"
+          find . -name "*.config"
+          exit 1
+        fi
+        
+        cp -v "$CONFIG_FILE" .config
+        echo "CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y" >> .config
+        echo "CONFIG_FIRMWARE_INCLUDE_IPV6_NAT=y" >> .config
+
+    # ==================== 5. 执行编译 ====================
+    - name: Build firmware
+      run: |
+        cd padavan/${{ env.WORKSPACE }}
+        
+        # 设置编译环境
+        echo "PATH=$PATH:$GITHUB_WORKSPACE/padavan/toolchain-mipsel/${{ env.TOOLCHAIN_DIR }}/bin" >> $GITHUB_ENV
+        
+        # 清理编译
+        ./clear_tree
+        fakeroot ./build_firmware_modify ${{ env.DEVICE }} -j$(nproc)
+        
+        # 产物验证
+        if [ ! -d "images" ]; then
+          echo "::error::无镜像生成"
+          exit 1
+        fi
+
+    # ==================== 6. 产物处理 ====================
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ env.DEVICE }}-firmware
+        path: padavan/${{ env.WORKSPACE }}/images/*.trx
+        retention-days: 7
+
+    # ==================== 7. 环境清理 ====================
+    - name: Cleanup
+      if: always()
+      run: |
+        sudo rm -rf padavan
