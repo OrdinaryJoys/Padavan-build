@@ -9,14 +9,16 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     env:
-      DEVICE: K2P
-      BLOCK_SIZE: 15872
-      ZT_ENABLED: "y"
+      DEVICE: K2P        # 设备型号
+      BLOCK_SIZE: 15872  # 块大小（单位KB）
+      ZT_ENABLED: "y"    # ZeroTier开关
 
     steps:
+    # ========== 代码检出 ==========
     - name: Checkout code
       uses: actions/checkout@v4
 
+    # ========== 依赖安装 ==========
     - name: Install dependencies
       run: |
         sudo apt-get update -y
@@ -27,6 +29,7 @@ jobs:
           libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget libc-dev-bin \
           libssl-dev libjson-c-dev
 
+    # ========== 源码准备 ==========
     - name: Prepare source
       run: |
         git clone --depth=1 https://github.com/hanwckf/padavan-4.4.git
@@ -34,40 +37,79 @@ jobs:
         ./dl_toolchain.sh
         sudo mkdir -p /opt/images
 
+    # ========== 配置阶段 ==========
     - name: Configure firmware
       shell: bash
-      run: |  # 缩进两个空格
-        cd padavan-4.4/trunk
+      run: |
+        cd padavan-4.4/trunk || { echo "::error::Failed to enter trunk directory"; exit 1; }
 
-        if [ ! -f "configs/templates/${DEVICE}.config" ]; then
+        # ===== 模板验证 =====
+        if [[ ! -f "configs/templates/${DEVICE}.config" ]]; then
           echo "::error::Template ${DEVICE}.config not found"
           exit 1
         fi
 
-        cp -v "configs/templates/${DEVICE}.config" .config
+        # ===== 应用基础配置 =====
+        cp -vf "configs/templates/${DEVICE}.config" .config || exit 1
 
-        # 关键修复：数组声明添加转义符（第60-63行）
+        # ===== 清理旧配置 =====
         declare -a CONFIG_CLEAN=(
-          "CONFIG_FIRMWARE_INCLUDE_ZEROTIER" \
-          "CONFIG_FIRMWARE_INCLUDE_ADBYBY"    # 第62行
+          "CONFIG_FIRMWARE_INCLUDE_ZEROTIER"
+          "CONFIG_FIRMWARE_INCLUDE_ADBYBY"
         )
         for item in "${CONFIG_CLEAN[@]}"; do
           sed -i "/^${item}=/d" .config
         done
 
+        # ===== 写入新配置 =====
         cat << 'EOF' >> .config
 CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
 CONFIG_FIRMWARE_INCLUDE_ZEROTIER=${ZT_ENABLED}
 CONFIG_FIRMWARE_INCLUDE_ADBYBY=n
 EOF
 
-    # ========== 后续步骤保持不变 ==========
+    # ========== 构建阶段 ==========
     - name: Build firmware
       run: |
-        # ... 构建步骤代码 ...
+        cd padavan-4.4/trunk || { echo "::error::Trunk directory missing"; exit 1; }
+        sudo ./clear_tree || { echo "::error::Failed to clear tree"; exit 1; }
 
+        # 分阶段构建
+        echo "::group::Building kernel"
+        if ! make kernel; then
+          echo "::error::Kernel build failed"
+          exit 1
+        fi
+        echo "::endgroup::"
+
+        echo "::group::Building modules"
+        if ! make modules -j$(nproc); then
+          echo "::error::Modules build failed"
+          exit 1
+        fi
+        echo "::endgroup::"
+
+        # 主构建流程
+        echo "::group::Final compilation"
+        if ! sudo ./build_firmware_modify "${DEVICE}" "${BLOCK_SIZE}"; then
+          echo "::warning::Retrying with reduced block size..."
+          if ! sudo ./build_firmware_modify "${DEVICE}" $((BLOCK_SIZE - 1024)); then
+            echo "::error::Final build failed after retry"
+            exit 1
+          fi
+        fi
+        echo "::endgroup::"
+
+        # 产物验证
+        if [[ -z $(ls images/*.trx 2>/dev/null) ]]; then
+          echo "::error::No firmware files generated"
+          exit 1
+        fi
+        sudo mv -fv images/*.trx /opt/images/
+
+    # ========== 产物上传 ==========
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${DEVICE}-Firmware-$(date +%s)
+        name: ${{ env.DEVICE }}-Firmware-$(date +%Y%m%d%H%M%S)
         path: /opt/images/*.trx
