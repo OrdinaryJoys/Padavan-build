@@ -36,51 +36,51 @@ jobs:
         git clone --depth=1 https://github.com/hanwckf/padavan-4.4.git || { echo "::error::Clone failed"; exit 1; }
         cd padavan-4.4/toolchain-mipsel || { echo "::error::Directory missing"; exit 1; }
         
-        echo "=== Downloading Toolchain ==="
-        ./dl_toolchain.sh
+        # 下载并验证工具链
+        echo "=== 下载工具链 ==="
+        ./dl_toolchain.sh || { echo "::error::工具链下载失败"; exit 1; }
         
-        if [ ! -d "toolchain-4.4.x" ]; then
-          echo "::error::Toolchain download failed!"
-          ls -lh
-          exit 1
-        fi
-        
-        echo "=== Setting Toolchain Permissions ==="
+        # 权限修复
+        echo "=== 设置工具链权限 ==="
         chmod -R +x toolchain-4.4.x/bin
+        [ -f toolchain-4.4.x/bin/mipsel-linux-uclibc-gcc ] || { 
+          echo "::error::编译器不存在"; 
+          ls -lR toolchain-4.4.x/bin;
+          exit 1;
+        }
+        
         sudo mkdir -p /opt/images
 
     # ========== 环境验证 ==========
     - name: Verify environment
       run: |
-        echo "=== Toolchain Path Verification ==="
-        echo "TOOLCHAIN_DIR: $TOOLCHAIN_DIR"
-        ls -l $TOOLCHAIN_DIR/bin/mipsel-linux-uclibc-gcc
-        file $TOOLCHAIN_DIR/bin/mipsel-linux-uclibc-gcc
-        $TOOLCHAIN_DIR/bin/mipsel-linux-uclibc-gcc --version || true
+        echo "=== 工具链路径验证 ==="
+        echo "绝对路径: ${{ env.TOOLCHAIN_DIR }}"
+        ls -l ${{ env.TOOLCHAIN_DIR }}/bin/mipsel-linux-uclibc-gcc
+        file ${{ env.TOOLCHAIN_DIR }}/bin/mipsel-linux-uclibc-gcc
+        ${{ env.TOOLCHAIN_DIR }}/bin/mipsel-linux-uclibc-gcc --version || true
 
-    # ========== 配置阶段 ========== (修复行号110)
+    # ========== 配置阶段 ==========
     - name: Configure firmware
       shell: bash
       run: |
-        cd padavan-4.4/trunk || { echo "::error::Can't enter trunk"; exit 1; }
+        cd padavan-4.4/trunk || { echo "::error::无法进入trunk目录"; exit 1; }
 
-        # 修复xTun缺失问题
+        # 修复xTun缺失
         if [ ! -d "user/xTun" ]; then
-          echo "=== Cloning xTun ==="
+          echo "=== 克隆xTun仓库 ==="
           git clone --depth=1 https://github.com/hanwckf/xTun.git user/xTun || { 
-            echo "::error::Failed to clone xTun"; 
+            echo "::error::xTun克隆失败"; 
             exit 1 
           }
         fi
 
-        # 应用基础配置
-        if [ ! -f "configs/templates/${DEVICE}.config" ]; then
-          echo "::error::[${DEVICE}] Template not found"
-          exit 1
-        fi
-        cp -vf "configs/templates/${DEVICE}.config" .config
+        # 应用设备配置模板
+        CONFIG_FILE="configs/templates/${DEVICE}.config"
+        [ -f "$CONFIG_FILE" ] || { echo "::error::找不到配置文件: $CONFIG_FILE"; exit 1; }
+        cp -vf "$CONFIG_FILE" .config
 
-        # 清理配置项（修复数组声明缩进）
+        # 清理旧配置
         declare -a CONFIG_CLEAN=(
           "CONFIG_FIRMWARE_INCLUDE_ZEROTIER"
           "CONFIG_FIRMWARE_INCLUDE_ADBYBY"
@@ -89,74 +89,75 @@ jobs:
           sed -i "/^${target}=/d" .config
         done
 
-        # 写入新配置（修复heredoc缩进）
-        echo "CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=${ZT_ENABLED}" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_ADBYBY=n" >> .config
+        # 写入新配置
+        {
+          echo "CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y"
+          echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=${ZT_ENABLED}"
+          echo "CONFIG_FIRMWARE_INCLUDE_ADBYBY=n"
+        } >> .config
 
-        # 设置交叉编译环境
-        echo "=== Setting Cross-Compile Environment ==="
-        export PATH="${TOOLCHAIN_DIR}/bin:$PATH"
-        echo "PATH=${PATH}" >> $GITHUB_ENV
-        echo "CROSS_COMPILE=${TOOLCHAIN_DIR}/bin/mipsel-linux-uclibc-" >> $GITHUB_ENV
+        # 设置编译环境
+        echo "=== 配置交叉编译环境 ==="
+        export PATH="${{ env.TOOLCHAIN_DIR }}/bin:$PATH"
+        echo "PATH=$PATH" >> $GITHUB_ENV
+        echo "CROSS_COMPILE=${{ env.TOOLCHAIN_DIR }}/bin/mipsel-linux-uclibc-" >> $GITHUB_ENV
         echo "ARCH=mips" >> $GITHUB_ENV
+
+        # 修复内核Makefile硬编码路径
+        find linux-4.4.x -name Makefile -exec sed -i "s|/toolchain-4.4.x|${{ env.TOOLCHAIN_DIR }}|g" {} \;
 
     # ========== 构建阶段 ==========
     - name: Build firmware
       run: |
-        cd padavan-4.4/trunk || { echo "::error::Trunk missing"; exit 1; }
+        cd padavan-4.4/trunk || { echo "::error::Trunk目录缺失"; exit 1; }
         
-        # 验证环境变量
-        echo "=== Verifying Build Environment ==="
-        which mipsel-linux-uclibc-gcc
-        mipsel-linux-uclibc-gcc --version || { echo "::error::Compiler test failed"; exit 1; }
+        # 环境验证
+        echo "=== 当前环境变量 ==="
+        echo "PATH: $PATH"
+        echo "CROSS_COMPILE: $CROSS_COMPILE"
+        which mipsel-linux-uclibc-gcc || { echo "::error::找不到编译器"; exit 1; }
+        mipsel-linux-uclibc-gcc --version || { echo "::error::编译器测试失败"; exit 1; }
 
         # 清理构建环境
-        echo "=== Cleaning Build Environment ==="
-        sudo ./clear_tree || { echo "::error::Clean failed"; exit 1; }
+        echo "=== 清理旧构建 ==="
+        sudo ./clear_tree || { echo "::error::清理失败"; exit 1; }
 
         # 内核构建
-        echo "::group::Kernel Build"
-        make kernel ARCH=mips CROSS_COMPILE=${TOOLCHAIN_DIR}/bin/mipsel-linux-uclibc- -j$(nproc) || {
-          echo "::error::Kernel build failed"
-          exit 1
-        }
-        echo "::endgroup::"
-
-        # 模块构建
-        echo "::group::Modules Build"
-        make modules ARCH=mips CROSS_COMPILE=${TOOLCHAIN_DIR}/bin/mipsel-linux-uclibc- -j$(nproc) || {
-          echo "::error::Modules build failed"
-          exit 1
-        }
-        echo "::endgroup::"
-
-        # 固件编译
-        echo "::group::Firmware Compilation"
-        if ! sudo ./build_firmware_modify "$DEVICE" "$BLOCK_SIZE" \
-          KERNEL_CROSS_COMPILE=${TOOLCHAIN_DIR}/bin/mipsel-linux-uclibc- \
-          MODULES_CROSS_COMPILE=${TOOLCHAIN_DIR}/bin/mipsel-linux-uclibc-; then
-          
-          echo "::warning::Retrying with reduced block size..."
-          if ! sudo ./build_firmware_modify "$DEVICE" $((BLOCK_SIZE - 1024)) \
-            KERNEL_CROSS_COMPILE=${TOOLCHAIN_DIR}/bin/mipsel-linux-uclibc- \
-            MODULES_CROSS_COMPILE=${TOOLCHAIN_DIR}/bin/mipsel-linux-uclibc-; then
-            echo "::error::Build failed after retry"
+        echo "::group::内核编译"
+        make kernel ARCH=mips CROSS_COMPILE="$CROSS_COMPILE" \
+          LD="$CROSS_COMPILE"ld \
+          CC="$CROSS_COMPILE"gcc \
+          -j$(nproc) V=1 || {
+            echo "::error::内核编译失败"
+            echo "=== 最后10行编译日志 ==="
+            tail -n 10 build.log
             exit 1
-          fi
-        fi
+          }
         echo "::endgroup::"
 
-        # 产物验证
-        if [ -z "$(find images/ -maxdepth 1 -name '*.trx' -print -quit)" ]; then
-          echo "::error::No firmware generated"
-          exit 1
-        fi
+        # 固件打包
+        echo "::group::固件打包"
+        sudo ./build_firmware_modify "$DEVICE" "$BLOCK_SIZE" \
+          KERNEL_CROSS_COMPILE="$CROSS_COMPILE" \
+          MODULES_CROSS_COMPILE="$CROSS_COMPILE" || {
+          
+          echo "::warning::首次打包失败，尝试减小块尺寸..."
+          sudo ./build_firmware_modify "$DEVICE" $((BLOCK_SIZE - 1024)) \
+            KERNEL_CROSS_COMPILE="$CROSS_COMPILE" \
+            MODULES_CROSS_COMPILE="$CROSS_COMPILE" || {
+              echo "::error::最终打包失败"
+              exit 1
+            }
+        }
+        echo "::endgroup::"
+
+        # 验证产物
+        [ -n "$(find images/ -name '*.trx')" ] || { echo "::error::未生成固件文件"; exit 1; }
         sudo mv -v images/*.trx /opt/images/
 
     # ========== 产物上传 ==========
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ env.DEVICE }}-Firmware-$(date +%Y%m%d-%H%M%S)
+        name: ${{ env.DEVICE }}-固件-$(date +%Y%m%d-%H%M%S)
         path: /opt/images/*.trx
