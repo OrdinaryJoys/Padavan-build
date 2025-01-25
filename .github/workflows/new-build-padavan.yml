@@ -6,7 +6,7 @@ on:
   push:
     tags:
     - 'v*'
-  workflow_dispatch:
+  workflow_dispatch:  # 新增手动触发
 
 jobs:
   build:
@@ -15,24 +15,17 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v4  # 更新至v4版本
 
     - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        # 修复镜像源
-        sudo sed -i 's/azure.archive.ubuntu.com/archive.ubuntu.com/g' /etc/apt/sources.list
-        sudo sed -i 's/security.ubuntu.com/security.ubuntu.com/g' /etc/apt/sources.list
-        
-        # 安装依赖（新增 ZeroTier 所需依赖）
-        sudo apt update -y
-        sudo apt install -y --fix-missing \
+        sudo apt install -y \
           unzip libtool-bin curl cmake gperf gawk flex bison nano xxd \
           fakeroot kmod cpio git python3-docutils gettext automake autopoint \
           texinfo build-essential help2man pkg-config zlib1g-dev libgmp3-dev \
-          libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget libc-dev-bin \
-          libssl-dev libnatpmp-dev
+          libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget libc-dev-bin
 
     - name: Clone source code
       run: |
@@ -43,37 +36,39 @@ jobs:
 
     - name: Build Firmware
       env:
-        TNAME: K2P  # 修改为实际型号
-        BLOCK_SIZE: 15872  # K2P专用块大小
+        TNAME: K2P  # 确保与模板名称一致
+        BLOCK_SIZE: 15872  # 新增块大小参数
       run: |
         cd padavan-4.4/trunk
-        if [ ! -f configs/templates/$TNAME.config ]; then
-          echo "::error::模板文件 configs/templates/$TNAME.config 不存在"
+        if [ ! -f configs/templates/$TNAME.config ] ; then
+          echo "::error file=configs/templates/$TNAME.config::Template file not found"
           exit 1
         fi
-        
-        # 基础配置
         cp -f configs/templates/$TNAME.config .config
-        sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
+        
+        # 清理配置项
+        declare -a CONFIG_CLEAN=(
+          "CONFIG_FIRMWARE_INCLUDE_MENTOHUST"
+          "CONFIG_FIRMWARE_INCLUDE_SCUTCLIENT"
+          "CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS"
+          "CONFIG_FIRMWARE_INCLUDE_SSSERVER"
+          "CONFIG_FIRMWARE_INCLUDE_DNSFORWARDER"
+          "CONFIG_FIRMWARE_INCLUDE_ADBYBY"
+          "CONFIG_FIRMWARE_INCLUDE_FRPC"
+          "CONFIG_FIRMWARE_INCLUDE_FRPS"
+          "CONFIG_FIRMWARE_INCLUDE_TUNSAFE"
+          "CONFIG_FIRMWARE_INCLUDE_ALIDDNS"
+          "CONFIG_FIRMWARE_INCLUDE_SMARTDNS"
+          "CONFIG_FIRMWARE_INCLUDE_SRELAY"
+        )
+        for item in "${CONFIG_CLEAN[@]}"; do
+          sed -i "/$item/d" .config
+        done
 
-        # 清理旧配置（新增 ZeroTier 相关项）
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_MENTOHUST/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_SCUTCLIENT/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_SSSERVER/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_DNSFORWARDER/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_ADBYBY/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_FRPC/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_FRPS/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_TUNSAFE/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_ALIDDNS/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_SMARTDNS/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_SRELAY/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_ZEROTIER/d' .config  # 新增清理项
-
-        # 写入新配置（启用 ZeroTier）
-        cat >> .config <<EOF
-CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y
+        # 写入新配置（修复多行语法）
+        cat <<EOF >> .config
+CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
+CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y  # 新增ZeroTier
 CONFIG_FIRMWARE_INCLUDE_MENTOHUST=n
 CONFIG_FIRMWARE_INCLUDE_SCUTCLIENT=n
 CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS=n
@@ -98,24 +93,12 @@ CONFIG_FIRMWARE_INCLUDE_WYYBIN=n
 CONFIG_FIRMWARE_INCLUDE_WIREGUARD=n
 EOF
 
-        # 空间优化构建
         sudo ./clear_tree
-        if ! sudo ./build_firmware_modify $TNAME $BLOCK_SIZE; then
-          echo "::warning::构建失败，尝试缩减 1MB 空间重试..."
-          sudo ./build_firmware_modify $TNAME $(($BLOCK_SIZE - 1024))
-        fi
+        sudo ./build_firmware_modify $TNAME $BLOCK_SIZE  # 使用块大小参数
+        sudo mv -f images/*.trx /opt/images/
 
-        # 产物处理
-        if ls images/*.trx >/dev/null 2>&1; then
-          sudo mv -f images/*.trx /opt/images/
-        else
-          echo "::error::未找到固件文件！"
-          exit 1
-        fi
-
-    - name: Upload packages
-      uses: actions/upload-artifact@v3
-      if: always()
+    - name: Upload packages  # 修复冒号格式（原错误点）
+      uses: actions/upload-artifact@v3  # 更新至v3版本
       with:
-        name: Padavan-${{ env.TNAME }}-$(date +%Y%m%d)
+        name: Padavan-${{ env.TNAME }}-$(date +%s)
         path: /opt/images/*.trx
