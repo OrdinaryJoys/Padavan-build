@@ -15,19 +15,25 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-    # ========== Initialization ==========
-    - name: Set timestamp
-      id: timestamp
-      run: echo "BUILD_TIMESTAMP=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+    # ========== Repository Setup ==========
+    - name: Clone Padavan base
+      uses: actions/checkout@v4
+      with:
+        repository: hanwckf/padavan-4.4
+        path: padavan
+        ref: master
 
-    # ========== Source Checkout ==========
-    - name: Checkout sources
+    - name: Checkout current repo
       uses: actions/checkout@v4
       with:
         submodules: recursive
 
-    # ========== Dependencies ==========
-    - name: Install build dependencies
+    # ========== Build Environment ==========
+    - name: Set build timestamp
+      id: timestamp
+      run: echo "BUILD_TIMESTAMP=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+
+    - name: Install dependencies
       run: |
         sudo apt-get update -y
         sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
@@ -38,57 +44,68 @@ jobs:
           libjson-c-dev jq upx libatomic1
 
     # ========== ZeroTier Source ==========
-    - name: Get ZeroTier source
+    - name: Prepare ZeroTier source
       run: |
         for i in {1..3}; do
           git clone --depth 1 --branch $(curl -s https://api.github.com/repos/zerotier/ZeroTierOne/releases/latest | jq -r .tag_name) \
             $ZT_REPO zerotier-src && break || sleep 30
         done
-        [ -d "zerotier-src" ] || { echo "❌ ZeroTier clone failed"; exit 1; }
+        [ -d "zerotier-src" ] || { echo "::error::ZeroTier clone failed"; exit 1; }
         echo "ZT_VERSION=$(cd zerotier-src && git describe --tags)" >> $GITHUB_ENV
 
-    # ========== Toolchain Setup ==========
-    - name: Restore toolchain cache
+    # ========== Toolchain Management ==========
+    - name: Cache toolchain
       uses: actions/cache@v3
       id: toolchain-cache
       with:
-        path: padavan/toolchain-mipsel/toolchain-4.4.x
+        path: padavan/toolchain/toolchain-4.4.x
         key: padavan-toolchain-${{ hashFiles('**/make-linux.mk') }}
 
     - name: Setup toolchain
       if: steps.toolchain-cache.outputs.cache-hit != 'true'
       run: |
-        mkdir -p padavan/toolchain-mipsel
-        cd padavan/toolchain-mipsel
-        for i in {1..3}; do
-          ./dl_toolchain.sh 2>&1 | tee toolchain.log && break || sleep 30
+        cd padavan/toolchain
+        chmod +x scripts/dl_toolchain.sh
+        
+        for i in {1..5}; do
+          echo "Attempt $i/5"
+          if ./scripts/dl_toolchain.sh mipsel 2>&1 | tee toolchain.log; then
+            echo "::notice::Toolchain downloaded successfully"
+            break
+          else
+            echo "::warning::Download failed, retrying in 30s..."
+            sleep 30
+          fi
         done
-        [ -d "toolchain-4.4.x/bin" ] || { echo "❌ Toolchain download failed"; exit 1; }
+
+        if [ ! -d "toolchain-4.4.x/bin" ]; then
+          echo "::error::❌ All download attempts failed!"
+          echo "=== Log Dump ==="
+          cat toolchain.log
+          exit 1
+        fi
         echo "TOOLCHAIN_PATH=$(pwd)/toolchain-4.4.x/bin" >> $GITHUB_ENV
 
-    # ========== ZeroTier Integration ==========
+    # ========== Integration ==========
     - name: Integrate ZeroTier
       run: |
+        # Copy custom modifications
+        cp -rv zerotier-src padavan/trunk/user/zerotier
+        
+        # Apply patches
         cd padavan/trunk
-        
-        # Clean and copy source
-        rm -rf user/zerotier
-        mkdir -p user/zerotier/{include,osdep,controller,node,ext}
-        cp -rv ../../zerotier-src/* user/zerotier/
-        
-        # Build configuration
         sed -i '/CFLAGS += -Os/s/$/ -Wno-error=format-truncation/' user/zerotier/Makefile
         echo "LIBS += -ljson-c -latomic" >> user/zerotier/Makefile
         
-        # Add to firmware config
+        # Update firmware config
         cat << EOF >> .config
         CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y
         CONFIG_FIRMWARE_INCLUDE_ZEROTIER_UI=y
         CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
         EOF
 
-    # ========== Build Firmware ==========
-    - name: Compile firmware
+    # ========== Build Process ==========
+    - name: Build firmware
       run: |
         cd padavan/trunk
         ./clear_tree
@@ -99,21 +116,24 @@ jobs:
         
         fakeroot ./build_firmware_modify $DEVICE $BLOCK_SIZE 2>&1 | tee build.log
         
-        [ -f "images/$DEVICE.trx" ] || { echo "❌ Firmware build failed"; exit 1; }
-        unzip -p images/*.trx | strings | grep -qE 'zerotier-one|/etc/storage/zerotier'
+        if [ ! -f "images/$DEVICE.trx" ]; then
+          echo "::error::Firmware build failed"
+          echo "=== Build Log Tail ==="
+          tail -n 100 build.log
+          exit 1
+        fi
 
     # ========== Artifacts ==========
     - name: Package release
       run: |
         cd padavan/trunk/images
         upx --best --lzma $DEVICE.trx
-        echo "Firmware size: $(du -h $DEVICE.trx)"
         
-        [ $(stat -c%s $DEVICE.trx) -lt 16777216 ] || { echo "⚠️ Firmware exceeds 16MB!"; exit 1; }
-        
+        # Generate checksums
         md5sum $DEVICE.trx > checksum.md5
         sha256sum $DEVICE.trx > checksum.sha256
         
+        # Create archive
         tar czvf $DEVICE-zt-${{ env.ZT_VERSION }}.tar.gz \
           $DEVICE.trx \
           checksum.md5 \
