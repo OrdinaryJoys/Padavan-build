@@ -1,4 +1,4 @@
-name: Padavan Builder
+name: Build Padavan Firmware
 
 on:
   push:
@@ -6,119 +6,129 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-padavan:
+  build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 120
-
+    timeout-minutes: 90
     env:
-      DEVICE_MODEL: K2P  # 可修改为 PSG1218 等其他设备
+      DEVICE: K2P  # 需与configs/templates下的配置文件名一致
       REPO_URL: https://github.com/MeIsReallyBa/padavan-4.4.git
 
     steps:
-    # ==================== 1. 环境准备 ====================
+    # ==================== 1. 准备编译环境 ====================
     - name: Setup environment
       run: |
-        # 设置国内镜像源
+        # 配置国内镜像源
         sudo sed -i 's/archive.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
         sudo sed -i 's/security.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
         
-        # 安装官方要求的依赖
+        # 安装基础依赖
         sudo apt update -y
-        sudo apt install -y \
-          unzip libtool-bin curl cmake gperf gawk flex bison nano xxd \
-          fakeroot kmod cpio git python3-docutils gettext automake autopoint \
-          texinfo build-essential help2man pkg-config zlib1g-dev libgmp3-dev \
-          libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget
-
-        # 额外添加验证工具
+        sudo apt install -y --no-install-recommends \
+          unzip libtool-bin curl cmake gperf gawk flex bison \
+          fakeroot kmod cpio git python3-docutils gettext \
+          texinfo build-essential help2man pkg-config \
+          zlib1g-dev libgmp3-dev libmpc-dev libmpfr-dev \
+          libncurses5-dev libltdl-dev xxd
+        
+        # 安装验证工具
         sudo apt install -y binwalk squashfs-tools
 
     # ==================== 2. 获取源码 ====================
-    - name: Checkout code
+    - name: Checkout source
       uses: actions/checkout@v3
 
     - name: Clone Padavan repo
       run: |
-        git clone --depth=1 ${{ env.REPO_URL }} padavan-4.4
-
-    # ==================== 3. 准备工具链 ====================
-    - name: Setup toolchain
-      run: |
-        cd padavan-4.4/toolchain-mipsel
+        git clone --depth=1 --branch master ${{ env.REPO_URL }} padavan
+        cd padavan/toolchain-mipsel
+        
+        # 下载预编译工具链
         ./dl_toolchain.sh
-        echo "工具链版本信息："
+        echo "工具链信息："
         ../toolchain-mipsel/mipsel-linux-uclibc/bin/mipsel-linux-uclibc-gcc --version
 
-    # ==================== 4. 编译固件 ====================
-    - name: Build firmware
+    # ==================== 3. 配置编译参数 ====================
+    - name: Configure build
       run: |
-        cd padavan-4.4/trunk
+        cd padavan/trunk
         
         # 检查设备配置文件
-        if [ ! -f "configs/templates/$DEVICE_MODEL.config" ]; then
-          echo "::error::找不到 $DEVICE_MODEL 的配置文件"
+        CONFIG_FILE="configs/templates/$DEVICE.config"
+        if [ ! -f "$CONFIG_FILE" ]; then
+          echo "::error::找不到设备配置文件: $CONFIG_FILE"
           exit 1
         fi
-
-        # 初始化配置
-        cp -v configs/templates/$DEVICE_MODEL.config .config
         
-        # 添加额外功能（示例：启用IPv6 NAT）
+        # 初始化配置
+        cp -v "$CONFIG_FILE" .config
+        
+        # 启用必要功能
+        echo "CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y" >> .config
         echo "CONFIG_FIRMWARE_INCLUDE_IPV6_NAT=y" >> .config
         
-        # 清理并编译
-        fakeroot ./build_firmware_modify $DEVICE_MODEL
-        
-        # 检查生成文件
-        if [ ! -d images ]; then
-          echo "::error::编译失败，未生成固件文件"
-          exit 1
-        fi
+        # 内核参数配置
+        KERNEL_CFG="configs/boards/$DEVICE/kernel-4.4.x.config"
+        echo "CONFIG_SQUASHFS=y" >> $KERNEL_CFG
+        echo "CONFIG_SQUASHFS_XZ=y" >> $KERNEL_CFG
 
-    # ==================== 5. 验证固件 ====================
-    - name: Verify firmware
+    # ==================== 4. 执行编译 ====================
+    - name: Build firmware
       run: |
-        # 基础验证
-        TRX_FILE=$(ls padavan-4.4/trunk/images/*.trx | head -n1)
+        cd padavan/trunk
         
-        # 文件大小检查（正常应大于8MB）
+        # 清理并编译
+        ./clear_tree
+        fakeroot ./build_firmware_modify $DEVICE -j$(nproc)
+        
+        # 检查产物
+        if [ ! -d images ]; then
+          echo "::error::编译失败，未生成镜像文件"
+          exit 1
+        fi
+
+    # ==================== 5. 验证镜像文件 ====================
+    - name: Validate firmware
+      run: |
+        TRX_FILE=$(ls padavan/trunk/images/*.trx | head -n1)
+        
+        # 基础验证
         if [ $(stat -c%s "$TRX_FILE") -lt 8000000 ]; then
-          echo "::error::固件文件大小异常"
+          echo "::error::固件大小异常: $(du -h $TRX_FILE)"
           exit 1
         fi
-
-        # 使用binwalk验证文件结构
-        if ! binwalk $TRX_FILE | grep -q 'Squashfs filesystem'; then
-          echo "::error::无效的Squashfs文件系统"
+        
+        # 文件头验证
+        if ! file "$TRX_FILE" | grep -q "Squashfs filesystem"; then
+          echo "::error::无效的文件格式"
           exit 1
         fi
-
+        
         # 关键文件检查
         TEMP_DIR=$(mktemp -d)
         unsquashfs -d $TEMP_DIR $TRX_FILE
-        REQUIRED_FILES=(
-          "/usr/bin/zerotier-one"
-          "/sbin/rc"
-          "/etc/storage/ddns/aliddns.sh"
+        CHECK_FILES=(
+          "/usr/bin/ash"
+          "/sbin/init"
+          "/etc/storage/web/default.asp"
         )
-        for file in "${REQUIRED_FILES[@]}"; do
-          if [ ! -f "$TEMP_DIR$file" ]; then
-            echo "::error::缺失关键文件: $file"
+        for f in "${CHECK_FILES[@]}"; do
+          if [ ! -f "$TEMP_DIR$f" ]; then
+            echo "::error::缺失关键文件: $f"
             exit 1
           fi
         done
         rm -rf $TEMP_DIR
 
     # ==================== 6. 发布产物 ====================
-    - name: Upload artifact
+    - name: Upload firmware
       uses: actions/upload-artifact@v3
       with:
-        name: ${{ env.DEVICE_MODEL }}-firmware
-        path: padavan-4.4/trunk/images/*.trx
+        name: ${{ env.DEVICE }}-firmware
+        path: padavan/trunk/images/*.trx
         retention-days: 7
 
     # ==================== 7. 清理环境 ====================
     - name: Cleanup
       if: always()
       run: |
-        sudo rm -rf padavan-4.4
+        sudo rm -rf padavan
