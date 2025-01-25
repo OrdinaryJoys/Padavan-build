@@ -10,13 +10,12 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     env:
-      DEVICE: K2P        # 需修改的设备型号
+      DEVICE: K2P        # 设备型号
       BLOCK_SIZE: 15872  # 块大小(KB)
 
     steps:
-    # ========== 关键修复区域 (第55行附近) ==========
-    - name: Install dependencies  # 步骤名称正确缩进
-      run: |                     # 管道符后必须换行
+    - name: Install dependencies
+      run: |
         sudo apt-get update -y
         sudo apt-get install -y \
           unzip libtool-bin curl cmake \
@@ -24,7 +23,7 @@ jobs:
           fakeroot kmod cpio \
           git python3-docutils gettext \
           texinfo build-essential \
-          zlib1g-dev libgmp3-dev  # 第55行对应位置
+          zlib1g-dev libgmp3-dev
 
     - name: Clone source code
       run: |
@@ -39,11 +38,9 @@ jobs:
         [ ! -f "configs/templates/${DEVICE}.config" ] && exit 1
         cp "configs/templates/${DEVICE}.config" .config
         
-        # 清理配置项
+        # 清理并更新配置
         sed -i '/CONFIG_FIRMWARE_INCLUDE_ZEROTIER/d' .config
         sed -i '/CONFIG_FIRMWARE_INCLUDE_ADBYBY/d' .config
-
-        # 写入新配置
         echo "CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y" >> .config
         echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y" >> .config
 
@@ -52,6 +49,9 @@ jobs:
         cd padavan-4.4/trunk
         sudo ./clear_tree
         sudo ./build_firmware_modify "$DEVICE" "$BLOCK_SIZE"
+        
+        # 关键修复：创建目标目录后再移动文件
+        sudo mkdir -p /opt/images  # 确保目录存在
         sudo mv images/*.trx /opt/images/
 
     - name: Upload artifact
