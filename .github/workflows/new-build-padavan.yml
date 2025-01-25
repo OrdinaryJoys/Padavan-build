@@ -9,16 +9,14 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     env:
-      DEVICE: K2P        # 设备型号
-      BLOCK_SIZE: 15872  # 块大小（单位KB）
-      ZT_ENABLED: "y"    # ZeroTier开关
+      DEVICE: K2P
+      BLOCK_SIZE: 15872
+      ZT_ENABLED: "y"
 
     steps:
-    # ========== 代码检出 ==========
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # ========== 依赖安装 ==========
     - name: Install dependencies
       run: |
         sudo apt-get update -y
@@ -29,7 +27,6 @@ jobs:
           libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget libc-dev-bin \
           libssl-dev libjson-c-dev
 
-    # ========== 源码准备 ==========
     - name: Prepare source
       run: |
         git clone --depth=1 https://github.com/hanwckf/padavan-4.4.git
@@ -37,22 +34,18 @@ jobs:
         ./dl_toolchain.sh
         sudo mkdir -p /opt/images
 
-    # ========== 配置阶段 ==========
     - name: Configure firmware
       shell: bash
-      run: |  # 缩进两个空格
+      run: |
         cd padavan-4.4/trunk
 
-        # 验证配置模板存在
         if [ ! -f "configs/templates/${DEVICE}.config" ]; then
           echo "::error::Template ${DEVICE}.config not found"
           exit 1
         fi
 
-        # 应用基础配置
         cp -v "configs/templates/${DEVICE}.config" .config
 
-        # 清理旧配置项
         declare -a CONFIG_CLEAN=(
           "CONFIG_FIRMWARE_INCLUDE_ZEROTIER"
           "CONFIG_FIRMWARE_INCLUDE_ADBYBY"
@@ -61,20 +54,17 @@ jobs:
           sed -i "/^${item}=/d" .config
         done
 
-        # 写入新配置（EOF顶格）
         cat << 'EOF' >> .config
 CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
 CONFIG_FIRMWARE_INCLUDE_ZEROTIER=${ZT_ENABLED}
 CONFIG_FIRMWARE_INCLUDE_ADBYBY=n
 EOF
 
-    # ========== 构建阶段 ==========
     - name: Build firmware
       run: |
         cd padavan-4.4/trunk
         sudo ./clear_tree
 
-        # 分阶段构建
         echo "::group::Building kernel"
         make kernel || exit 1
         echo "::endgroup::"
@@ -83,7 +73,6 @@ EOF
         make modules -j2 || exit 1
         echo "::endgroup::"
 
-        # 主构建流程
         echo "::group::Final compilation"
         if ! sudo ./build_firmware_modify "${DEVICE}" "${BLOCK_SIZE}"; then
           echo "::warning::Retrying with reduced block size..."
@@ -91,14 +80,12 @@ EOF
         fi
         echo "::endgroup::"
 
-        # 产物验证
         if [ -z "$(ls images/*.trx 2>/dev/null)" ]; then
           echo "::error::No firmware files generated"
           exit 1
         fi
         sudo mv -v images/*.trx /opt/images/
 
-    # ========== 产物上传 ==========
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
