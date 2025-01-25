@@ -1,4 +1,4 @@
-name: Build Padavan with ZeroTier
+name: Build Padavan
 
 on:
   release:
@@ -12,154 +12,67 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     env:
-      DEVICE_MODEL: K2P      # 需修改为设备型号
-      BLOCK_SIZE: 15872      # K2P推荐块大小
-      ZEROTIER_ENABLED: "y"  # 启用ZeroTier
+      DEVICE_MODEL: K2P
+      BLOCK_SIZE: 15872  # 单位KB
+      ZT_ENABLED: "y"    # ZeroTier开关
 
     steps:
-    # ========== 代码检出 ==========
-    - name: Checkout repository
+    - name: Checkout code
       uses: actions/checkout@v4
 
-    # ========== 环境准备 ==========
-    - name: Setup build environment
-      env:
-        DEBIAN_FRONTEND: noninteractive
+    - name: Install dependencies
       run: |
-        # 修复镜像源
-        sudo sed -i 's/azure.archive.ubuntu.com/archive.ubuntu.com/g' /etc/apt/sources.list
-        sudo sed -i 's/security.ubuntu.com/security.ubuntu.com/g' /etc/apt/sources.list
+        sudo apt update && sudo apt install -y \
+          unzip libtool-bin curl cmake gperf gawk flex bison \
+          fakeroot kmod cpio git python3-docutils gettext
 
-        # 安装依赖
-        sudo apt-get update -y
-        sudo apt-get install -y --no-install-recommends \
-          unzip libtool-bin curl cmake gperf gawk flex bison nano xxd \
-          fakeroot kmod cpio git python3-docutils gettext automake autopoint \
-          texinfo build-essential help2man pkg-config zlib1g-dev libgmp3-dev \
-          libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget libc-dev-bin \
-          libssl-dev libjson-c-dev uuid-dev
-
-    # ========== 源码准备 ==========
-    - name: Clone Padavan source
+    - name: Clone source
       run: |
-        git clone --depth=1 --branch master \
-          https://github.com/hanwckf/padavan-4.4.git
+        git clone --depth=1 https://github.com/hanwckf/padavan-4.4.git
         cd padavan-4.4/toolchain-mipsel
-        echo "::group::Downloading toolchain"
         ./dl_toolchain.sh
-        echo "::endgroup::"
-        sudo mkdir -p /opt/images
 
-    # ========== 固件配置 ========== (关键修复区域)
-    - name: Configure firmware
-      run: |
+    # ========== 关键修复区域 (原第91行附近) ==========
+    - name: Configure build
+      run: |  # 第91行的正确缩进开始
         cd padavan-4.4/trunk
-
-        # 验证设备模板
-        CONFIG_TEMPLATE="configs/templates/${DEVICE_MODEL}.config"
-        if [[ ! -f "$CONFIG_TEMPLATE" ]]; then
-          echo "::error::设备模板 $CONFIG_TEMPLATE 不存在！"
+        
+        # 验证模板文件存在
+        [ ! -f "configs/templates/${DEVICE_MODEL}.config" ] && {
+          echo "::error::Missing template for ${DEVICE_MODEL}"
           exit 1
-        fi
+        }
 
         # 应用基础配置
-        cp -fv "$CONFIG_TEMPLATE" .config
+        cp "configs/templates/${DEVICE_MODEL}.config" .config
 
-        # 清理旧配置项
-        declare -a CONFIG_CLEANUP=(
-          "CONFIG_FIRMWARE_INCLUDE_ZEROTIER"
-          "CONFIG_FIRMWARE_INCLUDE_MENTOHUST"
-          "CONFIG_FIRMWARE_INCLUDE_SCUTCLIENT"
-          "CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS"
-          "CONFIG_FIRMWARE_INCLUDE_SSSERVER"
-          "CONFIG_FIRMWARE_INCLUDE_DNSFORWARDER"
-          "CONFIG_FIRMWARE_INCLUDE_ADBYBY"
-          "CONFIG_FIRMWARE_INCLUDE_FRPC"
-          "CONFIG_FIRMWARE_INCLUDE_FRPS"
-          "CONFIG_FIRMWARE_INCLUDE_TUNSAFE"
-          "CONFIG_FIRMWARE_INCLUDE_ALIDDNS"
-          "CONFIG_FIRMWARE_INCLUDE_SMARTDNS"
-          "CONFIG_FIRMWARE_INCLUDE_SRELAY"
-        )
-        for item in "${CONFIG_CLEANUP[@]}"; do
-          sed -i "/^${item}=/d" .config
-        done
+        # 清理旧配置（精确匹配）
+        sed -i '/^CONFIG_FIRMWARE_INCLUDE_ZEROTIER=/d' .config
+        sed -i '/^CONFIG_FIRMWARE_INCLUDE_ADBYBY=/d' .config
 
-        # 写入新配置
-        cat <<EOF >> .config
-# 核心功能
+        # 写入新配置（修复heredoc语法）
+        cat << 'EOF' >> .config  # 第91行实际位置
 CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
-CONFIG_FIRMWARE_INCLUDE_ZEROTIER=${ZEROTIER_ENABLED}
-
-# 禁用非必要功能
-CONFIG_FIRMWARE_INCLUDE_MENTOHUST=n
-CONFIG_FIRMWARE_INCLUDE_SCUTCLIENT=n
-CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS=n
-CONFIG_FIRMWARE_INCLUDE_SSOBFS=n
+CONFIG_FIRMWARE_INCLUDE_ZEROTIER=${ZT_ENABLED}
 CONFIG_FIRMWARE_INCLUDE_ADBYBY=n
-CONFIG_FIRMWARE_INCLUDE_DNSFORWARDER=n
-CONFIG_FIRMWARE_INCLUDE_SRELAY=n
-CONFIG_FIRMWARE_INCLUDE_XRAY=n
-CONFIG_FIRMWARE_INCLUDE_V2RAY=n
-CONFIG_FIRMWARE_INCLUDE_DDNSTO=n
-CONFIG_FIRMWARE_INCLUDE_ALDRIVER=n
-CONFIG_FIRMWARE_INCLUDE_ALIDDNS=n
-CONFIG_FIRMWARE_INCLUDE_SMARTDNS=n
-CONFIG_FIRMWARE_INCLUDE_SMARTDNSBIN=n
-CONFIG_FIRMWARE_INCLUDE_TROJAN=n
-CONFIG_FIRMWARE_INCLUDE_KOOLPROXY=n
-CONFIG_FIRMWARE_INCLUDE_CADDY=n
-CONFIG_FIRMWARE_INCLUDE_CADDYBIN=n
-CONFIG_FIRMWARE_INCLUDE_ADGUARDHOME=n
-CONFIG_FIRMWARE_INCLUDE_WYY=n
-CONFIG_FIRMWARE_INCLUDE_WYYBIN=n
-CONFIG_FIRMWARE_INCLUDE_WIREGUARD=n
 EOF
 
-    # ========== 编译构建 ==========
     - name: Build firmware
       run: |
         cd padavan-4.4/trunk
-        
-        # 清理构建环境
         sudo ./clear_tree
-        make clean
-
-        # 分阶段构建
-        echo "::group::Building kernel"
-        make kernel || exit 1
-        echo "::endgroup::"
-
-        echo "::group::Building modules"
-        make modules || exit 1
-        echo "::endgroup::"
-
-        # 主构建流程
-        echo "::group::Final firmware build"
-        if ! sudo ./build_firmware_modify "$DEVICE_MODEL" "$BLOCK_SIZE"; then
-          echo "::warning::构建失败，尝试缩减至 $((BLOCK_SIZE - 1024))KB 重试..."
-          sudo ./build_firmware_modify "$DEVICE_MODEL" $((BLOCK_SIZE - 1024))
+        
+        # 带空间限制的构建命令
+        if ! sudo ./build_firmware_modify "${DEVICE_MODEL}" "${BLOCK_SIZE}"; then
+          echo "::warning::Retrying with reduced size..."
+          sudo ./build_firmware_modify "${DEVICE_MODEL}" $((BLOCK_SIZE - 1024))
         fi
-        echo "::endgroup::"
-
-        # 产物验证
-        if ! ls images/*.trx >/dev/null 2>&1; then
-          echo "::error::未找到固件文件！"
-          exit 1
-        fi
+        
+        # 移动产物
         sudo mv -v images/*.trx /opt/images/
 
-    # ========== 产物上传 ==========
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ env.DEVICE_MODEL }}-Firmware
+        name: ${DEVICE_MODEL}-$(date +%s)
         path: /opt/images/*.trx
-        retention-days: 7
-
-    # ========== 清理工作区 ==========
-    - name: Clean workspace
-      if: always()
-      run: |
-        sudo rm -rf padavan-4.4/
-        sudo rm -rf /opt/images/
