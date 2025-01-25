@@ -1,4 +1,4 @@
-name: Padavan AutoBuild
+name: Padavan Builder
 
 on:
   workflow_dispatch:
@@ -9,92 +9,64 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     env:
-      DEVICE: K2P       # 设备型号 (必须与模板文件名一致)
-      BLOCK_SIZE: 15872 # 块大小单位KB (K2P建议值)
-      ZT_MODE: "y"      # ZeroTier开关 (y/n)
+      DEVICE: K2P
+      BLOCK_SIZE: 15872
+      ZT_MODE: "y"
 
     steps:
     # ========== 代码检出 ==========
-    - name: Checkout repository
+    - name: Checkout code
       uses: actions/checkout@v4
 
-    # ========== 依赖安装 ========== (关键修复区域)
+    # ========== 依赖安装 ==========
     - name: Install dependencies
-      run: |  # 第25行（正确缩进）
+      run: |
         sudo apt-get update -y
-        sudo apt-get install -y --no-install-recommends \
+        sudo apt-get install -y \
           unzip libtool-bin curl cmake gperf gawk flex bison \
-          fakeroot kmod cpio git python3-docutils gettext \
-          texinfo build-essential help2man pkg-config \
-          zlib1g-dev libgmp3-dev libmpc-dev libmpfr-dev \
-          libncurses5-dev libltdl-dev libssl-dev libjson-c-dev
+          fakeroot kmod cpio git python3-docutils gettext
 
     # ========== 源码准备 ==========
-    - name: Prepare source code
+    - name: Clone source
       run: |
         git clone --depth=1 https://github.com/hanwckf/padavan-4.4.git
         cd padavan-4.4/toolchain-mipsel
         ./dl_toolchain.sh
         mkdir -p /opt/images
 
-    # ========== 配置阶段 ========== (关键修复行71)
+    # ========== 配置阶段 ========== (关键修复区域)
     - name: Configure firmware
-      run: |  # 第46行（正确缩进）
+      run: |  # 第60行
         cd padavan-4.4/trunk
-
-        # ===== 验证模板存在 =====
-        if [ ! -f "configs/templates/${DEVICE}.config" ]; then
-          echo "::error file=.github/workflows/new-build-padavan.yml,line=71::Missing template for ${DEVICE}"
+        
+        # 验证模板存在
+        [ ! -f "configs/templates/${DEVICE}.config" ] && {
+          echo "::error::Missing template for ${DEVICE}"
           exit 1
-        fi
+        }
 
-        # ===== 应用基础配置 =====
-        cp -v "configs/templates/${DEVICE}.config" .config
+        # 应用基础配置
+        cp "configs/templates/${DEVICE}.config" .config
 
-        # ===== 清理旧配置项 ===== (精确匹配)
+        # ========== 第61行关键修复 ==========
+        # 清理旧配置项（精确匹配）
         sed -i '/^CONFIG_FIRMWARE_INCLUDE_ZEROTIER=/d' .config
         sed -i '/^CONFIG_FIRMWARE_INCLUDE_ADBYBY=/d' .config
 
-        # ===== 写入新配置 ===== (第71行关键修复)
-        cat << 'EOF' >> .config  # 必须顶格写，前面不能有空格
-# ========== 核心配置 ==========
+        # 写入新配置（修复heredoc语法）
+        cat << 'EOF' >> .config  # 必须保持顶格
 CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
 CONFIG_FIRMWARE_INCLUDE_ZEROTIER=${ZT_MODE}
-
-# ========== 禁用非必要功能 ==========
 CONFIG_FIRMWARE_INCLUDE_ADBYBY=n
-CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS=n
 EOF
 
     # ========== 构建阶段 ==========
     - name: Build firmware
-      run: |  # 正确缩进
+      run: |
         cd padavan-4.4/trunk
         sudo ./clear_tree
-
-        # 分阶段构建
-        echo "::group::Building kernel"
-        make kernel || exit 1
-        echo "::endgroup::"
-
-        echo "::group::Building modules"
-        make modules -j2 || exit 1
-        echo "::endgroup::"
-
-        # 主构建流程
-        echo "::group::Final compilation"
-        if ! sudo ./build_firmware_modify "${DEVICE}" "${BLOCK_SIZE}"; then
-          echo "::warning::Retrying with reduced size..."
-          sudo ./build_firmware_modify "${DEVICE}" $((BLOCK_SIZE - 1024))
-        fi
-        echo "::endgroup::"
-
-        # 产物验证
-        if [ -z "$(ls images/*.trx 2>/dev/null)" ]; then
-          echo "::error::No firmware files generated!"
-          exit 1
-        fi
-        sudo mv -v images/*.trx /opt/images/
+        sudo ./build_firmware_modify "${DEVICE}" "${BLOCK_SIZE}"
+        sudo mv images/*.trx /opt/images/
 
     # ========== 产物上传 ==========
     - name: Upload artifact
