@@ -5,15 +5,14 @@ on:
     types: [published]
   push:
     tags: ['v*']
-  watch:
-    types: [started]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 120
     env:
-      REPO_URL: https://github.com/MeIsReallyBa/padavan-4.4.git  # 修改源码地址
+      REPO_URL: https://github.com/MeIsReallyBa/padavan-4.4.git
       TOOLCHAIN_DIR: mipsel-linux-uclibc
 
     steps:
@@ -21,13 +20,10 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    # ==================== 2. 初始化环境 ====================
+    # ==================== 2. 环境初始化 ====================
     - name: Setup environment
-      env:
-        DEBIAN_FRONTEND: noninteractive
       run: |
         sudo sed -i 's/archive.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
-        sudo sed -i 's/security.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
         sudo apt update -y
         sudo apt install -y --no-install-recommends \
           unzip libtool-bin curl cmake gperf gawk flex bison xxd \
@@ -35,98 +31,119 @@ jobs:
           texinfo build-essential help2man pkg-config zlib1g-dev \
           libgmp3-dev libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev
 
-    # ==================== 3. 获取源码 ====================
+    # ==================== 3. 获取源码（关键修复） ====================
     - name: Clone source
       run: |
-        # 明确指定分支（根据实际仓库分支调整）
-        git clone --depth=1 -b main ${{ env.REPO_URL }} padavan  # -b 后接实际分支名
-        cd padavan
+        # 强制清理旧目录
+        [ -d padavan ] && sudo rm -rf padavan
         
-        # 动态检测代码结构
+        # 显式指定分支并添加调试
+        echo "=== 正在克隆仓库 ==="
+        git clone --depth=1 -b main ${{ env.REPO_URL }} padavan || {
+          echo "::error::仓库克隆失败";
+          exit 1;
+        }
+        
+        cd padavan
+        echo "=== 仓库结构 ==="
+        ls -la
+        echo "=== 分支信息 ==="
+        git branch -a
+
+        # 动态路径检测
         if [ -d "trunk" ]; then
           echo "WORKSPACE=trunk" >> $GITHUB_ENV
+          echo "检测到 trunk 目录"
         else
           echo "WORKSPACE=." >> $GITHUB_ENV
+          echo "使用根目录作为工作区"
         fi
-        
-        echo "=== 仓库结构验证 ==="
-        ls -l ${{ env.WORKSPACE }}/configs/templates/
 
-    # ==================== 4. 工具链配置 ====================
+    # ==================== 4. 工具链配置（关键修复） ====================
     - name: Setup toolchain
       run: |
         cd padavan/toolchain-mipsel
         
-        # 清理旧文件并下载工具链
-        rm -rf ${{ env.TOOLCHAIN_DIR }} *.tar.xz
+        # 清理旧工具链
+        sudo rm -rf ${{ env.TOOLCHAIN_DIR }} *.tar.xz
         
-        # 带重试的下载机制
+        # 带校验的下载
         for i in {1..3}; do
-          ./dl_toolchain.sh && break || sleep 30
+          ./dl_toolchain.sh && {
+            [ -f mipsel-linux-uclibc.tar.xz ] && break
+          } || sleep 30
         done
         
         # 解压验证
-        tar -xvf mipsel-linux-uclibc.tar.xz
-        chmod -R +x ${{ env.TOOLCHAIN_DIR }}
+        tar -xvf mipsel-linux-uclibc.tar.xz || {
+          echo "::error::工具链解压失败";
+          exit 1;
+        }
         
-        # 工具链验证
+        # 权限修复（避免使用sudo）
+        chmod -R 755 ${{ env.TOOLCHAIN_DIR }}
+        
+        # 编译器验证
+        echo "=== 工具链版本 ==="
         ${{ env.TOOLCHAIN_DIR }}/bin/mipsel-linux-uclibc-gcc --version || {
-          echo "::error::工具链校验失败";
+          echo "::error::工具链不完整";
           exit 1;
         }
 
-    # ==================== 5. 固件配置 ====================
+    # ==================== 5. 固件配置（关键修复） ====================
     - name: Configure firmware
       env:
-        TNAME: K2P  # 修改设备型号
+        TNAME: K2P
       run: |
         cd padavan/${{ env.WORKSPACE }}
         
-        # 配置文件检查
-        CONFIG_FILE="configs/templates/$TNAME.config"
-        if [ ! -f "$CONFIG_FILE" ]; then
-          echo "::error::配置文件 $CONFIG_FILE 不存在!"
-          ls configs/templates/
+        # 配置文件存在性验证
+        CONFIG_PATH="configs/templates/$TNAME.config"
+        if [ ! -f "$CONFIG_PATH" ]; then
+          echo "::error::配置文件 $CONFIG_PATH 不存在！"
+          echo "现有配置文件列表："
+          ls -l configs/templates/
           exit 1
         fi
-        
-        # 基础配置
-        cp -v "$CONFIG_FILE" .config
-        sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
-        
-        # 使用循环清理配置项
-        for item in MENTOHUST SCUTCLIENT SHADOWSOCKS SSSERVER DNSFORWARDER ADBYBY \
-                    FRPC FRPS TUNSAFE ALIDDNS SMARTDNS SRELAY XRAY V2RAY TROJAN \
-                    KOOLPROXY CADDY ADGUARDHOME WYY ZEROTIER; do
-          sed -i "/CONFIG_FIRMWARE_INCLUDE_$item/d" .config
-        done
 
-        # 自定义功能配置
+        # 配置处理
+        cp -v "$CONFIG_PATH" .config
+        
+        # 使用sed严格模式清理配置
+        sed -i '/^CONFIG_FIRMWARE_INCLUDE_/d' .config
+        
+        # 写入必要配置
         cat <<EOF >> .config
+CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
 CONFIG_FIRMWARE_INCLUDE_TUNSAFE=y
-CONFIG_FIRMWARE_INCLUDE_ZEROTIER=n
-CONFIG_FIRMWARE_INCLUDE_ADBYBY=n
+CONFIG_FIRMWARE_INCLUDE_IPV6_NAT=y
 EOF
 
-    # ==================== 6. 执行编译 ====================
+    # ==================== 6. 执行编译（关键修复） ====================
     - name: Build firmware
       run: |
         cd padavan/${{ env.WORKSPACE }}
         
-        # 设置工具链路径
-        echo "$GITHUB_WORKSPACE/padavan/toolchain-mipsel/${{ env.TOOLCHAIN_DIR }}/bin" >> $GITHUB_PATH
+        # 设置编译环境
+        echo "PATH=$PATH:$GITHUB_WORKSPACE/padavan/toolchain-mipsel/${{ env.TOOLCHAIN_DIR }}/bin" >> $GITHUB_ENV
         
-        # 清理并编译
-        ./clear_tree
-        echo "=== 开始编译 ==="
-        fakeroot ./build_firmware_modify ${{ env.TNAME }} -j$(nproc)
+        # 清理环境
+        ./clear_tree || true
         
-        # 产物处理
-        mkdir -p $GITHUB_WORKSPACE/output
-        [ -d "images" ] && mv images/*.trx $GITHUB_WORKSPACE/output/ || {
-          echo "::error::未生成固件文件";
+        # 启动编译
+        echo "=== 编译开始 ==="
+        fakeroot ./build_firmware_modify ${{ env.TNAME }} -j$(nproc) || {
+          echo "::error::编译过程失败";
           exit 1;
         }
+        
+        # 产物检查
+        [ ! -d "images" ] && {
+          echo "::error::未生成镜像目录";
+          exit 1;
+        }
+        mkdir -p $GITHUB_WORKSPACE/output
+        mv images/*.trx $GITHUB_WORKSPACE/output/
 
     # ==================== 7. 发布产物 ====================
     - name: Upload artifact
