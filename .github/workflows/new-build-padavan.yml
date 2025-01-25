@@ -33,11 +33,11 @@ jobs:
     # ==================== 2. 获取源码 ====================
     - name: Clone repository
       run: |
-        # 不指定分支自动克隆默认分支
-        git clone --depth=1 ${{ env.REPO_URL }} padavan
+        # 修复点：明确指定 trunk 分支
+        git clone --depth=1 -b trunk ${{ env.REPO_URL }} padavan
         cd padavan
         
-        # 验证仓库结构
+        # 验证仓库结构（移除 trunk/ 前缀）
         echo "=== 仓库分支信息 ==="
         git branch -a
         echo "=== 关键目录检查 ==="
@@ -65,17 +65,17 @@ jobs:
         
         # 路径自动检测
         if [ -d "toolchain-mipsel" ]; then
-          TOOLCHAIN_DIR="toolchain-mipsel"
+          echo "TOOLCHAIN_DIR=toolchain-mipsel" >> $GITHUB_ENV
         else
-          TOOLCHAIN_DIR="mipsel-linux-uclibc"
+          echo "TOOLCHAIN_DIR=mipsel-linux-uclibc" >> $GITHUB_ENV
         fi
         
         # 权限修复
-        chmod -R +x $TOOLCHAIN_DIR
+        chmod -R +x ${{ env.TOOLCHAIN_DIR }}
         
         # 编译器验证
         echo "=== 工具链信息 ==="
-        $TOOLCHAIN_DIR/bin/mipsel-linux-uclibc-gcc --version || {
+        ${{ env.TOOLCHAIN_DIR }}/bin/mipsel-linux-uclibc-gcc --version || {
           echo "::error::工具链验证失败";
           exit 1;
         }
@@ -83,10 +83,10 @@ jobs:
     # ==================== 4. 编译配置 ====================
     - name: Configure build
       run: |
-        cd padavan/trunk
+        cd padavan
         
-        # 设备配置检查
-        CONFIG_FILE="configs/templates/$DEVICE.config"
+        # 修复点：移除 trunk/ 路径层级
+        CONFIG_FILE="configs/templates/${{ env.DEVICE }}.config"
         if [ ! -f "$CONFIG_FILE" ]; then
           echo "::error::设备配置文件 $CONFIG_FILE 不存在"
           ls configs/templates/
@@ -101,15 +101,15 @@ jobs:
     # ==================== 5. 执行编译 ====================
     - name: Build firmware
       run: |
-        cd padavan/trunk
+        cd padavan
         
         # 设置工具链路径
-        export PATH="$PWD/../toolchain-mipsel/$TOOLCHAIN_DIR/bin:$PATH"
+        echo "PATH=$PATH:$PWD/toolchain-mipsel/${{ env.TOOLCHAIN_DIR }}/bin" >> $GITHUB_ENV
         
         # 清理并编译
         ./clear_tree
         echo "=== 开始编译 ==="
-        fakeroot ./build_firmware_modify $DEVICE -j$(nproc)
+        fakeroot ./build_firmware_modify ${{ env.DEVICE }} -j$(nproc)
         
         # 输出目录验证
         if [ ! -d "images" ]; then
@@ -120,7 +120,7 @@ jobs:
     # ==================== 6. 产物验证 ====================
     - name: Verify firmware
       run: |
-        TRX_FILE=$(ls padavan/trunk/images/*.trx | head -n1)
+        TRX_FILE=$(ls padavan/images/*.trx | head -n1)
         
         # 基础检查
         if [ $(stat -c%s "$TRX_FILE") -lt 8000000 ]; then
@@ -140,7 +140,7 @@ jobs:
       uses: actions/upload-artifact@v3
       with:
         name: ${{ env.DEVICE }}-firmware
-        path: padavan/trunk/images/*.trx
+        path: padavan/images/*.trx
         retention-days: 7
 
     # ==================== 8. 环境清理 ====================
