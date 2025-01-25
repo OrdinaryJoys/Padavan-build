@@ -1,0 +1,138 @@
+name: Padavan Builder
+
+on:
+  release:
+    types: [published]
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  firmware-build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+
+    env:
+      BUILD_DIR: padavan-4.4
+      OUTPUT_DIR: /opt/images
+      DEVICE_MODEL: K2P  # 修改为你的设备型号
+
+    steps:
+    # ==================== 环境准备阶段 ====================
+    - name: Checkout source
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 1
+
+    - name: Configure environment
+      run: |
+        # 替换镜像源为国内源
+        sudo sed -i 's/archive.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
+        sudo sed -i 's/security.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
+        
+        # 安装核心依赖（新增ZEROTIER依赖）
+        sudo apt update -y
+        sudo apt install -y --no-install-recommends \
+          unzip libtool-bin cmake gperf flex bison \
+          git automake autoconf build-essential \
+          zlib1g-dev libgmp-dev libmpc-dev libmpfr-dev \
+          gettext texinfo help2man xxd vim-common \
+          python3-docutils fakeroot kmod cpio \
+          libssl-dev libjson-c-dev  # ZEROTIER必要依赖
+
+        # 确保xxd存在
+        if ! command -v xxd &> /dev/null; then
+          wget http://archive.ubuntu.com/ubuntu/pool/main/v/vim/vim_8.2.3995-1ubuntu2.21_amd64.deb
+          sudo dpkg -i vim_8.2.3995-1ubuntu2.21_amd64.deb || true
+          sudo apt install -y -f
+        fi
+
+    # ==================== 工具链准备阶段 ====================
+    - name: Prepare toolchain
+      run: |
+        git clone --depth=1 https://github.com/hanwckf/${{ env.BUILD_DIR }}.git
+        cd ${{ env.BUILD_DIR }}/toolchain-mipsel
+        ./dl_toolchain.sh
+        sudo mkdir -p ${{ env.OUTPUT_DIR }} && sudo chmod 777 ${{ env.OUTPUT_DIR }}
+
+    # ==================== 固件构建阶段 ====================
+    - name: Build firmware
+      run: |
+        cd ${{ env.BUILD_DIR }}/trunk
+
+        # 配置校验
+        CONFIG_TEMPLATE="configs/templates/${{ env.DEVICE_MODEL }}.config"
+        [ ! -f "$CONFIG_TEMPLATE" ] && echo "::error::设备模板 $CONFIG_TEMPLATE 不存在!" && exit 1
+        
+        # 应用基础配置
+        cp -v "$CONFIG_TEMPLATE" .config
+        sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
+
+        # 配置清理（保留UPNP/DMZ/DDNS相关）
+        declare -a REMOVE_CONFIGS=(
+          "MENTOHUST" "SCUTCLIENT" "SHADOWSOCKS" "SSSERVER" 
+          "DNSFORWARDER" "ADBYBY" "FRPC" "FRPS" 
+          "TUNSAFE" "SMARTDNS" "SRELAY" "ALIDDNS"
+        )
+        for cfg in "${REMOVE_CONFIGS[@]}"; do
+          sed -i "/CONFIG_FIRMWARE_INCLUDE_${cfg}/d" .config
+        done
+
+        # 功能配置注入
+        declare -A FEATURE_CONFIGS=(
+          ["ZEROTIER"]="y"       # 分布式网络
+          ["MINIIGD_UPNP"]="y"   # MiniUPnP
+          ["UPNP"]="y"           # UPNP服务
+          ["DMZ"]="y"            # DMZ主机
+          ["DDNS"]="y"           # 动态DNS基础
+          ["DDNS_SSL"]="y"       # DDNS SSL支持
+          ["NOIP"]="y"           # No-IP.com
+          ["DNSPOD"]="y"         # DNSPod
+          ["ALIDDNS"]="y"        # 阿里云DDNS
+          ["OPENSSL_EXE"]="y"    # OpenSSL可执行文件
+        )
+        for key in "${!FEATURE_CONFIGS[@]}"; do
+          echo "CONFIG_FIRMWARE_INCLUDE_${key}=${FEATURE_CONFIGS[$key]}" >> .config
+        done
+
+        # 添加DMZ防火墙规则模板
+        echo "iptables -t nat -A PREROUTING -i eth0 -j DNAT --to-destination \$(nvram get lan_ipaddr)" >> user_script.sh
+
+        # 执行编译
+        sudo ./clear_tree
+        echo "=== 开始编译 ${{ env.DEVICE_MODEL }} 固件 ==="
+        time sudo ./build_firmware_modify ${{ env.DEVICE_MODEL }} 0
+
+        # 产物处理
+        [ ! -d images ] && echo "::error::未找到编译输出目录" && exit 1
+        sudo mv -v images/*.trx ${{ env.OUTPUT_DIR }}/
+
+    # ==================== 功能验证阶段 ====================
+    - name: Verify features
+      run: |
+        trx_file=$(ls ${{ env.OUTPUT_DIR }}/*.trx | head -1)
+        REQUIRED_FEATURES=("zerotier" "upnp" "ddns" "dmz")
+        
+        for feature in "${REQUIRED_FEATURES[@]}"; do
+          if ! strings "$trx_file" | grep -qi "$feature"; then
+            echo "::error::未检测到 $feature 组件"
+            exit 1
+          else
+            echo "✓ 已包含 $feature 功能"
+          fi
+        done
+
+    # ==================== 产物上传阶段 ====================
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ env.DEVICE_MODEL }}-with-zt-upnp-dmz-${{ github.run_number }}
+        path: ${{ env.OUTPUT_DIR }}/*.trx
+        retention-days: 7
+
+    # ==================== 后清理阶段 ====================
+    - name: Cleanup workspace
+      if: always()
+      run: |
+        sudo rm -rf ${{ env.BUILD_DIR }}
+        sudo rm -rf ${{ env.OUTPUT_DIR }}/*
