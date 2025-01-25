@@ -1,4 +1,4 @@
-name: Padavan-ZeroTier集成构建系统
+name: Padavan-ZeroTier-Build
 
 on:
   workflow_dispatch:
@@ -10,24 +10,24 @@ env:
   BLOCK_SIZE: 15872
   ZT_REPO: https://github.com/zerotier/ZeroTierOne.git
   PADAVAN_REPO: https://github.com/hanwckf/padavan-4.4.git
-  TOOLCHAIN_CACHE_KEY: padavan-toolchain-${{ hashFiles('**/make-linux.mk') }}
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-    # ========== 初始化阶段 ==========
-    - name: 设置构建时间戳
+    # ========== Initialization ==========
+    - name: Set timestamp
       id: timestamp
       run: echo "BUILD_TIMESTAMP=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
 
-    - name: 检出源码
+    # ========== Source Checkout ==========
+    - name: Checkout sources
       uses: actions/checkout@v4
       with:
         submodules: recursive
 
-    # ========== 依赖管理 ==========
-    - name: 安装构建依赖
+    # ========== Dependencies ==========
+    - name: Install build dependencies
       run: |
         sudo apt-get update -y
         sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
@@ -37,25 +37,25 @@ jobs:
           libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev libssl-dev \
           libjson-c-dev jq upx libatomic1
 
-    # ========== ZeroTier集成 ==========
-    - name: 获取ZeroTier源码
+    # ========== ZeroTier Source ==========
+    - name: Get ZeroTier source
       run: |
         for i in {1..3}; do
           git clone --depth 1 --branch $(curl -s https://api.github.com/repos/zerotier/ZeroTierOne/releases/latest | jq -r .tag_name) \
             $ZT_REPO zerotier-src && break || sleep 30
         done
-        [ -d "zerotier-src" ] || { echo "❌ ZeroTier源码克隆失败"; exit 1; }
+        [ -d "zerotier-src" ] || { echo "❌ ZeroTier clone failed"; exit 1; }
         echo "ZT_VERSION=$(cd zerotier-src && git describe --tags)" >> $GITHUB_ENV
 
-    # ========== 工具链配置 ==========
-    - name: 恢复工具链缓存
+    # ========== Toolchain Setup ==========
+    - name: Restore toolchain cache
       uses: actions/cache@v3
       id: toolchain-cache
       with:
         path: padavan/toolchain-mipsel/toolchain-4.4.x
-        key: ${{ env.TOOLCHAIN_CACHE_KEY }}
+        key: padavan-toolchain-${{ hashFiles('**/make-linux.mk') }}
 
-    - name: 配置工具链
+    - name: Setup toolchain
       if: steps.toolchain-cache.outputs.cache-hit != 'true'
       run: |
         mkdir -p padavan/toolchain-mipsel
@@ -63,127 +63,64 @@ jobs:
         for i in {1..3}; do
           ./dl_toolchain.sh 2>&1 | tee toolchain.log && break || sleep 30
         done
-        [ -d "toolchain-4.4.x/bin" ] || { echo "❌ 工具链下载失败"; exit 1; }
+        [ -d "toolchain-4.4.x/bin" ] || { echo "❌ Toolchain download failed"; exit 1; }
         echo "TOOLCHAIN_PATH=$(pwd)/toolchain-4.4.x/bin" >> $GITHUB_ENV
-        echo "$(pwd)/toolchain-4.4.x/bin" >> $GITHUB_PATH
 
-    # ========== 深度集成 ==========
-    - name: 集成ZeroTier
+    # ========== ZeroTier Integration ==========
+    - name: Integrate ZeroTier
       run: |
         cd padavan/trunk
         
-        # 清除旧文件
+        # Clean and copy source
         rm -rf user/zerotier
         mkdir -p user/zerotier/{include,osdep,controller,node,ext}
-        
-        # 拷贝源码
         cp -rv ../../zerotier-src/* user/zerotier/
         
-        # 编译配置优化
+        # Build configuration
         sed -i '/CFLAGS += -Os/s/$/ -Wno-error=format-truncation/' user/zerotier/Makefile
         echo "LIBS += -ljson-c -latomic" >> user/zerotier/Makefile
         
-        # 构建配置
+        # Add to firmware config
         cat << EOF >> .config
         CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y
         CONFIG_FIRMWARE_INCLUDE_ZEROTIER_UI=y
         CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
         EOF
-        
-        # Web界面增强
-        mkdir -p user/www/n56u_ribbon_fixed/zerotier
-        cat > user/www/n56u_ribbon_fixed/zerotier.asp <<'EOF'
-        <% css_add("/zerotier/zt.css") %>
-        <% js_add("/zerotier/zt.js") %>
-        <div class="content">
-          <div class="status-box">
-            <h2>节点状态</h2>
-            <ul>
-              <li>节点ID: <code><% nvram_get("zt_nodeid"); %></code></li>
-              <li>网络状态: <span class="status-<% nvram_get("zt_status"); %>"><% nvram_get("zt_status"); %></span></li>
-            </ul>
-          </div>
-          <div class="form-box">
-            <form method="post" action="/apply_zt.cgi">
-              <input type="text" name="network_id" placeholder="输入网络ID" value="<% nvram_get("zt_network"); %>">
-              <button type="submit">加入网络</button>
-            </form>
-          </div>
-        </div>
-        EOF
 
-        # 配套静态文件
-        cat > user/www/n56u_ribbon_fixed/zerotier/zt.css <<'EOF'
-        .status-box { background: #f8f9fa; padding: 15px; border-radius: 5px; }
-        .status-ONLINE { color: #28a745; }
-        .status-OFFLINE { color: #dc3545; }
-        EOF
-
-        cat > user/www/n56u_ribbon_fixed/zerotier/zt.js <<'EOF'
-        setInterval(function(){
-          $.get("/zerotier_status.asp", function(data){
-            $("#zt_status").html(data);
-          });
-        }, 5000);
-        EOF
-
-    # ========== 构建阶段 ==========
-    - name: 编译固件
+    # ========== Build Firmware ==========
+    - name: Compile firmware
       run: |
         cd padavan/trunk
         ./clear_tree
         
-        # 设置环境变量
         export PATH="$TOOLCHAIN_PATH:$PATH"
         export CC=mipsel-linux-uclibc-gcc
         export STRIP=mipsel-linux-uclibc-strip
         
-        # 执行编译
         fakeroot ./build_firmware_modify $DEVICE $BLOCK_SIZE 2>&1 | tee build.log
         
-        # 验证编译产物
-        [ -f "images/$DEVICE.trx" ] || { echo "❌ 固件生成失败"; exit 1; }
+        [ -f "images/$DEVICE.trx" ] || { echo "❌ Firmware build failed"; exit 1; }
         unzip -p images/*.trx | strings | grep -qE 'zerotier-one|/etc/storage/zerotier'
-        [ $? -eq 0 ] || { echo "❌ ZeroTier组件缺失"; exit 1; }
 
-    # ========== 产物处理 ==========
-    - name: 打包发布
+    # ========== Artifacts ==========
+    - name: Package release
       run: |
         cd padavan/trunk/images
         upx --best --lzma $DEVICE.trx
-        echo "固件大小: $(du -h $DEVICE.trx)"
+        echo "Firmware size: $(du -h $DEVICE.trx)"
         
-        # 大小验证
-        [ $(stat -c%s $DEVICE.trx) -lt 16777216 ] || { echo "⚠️ 固件超过16MB!"; exit 1; }
+        [ $(stat -c%s $DEVICE.trx) -lt 16777216 ] || { echo "⚠️ Firmware exceeds 16MB!"; exit 1; }
         
-        # 生成校验文件
         md5sum $DEVICE.trx > checksum.md5
         sha256sum $DEVICE.trx > checksum.sha256
         
-        # 创建发布包
-        tar czvf ${{ env.DEVICE }}_zt_${{ env.ZT_VERSION }}.tar.gz \
+        tar czvf $DEVICE-zt-${{ env.ZT_VERSION }}.tar.gz \
           $DEVICE.trx \
           checksum.md5 \
           checksum.sha256
 
-    - name: 上传产物
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Padavan_ZT_${{ env.ZT_VERSION }}
+        name: $DEVICE-ZeroTier-${{ env.ZT_VERSION }}
         path: padavan/trunk/images/*.tar.gz
-
-    # ========== 后处理 ==========
-    - name: 安全增强
-      run: |
-        cd padavan/trunk/user/scripts
-        
-        # 生成唯一节点ID
-        echo 'if [ ! -f /etc/storage/zerotier-id ]; then' >> post-mount.sh
-        echo '  zerotier-idtool generate > /etc/storage/zerotier-id' >> post-mount.sh
-        echo '  chmod 600 /etc/storage/zerotier-id' >> post-mount.sh
-        echo 'fi' >> post-mount.sh
-        
-        # 自动加入网络
-        echo 'if [ -n "$(nvram get zt_network)" ]; then' >> post-fire.sh
-        echo '  zerotier-cli join "$(nvram get zt_network)" || true' >> post-fire.sh
-        echo 'fi' >> post-fire.sh
