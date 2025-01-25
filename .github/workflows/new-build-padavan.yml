@@ -14,9 +14,11 @@ jobs:
       ZT_ENABLED: "y"
 
     steps:
+    # ========== 代码检出 ==========
     - name: Checkout code
       uses: actions/checkout@v4
 
+    # ========== 依赖安装 ==========
     - name: Install dependencies
       run: |
         sudo apt-get update -y
@@ -27,6 +29,7 @@ jobs:
           libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget libc-dev-bin \
           libssl-dev libjson-c-dev
 
+    # ========== 源码准备 ==========
     - name: Prepare source
       run: |
         git clone --depth=1 https://github.com/hanwckf/padavan-4.4.git
@@ -34,10 +37,11 @@ jobs:
         ./dl_toolchain.sh
         sudo mkdir -p /opt/images
 
+    # ========== 配置阶段 ==========
     - name: Configure firmware
       shell: bash
-      run: |
-        cd padavan-4.4/trunk
+      run: |  # 缩进两个空格
+        cd padavan-4.4/trunk  # 第58行（关键修复：两个空格缩进）
 
         if [ ! -f "configs/templates/${DEVICE}.config" ]; then
           echo "::error::Template ${DEVICE}.config not found"
@@ -60,6 +64,7 @@ CONFIG_FIRMWARE_INCLUDE_ZEROTIER=${ZT_ENABLED}
 CONFIG_FIRMWARE_INCLUDE_ADBYBY=n
 EOF
 
+    # ========== 构建阶段 ==========
     - name: Build firmware
       run: |
         cd padavan-4.4/trunk
@@ -86,6 +91,7 @@ EOF
         fi
         sudo mv -v images/*.trx /opt/images/
 
+    # ========== 产物上传 ==========
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
