@@ -15,7 +15,8 @@ jobs:
     env:
       BUILD_DIR: padavan-4.4
       OUTPUT_DIR: /opt/images
-      DEVICE_MODEL: K2P  # 修改为你的设备型号
+      DEVICE_MODEL: K2P  # 修改为实际设备型号
+      REPO_URL: https://github.com/MeIsReallyBa/padavan-4.4.git  # 修改源码仓库
 
     steps:
     # ==================== 环境准备阶段 ====================
@@ -26,11 +27,11 @@ jobs:
 
     - name: Configure environment
       run: |
-        # 替换镜像源为国内源
+        # 镜像源配置保持不变
         sudo sed -i 's/archive.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
         sudo sed -i 's/security.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
         
-        # 安装核心依赖（新增ZEROTIER依赖）
+        # 安装依赖项保持不变
         sudo apt update -y
         sudo apt install -y --no-install-recommends \
           unzip libtool-bin cmake gperf flex bison \
@@ -38,9 +39,9 @@ jobs:
           zlib1g-dev libgmp-dev libmpc-dev libmpfr-dev \
           gettext texinfo help2man xxd vim-common \
           python3-docutils fakeroot kmod cpio \
-          libssl-dev libjson-c-dev  # ZEROTIER必要依赖
+          libssl-dev libjson-c-dev libhttp-parser-dev
 
-        # 确保xxd存在
+        # 备用xxd安装方案保持不变
         if ! command -v xxd &> /dev/null; then
           wget http://archive.ubuntu.com/ubuntu/pool/main/v/vim/vim_8.2.3995-1ubuntu2.21_amd64.deb
           sudo dpkg -i vim_8.2.3995-1ubuntu2.21_amd64.deb || true
@@ -50,7 +51,8 @@ jobs:
     # ==================== 工具链准备阶段 ====================
     - name: Prepare toolchain
       run: |
-        git clone --depth=1 https://github.com/hanwckf/${{ env.BUILD_DIR }}.git
+        # 修改仓库地址为 MeIsReallyBa
+        git clone --depth=1 ${{ env.REPO_URL }}
         cd ${{ env.BUILD_DIR }}/toolchain-mipsel
         ./dl_toolchain.sh
         sudo mkdir -p ${{ env.OUTPUT_DIR }} && sudo chmod 777 ${{ env.OUTPUT_DIR }}
@@ -64,74 +66,81 @@ jobs:
         CONFIG_TEMPLATE="configs/templates/${{ env.DEVICE_MODEL }}.config"
         [ ! -f "$CONFIG_TEMPLATE" ] && echo "::error::设备模板 $CONFIG_TEMPLATE 不存在!" && exit 1
         
-        # 应用基础配置
+        # 应用基础配置（根据新仓库结构调整）
         cp -v "$CONFIG_TEMPLATE" .config
         sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
 
-        # 配置清理（保留UPNP/DMZ/DDNS相关）
-        declare -a REMOVE_CONFIGS=(
-          "MENTOHUST" "SCUTCLIENT" "SHADOWSOCKS" "SSSERVER" 
-          "DNSFORWARDER" "ADBYBY" "FRPC" "FRPS" 
-          "TUNSAFE" "SMARTDNS" "SRELAY" "ALIDDNS"
-        )
-        for cfg in "${REMOVE_CONFIGS[@]}"; do
-          sed -i "/CONFIG_FIRMWARE_INCLUDE_${cfg}/d" .config
-        done
-
-        # 功能配置注入
+        # 功能配置注入（根据新仓库功能调整）
         declare -A FEATURE_CONFIGS=(
           ["ZEROTIER"]="y"       # 分布式网络
-          ["MINIIGD_UPNP"]="y"   # MiniUPnP
-          ["UPNP"]="y"           # UPNP服务
+          ["MINIUPNPD"]="y"      # 根据新仓库命名调整
           ["DMZ"]="y"            # DMZ主机
-          ["DDNS"]="y"           # 动态DNS基础
-          ["DDNS_SSL"]="y"       # DDNS SSL支持
-          ["NOIP"]="y"           # No-IP.com
-          ["DNSPOD"]="y"         # DNSPod
+          ["DDNS"]="y"           # 动态DNS
           ["ALIDDNS"]="y"        # 阿里云DDNS
           ["OPENSSL_EXE"]="y"    # OpenSSL可执行文件
         )
         for key in "${!FEATURE_CONFIGS[@]}"; do
+          sed -i "/CONFIG_FIRMWARE_INCLUDE_${key}/d" .config
           echo "CONFIG_FIRMWARE_INCLUDE_${key}=${FEATURE_CONFIGS[$key]}" >> .config
         done
 
-        # 添加DMZ防火墙规则模板
-        echo "iptables -t nat -A PREROUTING -i eth0 -j DNAT --to-destination \$(nvram get lan_ipaddr)" >> user_script.sh
+        # 新增内核配置（根据新仓库路径调整）
+        KERNEL_CONFIG="configs/boards/${{ env.DEVICE_MODEL }}/kernel-4.4.x.config"
+        echo "CONFIG_NF_CONNTRACK_ZONES=y" >> $KERNEL_CONFIG
+        echo "CONFIG_NF_NAT_REDIRECT=y" >> $KERNEL_CONFIG
 
         # 执行编译
         sudo ./clear_tree
         echo "=== 开始编译 ${{ env.DEVICE_MODEL }} 固件 ==="
-        time sudo ./build_firmware_modify ${{ env.DEVICE_MODEL }} 0
+        time sudo ./build_firmware_modify ${{ env.DEVICE_MODEL }} 0 | tee build.log
+        
+        # 日志分析
+        if grep -i 'error.*zerotier' build.log; then
+          echo "::error::检测到Zerotier编译错误"
+          exit 1
+        fi
 
         # 产物处理
         [ ! -d images ] && echo "::error::未找到编译输出目录" && exit 1
         sudo mv -v images/*.trx ${{ env.OUTPUT_DIR }}/
 
-    # ==================== 功能验证阶段 ====================
-    - name: Verify features
+    # ==================== 验证阶段 ====================
+    - name: Verify build
       run: |
+        # 修改验证路径匹配新仓库结构
+        TEMP_DIR=$(mktemp -d)
         trx_file=$(ls ${{ env.OUTPUT_DIR }}/*.trx | head -1)
-        REQUIRED_FEATURES=("zerotier" "upnp" "ddns" "dmz")
         
-        for feature in "${REQUIRED_FEATURES[@]}"; do
-          if ! strings "$trx_file" | grep -qi "$feature"; then
-            echo "::error::未检测到 $feature 组件"
+        # 解压验证
+        unsquashfs -d $TEMP_DIR $trx_file
+        
+        # 关键文件检查
+        declare -A REQUIRED_FILES=(
+          ["zerotier"]="usr/bin/zerotier-one"
+          ["upnp"]="usr/sbin/miniupnpd"
+          ["ddns"]="etc/storage/ddns/aliddns.sh"
+        )
+        
+        for feature in "${!REQUIRED_FILES[@]}"; do
+          if [ ! -f "$TEMP_DIR/${REQUIRED_FILES[$feature]}" ]; then
+            echo "::error::缺失关键文件: ${REQUIRED_FILES[$feature]}"
             exit 1
-          else
-            echo "✓ 已包含 $feature 功能"
           fi
         done
+        
+        echo "✓ 核心组件验证通过"
+        rm -rf $TEMP_DIR
 
-    # ==================== 产物上传阶段 ====================
+    # ==================== 产物上传 ====================
     - name: Upload artifacts
       uses: actions/upload-artifact@v3
       with:
-        name: ${{ env.DEVICE_MODEL }}-with-zt-upnp-dmz-${{ github.run_number }}
+        name: ${{ env.DEVICE_MODEL }}-custom-${{ github.run_number }}
         path: ${{ env.OUTPUT_DIR }}/*.trx
         retention-days: 7
 
-    # ==================== 后清理阶段 ====================
-    - name: Cleanup workspace
+    # ==================== 清理阶段 ====================
+    - name: Cleanup
       if: always()
       run: |
         sudo rm -rf ${{ env.BUILD_DIR }}
