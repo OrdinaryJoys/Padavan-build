@@ -28,22 +28,36 @@ jobs:
           fakeroot kmod cpio git python3-docutils gettext automake autopoint \
           texinfo build-essential help2man pkg-config zlib1g-dev libgmp3-dev \
           libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget libc-dev-bin \
-          libssl-dev libjson-c-dev
+          libssl-dev libjson-c-dev libc6-i386
 
     # ========== 源码准备 ==========
     - name: Prepare source
       run: |
         git clone --depth=1 https://github.com/hanwckf/padavan-4.4.git || { echo "::error::Clone failed"; exit 1; }
         cd padavan-4.4/toolchain-mipsel || { echo "::error::Directory missing"; exit 1; }
+        
+        echo "=== Downloading Toolchain ==="
         ./dl_toolchain.sh
         
-        # 验证工具链下载
+        # 验证工具链完整性
         if [ ! -d "toolchain-4.4.x" ]; then
           echo "::error::Toolchain download failed!"
+          ls -lh
           exit 1
         fi
         
+        echo "=== Setting Toolchain Permissions ==="
+        chmod -R +x toolchain-4.4.x/bin
         sudo mkdir -p /opt/images
+
+    # ========== 环境验证 ==========
+    - name: Verify environment
+      run: |
+        echo "=== Toolchain Path Verification ==="
+        echo "TOOLCHAIN_DIR: $TOOLCHAIN_DIR"
+        ls -l $TOOLCHAIN_DIR/bin/mipsel-linux-uclibc-gcc
+        file $TOOLCHAIN_DIR/bin/mipsel-linux-uclibc-gcc
+        $TOOLCHAIN_DIR/bin/mipsel-linux-uclibc-gcc --version || true
 
     # ========== 配置阶段 ==========
     - name: Configure firmware
@@ -53,7 +67,11 @@ jobs:
 
         # 修复xTun缺失问题
         if [ ! -d "user/xTun" ]; then
-          git clone https://github.com/hanwckf/xTun.git user/xTun || { echo "::error::Failed to clone xTun"; exit 1; }
+          echo "=== Cloning xTun ==="
+          git clone --depth=1 https://github.com/hanwckf/xTun.git user/xTun || { 
+            echo "::error::Failed to clone xTun"; 
+            exit 1 
+          }
         fi
 
         # 应用基础配置
@@ -78,35 +96,61 @@ jobs:
         echo "CONFIG_FIRMWARE_INCLUDE_ADBYBY=n" >> .config
 
         # 设置交叉编译环境
-        echo "CROSS_COMPILE=${TOOLCHAIN_DIR}/bin/mipsel-linux-uclibc-" > .cross-compile
+        echo "=== Setting Cross-Compile Environment ==="
         export PATH="${TOOLCHAIN_DIR}/bin:$PATH"
+        echo "PATH=${PATH}" >> $GITHUB_ENV
+        echo "CROSS_COMPILE=${TOOLCHAIN_DIR}/bin/mipsel-linux-uclibc-" >> $GITHUB_ENV
+        echo "ARCH=mips" >> $GITHUB_ENV
+
+        # 生成环境验证文件
+        cat << EOF > env_verify.sh
+#!/bin/bash
+echo "Current PATH: \$PATH"
+echo "CROSS_COMPILE: \$CROSS_COMPILE"
+which mipsel-linux-uclibc-gcc
+mipsel-linux-uclibc-gcc --version
+EOF
+        chmod +x env_verify.sh
 
     # ========== 构建阶段 ==========
     - name: Build firmware
       run: |
         cd padavan-4.4/trunk || { echo "::error::Trunk missing"; exit 1; }
-        source .cross-compile
         
-        # 环境验证
-        if [ ! -f "${TOOLCHAIN_DIR}/bin/mipsel-linux-uclibc-gcc" ]; then
-          echo "::error::Compiler not found at ${TOOLCHAIN_DIR}/bin/mipsel-linux-uclibc-gcc"
-          exit 1
-        fi
+        # 验证环境变量
+        echo "=== Verifying Build Environment ==="
+        ./env_verify.sh || { echo "::error::Environment verification failed"; exit 1; }
 
+        # 清理构建环境
+        echo "=== Cleaning Build Environment ==="
         sudo ./clear_tree || { echo "::error::Clean failed"; exit 1; }
 
+        # 内核构建
         echo "::group::Kernel Build"
-        make kernel ARCH=mips CROSS_COMPILE=${CROSS_COMPILE} || exit 1
+        make kernel ARCH=mips CROSS_COMPILE=${TOOLCHAIN_DIR}/bin/mipsel-linux-uclibc- -j$(nproc) || {
+          echo "::error::Kernel build failed"
+          exit 1
+        }
         echo "::endgroup::"
 
+        # 模块构建
         echo "::group::Modules Build"
-        make modules ARCH=mips CROSS_COMPILE=${CROSS_COMPILE} -j$(nproc) || exit 1
+        make modules ARCH=mips CROSS_COMPILE=${TOOLCHAIN_DIR}/bin/mipsel-linux-uclibc- -j$(nproc) || {
+          echo "::error::Modules build failed"
+          exit 1
+        }
         echo "::endgroup::"
 
+        # 固件编译
         echo "::group::Firmware Compilation"
-        if ! sudo ./build_firmware_modify "$DEVICE" "$BLOCK_SIZE"; then
+        if ! sudo ./build_firmware_modify "$DEVICE" "$BLOCK_SIZE" \
+          KERNEL_CROSS_COMPILE=${TOOLCHAIN_DIR}/bin/mipsel-linux-uclibc- \
+          MODULES_CROSS_COMPILE=${TOOLCHAIN_DIR}/bin/mipsel-linux-uclibc-; then
+          
           echo "::warning::Retrying with reduced block size..."
-          if ! sudo ./build_firmware_modify "$DEVICE" $((BLOCK_SIZE - 1024)); then
+          if ! sudo ./build_firmware_modify "$DEVICE" $((BLOCK_SIZE - 1024)) \
+            KERNEL_CROSS_COMPILE=${TOOLCHAIN_DIR}/bin/mipsel-linux-uclibc- \
+            MODULES_CROSS_COMPILE=${TOOLCHAIN_DIR}/bin/mipsel-linux-uclibc-; then
             echo "::error::Build failed after retry"
             exit 1
           fi
@@ -119,15 +163,6 @@ jobs:
           exit 1
         fi
         sudo mv -v images/*.trx /opt/images/
-
-    # ========== 调试信息 ==========
-    - name: Show Build Info
-      run: |
-        echo "=== Toolchain Verification ==="
-        file ${TOOLCHAIN_DIR}/bin/mipsel-linux-uclibc-gcc
-        ${TOOLCHAIN_DIR}/bin/mipsel-linux-uclibc-gcc --version
-        echo "=== xTun Verification ==="
-        ls -l padavan-4.4/trunk/user/xTun
 
     # ========== 产物上传 ==========
     - name: Upload artifact
