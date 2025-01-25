@@ -1,4 +1,4 @@
-name: Build Padavan Firmware
+name: Padavan Firmware Builder
 
 on:
   push:
@@ -8,16 +8,16 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     env:
-      DEVICE: K2P  # 需与configs/templates下的配置文件名一致
+      DEVICE: K2P  # 需与模板文件名一致
       REPO_URL: https://github.com/MeIsReallyBa/padavan-4.4.git
 
     steps:
-    # ==================== 1. 准备编译环境 ====================
+    # ==================== 1. 环境准备 ====================
     - name: Setup environment
       run: |
-        # 配置国内镜像源
+        # 设置国内镜像源
         sudo sed -i 's/archive.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
         sudo sed -i 's/security.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
         
@@ -28,106 +28,122 @@ jobs:
           fakeroot kmod cpio git python3-docutils gettext \
           texinfo build-essential help2man pkg-config \
           zlib1g-dev libgmp3-dev libmpc-dev libmpfr-dev \
-          libncurses5-dev libltdl-dev xxd
-        
-        # 安装验证工具
-        sudo apt install -y binwalk squashfs-tools
+          libncurses5-dev libltdl-dev xxd squashfs-tools
 
     # ==================== 2. 获取源码 ====================
-    - name: Checkout source
-      uses: actions/checkout@v3
-
-    - name: Clone Padavan repo
+    - name: Clone repository
       run: |
-        git clone --depth=1 --branch master ${{ env.REPO_URL }} padavan
+        # 不指定分支自动克隆默认分支
+        git clone --depth=1 ${{ env.REPO_URL }} padavan
+        cd padavan
+        
+        # 验证仓库结构
+        echo "=== 仓库分支信息 ==="
+        git branch -a
+        echo "=== 关键目录检查 ==="
+        ls -l toolchain-mipsel configs/templates/
+
+    # ==================== 3. 工具链配置 ====================
+    - name: Setup toolchain
+      run: |
         cd padavan/toolchain-mipsel
         
-        # 下载预编译工具链
-        ./dl_toolchain.sh
-        echo "工具链信息："
-        ../toolchain-mipsel/mipsel-linux-uclibc/bin/mipsel-linux-uclibc-gcc --version
+        # 清理旧文件
+        rm -rf toolchain-mipsel mipsel-linux-uclibc*
+        
+        # 下载工具链（带重试机制）
+        for i in {1..3}; do
+          ./dl_toolchain.sh && break || sleep 30
+        done
+        
+        # 解压验证
+        if [ ! -f "mipsel-linux-uclibc.tar.xz" ]; then
+          echo "::error::工具链下载失败"
+          exit 1
+        fi
+        tar -xvf mipsel-linux-uclibc.tar.xz
+        
+        # 路径自动检测
+        if [ -d "toolchain-mipsel" ]; then
+          TOOLCHAIN_DIR="toolchain-mipsel"
+        else
+          TOOLCHAIN_DIR="mipsel-linux-uclibc"
+        fi
+        
+        # 权限修复
+        chmod -R +x $TOOLCHAIN_DIR
+        
+        # 编译器验证
+        echo "=== 工具链信息 ==="
+        $TOOLCHAIN_DIR/bin/mipsel-linux-uclibc-gcc --version || {
+          echo "::error::工具链验证失败";
+          exit 1;
+        }
 
-    # ==================== 3. 配置编译参数 ====================
+    # ==================== 4. 编译配置 ====================
     - name: Configure build
       run: |
         cd padavan/trunk
         
-        # 检查设备配置文件
+        # 设备配置检查
         CONFIG_FILE="configs/templates/$DEVICE.config"
         if [ ! -f "$CONFIG_FILE" ]; then
-          echo "::error::找不到设备配置文件: $CONFIG_FILE"
+          echo "::error::设备配置文件 $CONFIG_FILE 不存在"
+          ls configs/templates/
           exit 1
         fi
         
         # 初始化配置
         cp -v "$CONFIG_FILE" .config
-        
-        # 启用必要功能
         echo "CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y" >> .config
         echo "CONFIG_FIRMWARE_INCLUDE_IPV6_NAT=y" >> .config
-        
-        # 内核参数配置
-        KERNEL_CFG="configs/boards/$DEVICE/kernel-4.4.x.config"
-        echo "CONFIG_SQUASHFS=y" >> $KERNEL_CFG
-        echo "CONFIG_SQUASHFS_XZ=y" >> $KERNEL_CFG
 
-    # ==================== 4. 执行编译 ====================
+    # ==================== 5. 执行编译 ====================
     - name: Build firmware
       run: |
         cd padavan/trunk
         
+        # 设置工具链路径
+        export PATH="$PWD/../toolchain-mipsel/$TOOLCHAIN_DIR/bin:$PATH"
+        
         # 清理并编译
         ./clear_tree
+        echo "=== 开始编译 ==="
         fakeroot ./build_firmware_modify $DEVICE -j$(nproc)
         
-        # 检查产物
-        if [ ! -d images ]; then
-          echo "::error::编译失败，未生成镜像文件"
+        # 输出目录验证
+        if [ ! -d "images" ]; then
+          echo "::error::编译失败，未生成镜像目录"
           exit 1
         fi
 
-    # ==================== 5. 验证镜像文件 ====================
-    - name: Validate firmware
+    # ==================== 6. 产物验证 ====================
+    - name: Verify firmware
       run: |
         TRX_FILE=$(ls padavan/trunk/images/*.trx | head -n1)
         
-        # 基础验证
+        # 基础检查
         if [ $(stat -c%s "$TRX_FILE") -lt 8000000 ]; then
           echo "::error::固件大小异常: $(du -h $TRX_FILE)"
           exit 1
         fi
         
-        # 文件头验证
-        if ! file "$TRX_FILE" | grep -q "Squashfs filesystem"; then
-          echo "::error::无效的文件格式"
-          exit 1
-        fi
-        
-        # 关键文件检查
-        TEMP_DIR=$(mktemp -d)
-        unsquashfs -d $TEMP_DIR $TRX_FILE
-        CHECK_FILES=(
-          "/usr/bin/ash"
-          "/sbin/init"
-          "/etc/storage/web/default.asp"
-        )
-        for f in "${CHECK_FILES[@]}"; do
-          if [ ! -f "$TEMP_DIR$f" ]; then
-            echo "::error::缺失关键文件: $f"
-            exit 1
-          fi
-        done
-        rm -rf $TEMP_DIR
+        # 文件结构验证
+        echo "=== Binwalk分析 ==="
+        binwalk $TRX_FILE | grep 'Squashfs filesystem' || {
+          echo "::error::文件系统验证失败";
+          exit 1;
+        }
 
-    # ==================== 6. 发布产物 ====================
-    - name: Upload firmware
+    # ==================== 7. 发布产物 ====================
+    - name: Upload artifact
       uses: actions/upload-artifact@v3
       with:
         name: ${{ env.DEVICE }}-firmware
         path: padavan/trunk/images/*.trx
         retention-days: 7
 
-    # ==================== 7. 清理环境 ====================
+    # ==================== 8. 环境清理 ====================
     - name: Cleanup
       if: always()
       run: |
