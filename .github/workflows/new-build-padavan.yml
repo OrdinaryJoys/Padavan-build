@@ -36,42 +36,60 @@ jobs:
         git clone --depth=1 https://github.com/hanwckf/padavan-4.4.git || { echo "::error::Clone failed"; exit 1; }
         cd padavan-4.4/toolchain-mipsel
         ./dl_toolchain.sh || { echo "::error::Toolchain download failed"; exit 1; }
-        chmod -R +x toolchain-4.4.x/bin
+        
+        # 验证工具链完整性
+        [ -x "toolchain-4.4.x/bin/mipsel-linux-uclibc-gcc" ] || {
+          echo "::error::Compiler not found"
+          ls -lR toolchain-4.4.x/bin
+          exit 1
+        }
+        
         sudo mkdir -p /opt/images
+
+    # ========== 路径修复阶段 ==========
+    - name: Fix toolchain paths
+      run: |
+        cd padavan-4.4/trunk
+        
+        # 修复内核Makefile路径
+        sed -i "s|/toolchain-4.4.x|$TOOLCHAIN_DIR|g" linux-4.4.x/Makefile
+        sed -i "s|CROSS_COMPILE := .*|CROSS_COMPILE := $TOOLCHAIN_DIR/bin/mipsel-linux-uclibc-|g" linux-4.4.x/arch/mips/Makefile
+        
+        # 修复根目录Makefile
+        sed -i "s|CROSS_COMPILE = .*|CROSS_COMPILE = $TOOLCHAIN_DIR/bin/mipsel-linux-uclibc-|g" Makefile
 
     # ========== 配置阶段 ==========
     - name: Configure firmware
-      shell: bash
       run: |
         cd padavan-4.4/trunk
-
-        # 修复路径硬编码问题
-        find . -type f -exec sed -i "s|/toolchain-4.4.x|$TOOLCHAIN_DIR|g" {} \;
-
-        # 准备xTun组件
-        [ -d user/xTun ] || git clone --depth=1 https://github.com/hanwckf/xTun.git user/xTun
-
-        # 应用设备配置
         cp -vf configs/templates/${DEVICE}.config .config
-        echo "CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=${ZT_ENABLED}" >> .config
-
-        # 设置编译环境
-        echo "export PATH=${TOOLCHAIN_DIR}/bin:\$PATH" >> env.sh
-        echo "export CROSS_COMPILE=${TOOLCHAIN_DIR}/bin/mipsel-linux-uclibc-" >> env.sh
-        echo "export ARCH=mips" >> env.sh
-        source env.sh
+        
+        # 应用配置修改
+        {
+          echo "CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y"
+          echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=${ZT_ENABLED}"
+        } >> .config
+        
+        # 设置绝对路径环境变量
+        echo "export PATH=$TOOLCHAIN_DIR/bin:$PATH" >> build_env
+        echo "export CROSS_COMPILE=$TOOLCHAIN_DIR/bin/mipsel-linux-uclibc-" >> build_env
+        source build_env
 
     # ========== 构建阶段 ==========
     - name: Build firmware
       run: |
         cd padavan-4.4/trunk
-        source env.sh
-
-        # 清理并构建
-        sudo ./clear_tree
+        source build_env
+        
+        # 验证环境变量
+        echo "=== Compiler Path ==="
+        which mipsel-linux-uclibc-gcc
+        echo "=== Compiler Version ==="
+        mipsel-linux-uclibc-gcc --version || true
+        
+        # 完整构建流程
         fakeroot ./build_firmware_modify ${DEVICE} ${BLOCK_SIZE} 2>&1 | tee build.log
-
+        
         # 处理构建结果
         if [ ! -f images/*.trx ]; then
           echo "::error::Build failed, last 50 lines:"
