@@ -14,11 +14,13 @@ jobs:
       ZT_ENABLED: "y"
 
     steps:
+    # ========== 代码检出 ==========
     - name: Checkout code
       uses: actions/checkout@v4
 
+    # ========== 依赖安装 ==========
     - name: Install dependencies
-      run: |
+      run: |  # 缩进0级
         sudo apt-get update -y
         sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
           unzip libtool-bin curl cmake gperf gawk flex bison \
@@ -27,58 +29,48 @@ jobs:
           libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget libc-dev-bin \
           libssl-dev libjson-c-dev
 
+    # ========== 源码准备 ==========
     - name: Prepare source
-      run: |
-        git clone --depth=1 https://github.com/hanwckf/padavan-4.4.git || { echo "::error::克隆失败"; exit 1; }
-        cd padavan-4.4/toolchain-mipsel || { echo "::error::目录不存在"; exit 1; }
+      run: |  # 缩进0级
+        git clone --depth=1 https://github.com/hanwckf/padavan-4.4.git || { echo "::error::Clone failed"; exit 1; }
+        cd padavan-4.4/toolchain-mipsel || { echo "::error::Directory missing"; exit 1; }
         ./dl_toolchain.sh
         sudo mkdir -p /opt/images
 
+    # ========== 配置阶段 ========== (关键修复区)
     - name: Configure firmware
       shell: bash
-      run: |  # 缩进两个空格
-        cd padavan-4.4/trunk || { echo "::error::无法进入trunk目录"; exit 1; }
+      run: |  # 缩进0级（第54行所在位置）
+          # ↓ 以下内容统一缩进2个空格
+          cd padavan-4.4/trunk || { echo "::error::Can't enter trunk"; exit 1; }
 
-        # ===== 关键修复：数组元素统一缩进 =====
-        declare -a CONFIG_CLEAN=(
-          "CONFIG_FIRMWARE_INCLUDE_ZEROTIER"  # 第61行（两个空格）
-          "CONFIG_FIRMWARE_INCLUDE_ADBYBY"    # 第62行（两个空格）
-        )
+          # 模板验证
+          if [[ ! -f "configs/templates/${DEVICE}.config" ]]; then
+            echo "::error::[${DEVICE}] Template not found"
+            exit 1
+          fi
 
-        for target in "${CONFIG_CLEAN[@]}"; do
-          sed -i "/^${target}=/d" .config
-        done
+          # 应用配置
+          cp -vf "configs/templates/${DEVICE}.config" .config
 
-        # ===== Heredoc零缩进写入 =====
-        cat << 'EOF' >> .config  # 缩进两个空格
+          # 清理配置项
+          declare -a CONFIG_CLEAN=(
+            "CONFIG_FIRMWARE_INCLUDE_ZEROTIER"
+            "CONFIG_FIRMWARE_INCLUDE_ADBYBY"
+          )
+          for target in "${CONFIG_CLEAN[@]}"; do
+            sed -i "/^${target}=/d" .config
+          done
+
+          # 写入配置（零缩进内容）
+          cat << 'EOF' >> .config
 CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
 CONFIG_FIRMWARE_INCLUDE_ZEROTIER=${ZT_ENABLED}
 CONFIG_FIRMWARE_INCLUDE_ADBYBY=n
 EOF
 
+    # ========== 构建阶段 ==========
     - name: Build firmware
-      run: |
-        cd padavan-4.4/trunk || { echo "::error::找不到trunk目录"; exit 1; }
-        sudo ./clear_tree || { echo "::error::清理失败"; exit 1; }
-
-        echo "::group::构建内核"
-        make kernel || exit 1
-        echo "::endgroup::"
-
-        echo "::group::编译模块"
-        make modules -j$(nproc) || exit 1
-        echo "::endgroup::"
-
-        echo "::group::最终编译"
-        if ! sudo ./build_firmware_modify "$DEVICE" "$BLOCK_SIZE"; then
-          sudo ./build_firmware_modify "$DEVICE" $((BLOCK_SIZE - 1024)) || exit 1
-        fi
-        echo "::endgroup::"
-
-        sudo mv -v images/*.trx /opt/images/
-
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ env.DEVICE }}-固件-$(date +%s)
-        path: /opt/images/*.trx
+      run: |  # 缩进0级
+          cd padavan-4.4/trunk || { echo "::error::Trunk missing"; exit 1; }
+         
