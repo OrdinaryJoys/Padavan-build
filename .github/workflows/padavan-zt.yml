@@ -5,60 +5,75 @@ on:
   push:
     tags: ['v*']
 
+env:
+  DEVICE: K2P
+  PADAVAN_REPO: https://github.com/hanwckf/padavan-4.4
+  ZEROTIER_REPO: https://github.com/zerotier/ZeroTierOne
+
 jobs:
   build:
     runs-on: ubuntu-22.04
-    env:
-      DEVICE: K2P
-      PADAVAN_REPO: https://github.com/hanwckf/padavan-4.4
-      ZEROTIER_REPO: https://github.com/zerotier/ZeroTierOne
+    timeout-minutes: 120
 
     steps:
-    # ========== 环境初始化 ==========
+    # ========== 初始化环境 ==========
     - name: Setup environment
       run: |
         echo "BUILD_TIMESTAMP=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_ENV
         sudo apt-get -qq update
-        sudo apt-get -qq install $(curl -fsSL https://is.gd/padavan_deps | tr '\n' ' ')
+        sudo apt-get -qq install unzip libtool-bin curl cmake gperf gawk flex bison nano xxd \
+            fakeroot kmod cpio git python3-docutils gettext automake autopoint \
+            texinfo build-essential help2man pkg-config zlib1g-dev libgmp3-dev \
+            libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget
 
-    # ========== 仓库克隆（关键修正） ==========
-    - name: Clone repositories
+    # ========== 克隆仓库 ==========
+    - name: Clone Padavan with submodules
       run: |
-        # Padavan主仓库带子模块初始化
-        git clone --depth=1 --branch=main --recurse-submodules=trunk $PADAVAN_REPO
+        git clone --depth=1 --branch main --recurse-submodules $PADAVAN_REPO padavan-4.4
         cd padavan-4.4
         git submodule update --init --recursive trunk
         echo "PADAVAN_DIR=$GITHUB_WORKSPACE/padavan-4.4" >> $GITHUB_ENV
-        
-        # ZeroTier仓库
-        git clone --depth=1 $ZEROTIER_REPO
-        echo "ZEROTIER_SRC=$GITHUB_WORKSPACE/ZeroTierOne" >> $GITHUB_ENV
 
-    # ========== 权限修复（关键步骤） ==========
-    - name: Fix permissions
+    - name: Clone ZeroTier
       run: |
-        sudo chown -R $(whoami):$(whoami) $PADAVAN_DIR
-        find $PADAVAN_DIR -type d -exec chmod 755 {} \;
-        chmod +x $PADAVAN_DIR/trunk/build_firmware_modify
+        git clone --depth=1 $ZEROTIER_REPO ZeroTierSource
+        echo "ZEROTIER_SRC=$GITHUB_WORKSPACE/ZeroTierSource" >> $GITHUB_ENV
 
-    # ========== 工具链安装（带镜像加速） ==========
+    # ========== 验证仓库结构 ==========
+    - name: Validate repository structure
+      run: |
+        echo "=== Padavan目录结构验证 ==="
+        ls -l $PADAVAN_DIR/trunk/configs/templates/
+        [ -f "$PADAVAN_DIR/trunk/build_firmware_modify" ] || exit 1
+        [ -d "$PADAVAN_DIR/trunk/user" ] || exit 1
+
+    # ========== 准备工具链 ==========
     - name: Setup toolchain
-      timeout-minutes: 25
+      timeout-minutes: 20
       run: |
         cd $PADAVAN_DIR/toolchain-mipsel
-        # 使用镜像加速
-        sed -i 's!https://.*/toolchain-!https://ghproxy.com/&!g' dl_toolchain.sh
+        # 使用镜像加速下载
+        sed -i 's!https://github.com!https://ghproxy.com/https://github.com!g' dl_toolchain.sh
         ./dl_toolchain.sh
         echo "$PADAVAN_DIR/toolchain-mipsel/toolchain-4.4.x/bin" >> $GITHUB_PATH
 
-    # ========== ZeroTier集成（增强验证） ==========
+    # ========== 集成ZeroTier ==========
     - name: Integrate ZeroTier
       run: |
         cd $PADAVAN_DIR/trunk
         mkdir -p user/zerotier
-        cp -r $ZEROTIER_SRC/* user/zerotier/
         
-        # 生成完整Makefile
+        # 带重试机制的文件复制
+        for i in {1..3}; do
+          if cp -r "$ZEROTIER_SRC/"* user/zerotier/; then
+            break
+          else
+            echo "::warning:: 文件复制失败，第$i次重试..."
+            sleep 5
+          fi
+        done
+
+        # 生成Makefile
         cat > user/zerotier/Makefile <<'EOF'
         include $(TOPDIR)/rules.mk
         PKG_NAME:=zerotier
@@ -71,7 +86,6 @@ jobs:
           CATEGORY:=Network
           TITLE:=ZeroTier One
           DEPENDS:=+libpthread +libstdcpp +kmod-tun +libopenssl +libjson-c
-          URL:=https://www.zerotier.com/
         endef
         
         CONFIGURE_ARGS += \
@@ -84,100 +98,88 @@ jobs:
           $(MAKE) -C $(PKG_BUILD_DIR)/one \
             CC="$(TARGET_CC)" \
             CXX="$(TARGET_CXX)" \
-            STRIP="$(TARGET_STRIP)" \
-            ZT_ENABLE_NETWORK_CONTROLLER=0
+            STRIP="$(TARGET_STRIP)"
         endef
         
         define Package/zerotier/install
           $(INSTALL_DIR) $(1)/usr/bin
           $(INSTALL_BIN) $(PKG_BUILD_DIR)/one/zerotier-one $(1)/usr/bin/
           ln -sf zerotier-one $(1)/usr/bin/zerotier-cli
-          $(INSTALL_DIR) $(1)/etc/init.d
-          $(INSTALL_BIN) ./scripts/zerotier.init $(1)/etc/init.d/zerotier
         endef
         
         $(eval $(call BuildPackage,zerotier))
         EOF
 
-    # ========== 配置系统（最终解决方案） ==========
-    - name: Configure system
+    # ========== 配置编译选项 ==========
+    - name: Configure build
       run: |
         cd $PADAVAN_DIR/trunk
         
-        # 初始化模板系统
-        mkdir -p configs/templates
-        [ -f "configs/templates/$DEVICE.config" ] || \
-          cp configs/templates/default.config "configs/templates/$DEVICE.config" 2>/dev/null || \
-          touch "configs/templates/$DEVICE.config"
+        # 清理环境
+        ./clear_tree
         
-        # 注入配置参数（带重复检查）
-        declare -A CONFIG_MAP=(
-          ["ZEROTIER"]=y
-          ["OPENSSL_EXE"]=y
-          ["JQ"]=y
+        # 生成初始配置
+        TEMPLATE_FILE="configs/templates/$DEVICE.config"
+        [ -f "$TEMPLATE_FILE" ] || cp configs/templates/default.config "$TEMPLATE_FILE"
+        
+        # 注入配置参数
+        CONFIG_OPTS=(
+          "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y"
+          "CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y"
+          "CONFIG_FIRMWARE_INCLUDE_JQ=y"
         )
-        for key in "${!CONFIG_MAP[@]}"; do
-          var_name="CONFIG_FIRMWARE_INCLUDE_${key}"
-          var_value="${CONFIG_MAP[$key]}"
-          grep -q "^$var_name=" "configs/templates/$DEVICE.config" || \
-            echo "$var_name=$var_value" >> "configs/templates/$DEVICE.config"
-        done
-        
-        # 生成基础配置（带fakeroot）
-        fakeroot ./build_firmware_modify --dry-run "$DEVICE"
-        
-        # 应急配置恢复
-        if [ ! -f ".config" ]; then
-          echo "::error:: 主配置丢失，执行紧急恢复"
-          cp "configs/templates/$DEVICE.config" .config
-          yes "" | make oldconfig
-        fi
-        
-        # 强制配置验证
-        for key in "${!CONFIG_MAP[@]}"; do
-          var_name="CONFIG_FIRMWARE_INCLUDE_${key}"
-          if ! grep -q "^$var_name=${CONFIG_MAP[$key]}" .config; then
-            echo "::warning:: 强制注入 $var_name"
-            sed -i "/^$var_name/d" .config
-            echo "$var_name=${CONFIG_MAP[$key]}" >> .config
+        for opt in "${CONFIG_OPTS[@]}"; do
+          if ! grep -q "^$opt" "$TEMPLATE_FILE"; then
+            echo "$opt" >> "$TEMPLATE_FILE"
           fi
         done
         
-        # 生成最终配置
-        yes "" | make oldconfig
+        # 生成配置
+        fakeroot ./build_firmware_modify --dry-run "$DEVICE"
+        
+        # 强制写入配置项
+        for opt in "${CONFIG_OPTS[@]}"; do
+          if ! grep -q "^$opt" .config; then
+            echo "$opt" >> .config
+          fi
+        done
+        
+        # 验证配置
+        grep -q "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y" .config || exit 1
 
-    # ========== 编译阶段（带资源优化） ==========
+    # ========== 编译固件 ==========
     - name: Build firmware
-      timeout-minutes: 120
+      timeout-minutes: 60
       run: |
         cd $PADAVAN_DIR/trunk
         
-        # 创建交换空间（针对GitHub内存限制）
+        # 创建交换空间
         sudo fallocate -l 2G /swapfile
         sudo chmod 600 /swapfile
         sudo mkswap /swapfile
         sudo swapon /swapfile
         
-        # 启动编译（带错误重试）
+        # 编译带重试机制
         for i in {1..3}; do
           if fakeroot ./build_firmware_modify "$DEVICE"; then
             break
           else
-            echo "::warning:: 编译失败，尝试第$i次重试..."
+            echo "::warning:: 编译失败，第$i次重试..."
             make clean
+            sleep 10
           fi
         done
         
-        # 验证输出
+        # 验证输出文件
         if [ ! -f "images/$DEVICE.trx" ]; then
-          echo "::error:: 最终固件未生成"
+          echo "::error:: 编译产物未生成"
           exit 1
         fi
         
         mkdir -p "$GITHUB_WORKSPACE/output"
         cp images/*.trx "$GITHUB_WORKSPACE/output/"
 
-    # ========== 产物处理 ==========
+    # ========== 上传产物 ==========
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
@@ -185,15 +187,10 @@ jobs:
         path: $GITHUB_WORKSPACE/output/*.trx
         retention-days: 7
 
-    # ========== 调试信息收集 ==========
-    - name: Collect debug info
+    # ========== 后期清理 ==========
+    - name: Cleanup
       if: always()
       run: |
-        cd $PADAVAN_DIR/trunk
-        echo "=== 关键文件校验 ==="
-        sha256sum .config
-        sha256sum configs/templates/$DEVICE.config
-        echo "=== 内存使用情况 ==="
-        free -m
-        echo "=== 存储空间 ==="
-        df -h
+        sudo swapoff /swapfile
+        sudo rm -f /swapfile
+        rm -rf "$PADAVAN_DIR" "$ZEROTIER_SRC"
