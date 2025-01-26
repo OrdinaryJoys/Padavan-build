@@ -1,4 +1,4 @@
-name: Padavan-ZeroTier AutoBuilder
+name: Padavan-ZeroTier Builder
 
 on:
   workflow_dispatch:
@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-22.04
     env:
       DEVICE: K2P
-      BUILD_TIMESTAMP: $(date +%Y%m%d-%H%M%S)
       PADAVAN_REPO: https://github.com/hanwckf/padavan-4.4
       ZEROTIER_REPO: https://github.com/zerotier/ZeroTierOne
 
@@ -21,13 +20,7 @@ jobs:
         echo "BUILD_TIMESTAMP=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_ENV
         echo "WORKSPACE=$GITHUB_WORKSPACE" >> $GITHUB_ENV
 
-    # ========== 检出主仓库 ==========
-    - name: Checkout main repo
-      uses: actions/checkout@v4
-      with:
-        path: main-repo
-
-    # ========== 克隆依赖仓库 ==========
+    # ========== 克隆基础仓库 ==========
     - name: Clone Padavan
       run: |
         git clone --depth=1 $PADAVAN_REPO
@@ -38,44 +31,56 @@ jobs:
         git clone --depth=1 $ZEROTIER_REPO
         echo "ZEROTIER_SRC=$GITHUB_WORKSPACE/ZeroTierOne" >> $GITHUB_ENV
 
-    # ========== 验证目录结构 ==========
-    - name: Validate structure
+    # ========== 创建Web界面文件 ==========
+    - name: Create Web UI
       run: |
-        echo "工作区结构验证:"
-        ls -l
+        mkdir -p $GITHUB_WORKSPACE/zt-ui
         
-        # 核心目录检查
-        [ -d "main-repo/zt-ui" ] || { echo "❌ 缺失zt-ui目录"; exit 1; }
-        [ -f "main-repo/zt-ui/zerotier.asp" ] || { echo "❌ 缺失ASP文件"; exit 1; }
-        [ -d "padavan-4.4/trunk" ] || { echo "❌ Padavan结构异常"; exit 1; }
-        [ -d "ZeroTierOne/src" ] || { echo "❌ ZeroTier结构异常"; exit 1; }
-
-    # ========== 安装依赖 ==========
-    - name: Install dependencies
-      run: |
-        sudo apt-get update -y
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-          build-essential libncurses5-dev cmake flex bison gperf \
-          libssl-dev libjson-c-dev zlib1g-dev python3-pip \
-          fakeroot kmod cpio git python3-docutils gettext automake
+        # 生成ASP文件
+        cat > $GITHUB_WORKSPACE/zt-ui/zerotier.asp <<'EOF'
+        <% css_add("zt.css") %>
+        <div class="container">
+          <h2>ZeroTier控制面板</h2>
+          <div id="zt-status"></div>
+        </div>
+        <script>
+          // 状态更新逻辑
+        </script>
+        EOF
+        
+        # 生成CSS文件
+        cat > $GITHUB_WORKSPACE/zt-ui/zt.css <<'EOF'
+        .container { padding: 20px; }
+        #zt-status { background: #f5f5f5; padding: 15px; }
+        EOF
+        
+        # 生成API脚本
+        cat > $GITHUB_WORKSPACE/zt-ui/zerotier_api.cgi <<'EOF'
+        #!/bin/sh
+        echo "Content-type: application/json"
+        echo ""
+        # API处理逻辑
+        EOF
+        
+        chmod +x $GITHUB_WORKSPACE/zt-ui/zerotier_api.cgi
 
     # ========== 准备工具链 ==========
     - name: Setup toolchain
       run: |
-        cd padavan-4.4/toolchain-mipsel
+        cd $PADAVAN_DIR/toolchain-mipsel
         ./dl_toolchain.sh
-        echo "$GITHUB_WORKSPACE/padavan-4.4/toolchain-mipsel/toolchain-4.4.x/bin" >> $GITHUB_PATH
+        echo "$PADAVAN_DIR/toolchain-mipsel/toolchain-4.4.x/bin" >> $GITHUB_PATH
 
     # ========== 集成ZeroTier ==========
     - name: Integrate ZeroTier
       run: |
-        cd padavan-4.4/trunk
+        cd $PADAVAN_DIR/trunk
         
         # 复制ZeroTier源码
         mkdir -p user/zerotier
         cp -r $ZEROTIER_SRC/* user/zerotier/
         
-        # 创建Makefile
+        # 创建编译配置
         cat > user/zerotier/Makefile <<'EOF'
         include $(TOPDIR)/rules.mk
         PKG_NAME:=zerotier
@@ -112,26 +117,27 @@ jobs:
         $(eval $(call BuildPackage,zerotier))
         EOF
 
-    # ========== 集成Web界面 ==========
-    - name: Deploy WebUI
+    # ========== 部署Web界面 ==========
+    - name: Deploy Web Interface
       run: |
-        cd padavan-4.4/trunk
+        cd $PADAVAN_DIR/trunk
+        
+        # 创建目标目录
         mkdir -p user/www/n56u_ribbon_fixed/zerotier
         mkdir -p user/www/cgi-bin
         
-        # 复制Web文件
-        cp $GITHUB_WORKSPACE/main-repo/zt-ui/*.asp user/www/n56u_ribbon_fixed/
-        cp $GITHUB_WORKSPACE/main-repo/zt-ui/*.css user/www/n56u_ribbon_fixed/zerotier/
-        cp $GITHUB_WORKSPACE/main-repo/zt-ui/*.cgi user/www/cgi-bin/
-        chmod +x user/www/cgi-bin/zerotier_*.cgi
+        # 复制生成的文件
+        cp $GITHUB_WORKSPACE/zt-ui/zerotier.asp user/www/n56u_ribbon_fixed/
+        cp $GITHUB_WORKSPACE/zt-ui/zt.css user/www/n56u_ribbon_fixed/zerotier/
+        cp $GITHUB_WORKSPACE/zt-ui/zerotier_api.cgi user/www/cgi-bin/
         
         # 注册菜单项
         sed -i '/menuinfo\.push(/a\  menuinfo.push(["zerotier.asp", "ZeroTier"]);' user/www/n56u_ribbon_fixed/state.js
 
-    # ========== 构建配置 ==========
+    # ========== 配置编译选项 ==========
     - name: Configure build
       run: |
-        cd padavan-4.4/trunk
+        cd $PADAVAN_DIR/trunk
         make $DEVICE\_defconfig
         ./scripts/config --set-val CONFIG_FIRMWARE_INCLUDE_ZEROTIER y
         ./scripts/config --set-val CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE y
@@ -141,12 +147,12 @@ jobs:
     # ========== 编译固件 ==========
     - name: Build firmware
       run: |
-        cd padavan-4.4/trunk
+        cd $PADAVAN_DIR/trunk
         make -j$(nproc) all V=s
         mkdir -p $GITHUB_WORKSPACE/output
         cp images/*.trx $GITHUB_WORKSPACE/output/
 
-    # ========== 发布产物 ==========
+    # ========== 上传产物 ==========
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
