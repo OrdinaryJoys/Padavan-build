@@ -1,206 +1,147 @@
-name: Padavan-ZeroTier-Build
+name: Padavan AutoBuilder with ZeroTier WebUI
 
 on:
   workflow_dispatch:
   push:
     tags: ['v*']
 
-env:
-  DEVICE: K2P
-  BLOCK_SIZE: 15872
-  ZT_REPO: https://github.com/zerotier/ZeroTierOne.git
-  TOOLCHAIN_URL: https://cdn.jsdelivr.net/gh/hanwckf/padavan-4.4@toolchain/mipsel-4.4.x.tar.xz
-  TOOLCHAIN_SHA256: 0019dfc4b32d63c1392aa264aed2253c1e0c2fb09216f8e2cc269bbfb8bb49b5
-
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    env:
+      DEVICE: K2P
+      BLOCK_SIZE: 15872
+      ZT_ENABLED: "y"
+      TOOLCHAIN_DIR: ${{ github.workspace }}/padavan-4.4/toolchain-mipsel/toolchain-4.4.x
 
     steps:
-    # ========== 初始化环境 ==========
-    - name: Setup base environment
+    # ========== 初始化设置 ==========
+    - name: Set build timestamp
       run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          ca-certificates curl xz-utils tree \
-          python3 python3-pip jq file
+        echo "BUILD_TIMESTAMP=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_ENV
 
-    # ========== 仓库克隆 ==========
-    - name: Clone repository
+    - name: Checkout code
       uses: actions/checkout@v4
       with:
-        repository: hanwckf/padavan-4.4
-        path: padavan-src
-        ref: main
-        fetch-depth: 100
-        lfs: true
+        path: main-repo
 
-    # ========== 工具链管理 ==========
-    - name: Install toolchain (verified)
-      id: toolchain
+    # ========== 获取ZeroTier源码 ==========
+    - name: Clone ZeroTier source
+      uses: actions/checkout@v4
+      with:
+        repository: zerotier/ZeroTierOne
+        path: zerotier-src
+
+    # ========== 安装依赖 ==========
+    - name: Install dependencies
       run: |
-        cd padavan-src/toolchain-mipsel
-        
-        # 清理旧文件
-        rm -rf toolchain-4.4.x *.tar.xz
+        sudo apt-get update -y
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          build-essential libncurses5-dev cmake flex bison gperf \
+          python3-pip python3-setuptools python3-wheel ninja-build \
+          libssl-dev libjson-c-dev zlib1g-dev jq
 
-        # 增强下载（5次重试+智能续传）
-        for i in {1..5}; do
-          echo "▷ 下载尝试 $i/5 (URL: $TOOLCHAIN_URL)"
-          if curl -L \
-             --fail \
-             --retry 3 \
-             --retry-delay 10 \
-             --retry-max-time 60 \
-             -C - \
-             -o toolchain.tar.xz "$TOOLCHAIN_URL"; then
-            break
-          fi
-          sleep $((i*15))
-        done
-
-        # 详细文件验证
-        echo "▷ 文件验证阶段："
-        echo "文件大小: $(du -h toolchain.tar.xz)"
-        echo "文件类型: $(file toolchain.tar.xz)"
-        echo "头部校验: $(xxd -l 16 toolchain.tar.xz)"
-
-        # SHA256校验
-        echo "▷ SHA256校验 (配置值: $TOOLCHAIN_SHA256)"
-        ACTUAL_SHA=$(sha256sum toolchain.tar.xz | cut -d' ' -f1)
-        if [ "$ACTUAL_SHA" != "$TOOLCHAIN_SHA256" ]; then
-          echo "::error::校验失败！实际值: $ACTUAL_SHA"
-          echo "解决方案："
-          echo "1. 手动验证: curl -LO $TOOLCHAIN_URL && sha256sum toolchain.tar.xz"
-          echo "2. 更新TOOLCHAIN_SHA256环境变量"
-          exit 1
-        fi
-
-        # 解压验证
-        echo "▷ 解压工具链（预览前5个文件）..."
-        tar -tvJf toolchain.tar.xz | head -5
-        mkdir -p toolchain-4.4.x
-        if ! tar -xJvf toolchain.tar.xz -C toolchain-4.4.x --strip-components=1; then
-          echo "::error::解压失败！最后5行日志："
-          tail -5 tar.log
-          exit 1
-        fi
-
-        # 编译器验证
-        COMPILER="toolchain-4.4.x/bin/mipsel-linux-uclibc-gcc"
-        if [ ! -x "$COMPILER" ]; then
-          echo "::error::编译器验证失败！目录结构："
-          tree -L 3 toolchain-4.4.x
-          exit 1
-        fi
-        echo "TOOLCHAIN_PATH=$(pwd)/toolchain-4.4.x/bin" >> $GITHUB_ENV
-
-    # ========== ZeroTier集成 ==========
-    - name: Integrate ZeroTier
+    # ========== 准备编译环境 ==========
+    - name: Prepare build environment
       run: |
-        set -ex
-        ZT_TAG=$(curl -s https://api.github.com/repos/zerotier/ZeroTierOne/releases/latest | jq -r .tag_name)
-        echo "▷ 克隆ZeroTier版本: $ZT_TAG"
-        git clone --depth 1 --branch "$ZT_TAG" "$ZT_REPO" zerotier-src
+        git clone --depth=1 https://github.com/hanwckf/padavan-4.4.git
+        cd padavan-4.4/toolchain-mipsel
+        ./dl_toolchain.sh
+        echo "${{ github.workspace }}/padavan-4.4/toolchain-mipsel/toolchain-4.4.x/bin" >> $GITHUB_PATH
+
+    # ========== 集成ZeroTier和Web界面 ==========
+    - name: Integrate ZeroTier with WebUI
+      run: |
+        cd padavan-4.4/trunk
         
-        mkdir -p padavan-src/trunk/user/zerotier
-        cp -rv zerotier-src/* padavan-src/trunk/user/zerotier/
+        # 创建必要目录
+        mkdir -p user/www/n56u_ribbon_fixed/zerotier
+        mkdir -p user/www/cgi-bin
+        mkdir -p user/scripts
+
+        # 复制Web界面文件
+        cp ${{ github.workspace }}/main-repo/zt-ui/zerotier.asp user/www/n56u_ribbon_fixed/
+        cp ${{ github.workspace }}/main-repo/zt-ui/zt.css user/www/n56u_ribbon_fixed/zerotier/
+        cp ${{ github.workspace }}/main-repo/zt-ui/zerotier_api.cgi user/www/cgi-bin/
+        chmod +x user/www/cgi-bin/zerotier_api.cgi
+
+        # 添加菜单入口
+        sed -i '/menuinfo\.push(/a\  menuinfo.push(["zerotier.asp", "ZeroTier网络"]);' user/www/n56u_ribbon_fixed/state.js
+
+        # 集成ZeroTier源码
+        mkdir -p user/zerotier
+        cp -r ${{ github.workspace }}/zerotier-src/* user/zerotier/
+
+        # 创建启动脚本
+        cat > user/scripts/post_wan_script.sh <<'EOF'
+        #!/bin/sh
+        [ $(nvram get zt_enable) = "1" ] && {
+            zerotier-one -d
+            sleep 5
+            zerotier-cli join $(nvram get zt_network)
+        }
+        EOF
+        chmod +x user/scripts/post_wan_script.sh
+
+        # 创建ZeroTier Makefile
+        cat > user/zerotier/Makefile <<'EOF'
+        include $(TOPDIR)/rules.mk
+        PKG_NAME:=zerotier
+        PKG_VERSION:=$(shell git -C $(CURDIR) describe --tags)
         
-        cd padavan-src/trunk
-        sed -i'' \
-          -e '/CFLAGS += -Os/s/$/ -Wno-error=format-truncation -Wno-error=maybe-uninitialized/' \
-          -e '/^LIBS/s/$/ -ljson-c -latomic/' \
-          user/zerotier/Makefile
+        include $(INCLUDE_DIR)/package.mk
         
-        cat << EOF >> .config
-        # Auto-generated at $(date)
-        CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y
-        CONFIG_FIRMWARE_INCLUDE_ZEROTIER_UI=y
-        CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
-        CONFIG_FIRMWARE_OPTIMIZE_SHRINK=y
+        define Package/zerotier
+          SECTION:=net
+          CATEGORY:=Network
+          TITLE:=ZeroTier One
+          DEPENDS:=+libpthread +libstdcpp +kmod-tun +libopenssl +libjson-c
+        endef
+        
+        CONFIGURE_ARGS += \
+          --host=mipsel-linux-uclibc \
+          --enable-static \
+          --disable-selinux \
+          ZT_ENABLE_NETWORK_CONTROLLER=0
+        
+        define Build/Compile
+          $(MAKE) -C $(PKG_BUILD_DIR)/one \
+            CC="$(TARGET_CC)" \
+            CXX="$(TARGET_CXX)" \
+            STRIP="$(TARGET_STRIP)"
+        endef
+        
+        define Package/zerotier/install
+          $(INSTALL_DIR) $(1)/usr/bin
+          $(INSTALL_BIN) $(PKG_BUILD_DIR)/one/zerotier-one $(1)/usr/bin/
+          ln -sf zerotier-one $(1)/usr/bin/zerotier-cli
+          ln -sf zerotier-one $(1)/usr/bin/zerotier-idtool
+        endef
+        
+        $(eval $(call BuildPackage,zerotier))
         EOF
 
-    # ========== 智能构建 ==========
+    # ========== 配置固件 ==========
+    - name: Configure firmware
+      run: |
+        cd padavan-4.4/trunk
+        make ${DEVICE}_defconfig
+        ./scripts/config --set-val CONFIG_FIRMWARE_INCLUDE_ZEROTIER y
+        ./scripts/config --set-val CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE y
+        ./scripts/config --set-val CONFIG_FIRMWARE_INCLUDE_JQ y
+        make oldconfig
+
+    # ========== 编译固件 ==========
     - name: Build firmware
       run: |
-        cd padavan-src/trunk
-        ./clear_tree || echo "::warning::清理旧构建失败，继续..."
-        
-        export PATH="$TOOLCHAIN_PATH:$PATH"
-        export CC=mipsel-linux-uclibc-gcc
-        export STRIP=mipsel-linux-uclibc-strip
-        
-        # 动态资源分配
-        TOTAL_MEM=$(free -m | awk '/Mem:/{print $2}')
-        if [ "$TOTAL_MEM" -lt 4096 ]; then
-          JOBS=2
-        else
-          JOBS=$(($(nproc)*3/4))
-        fi
-        echo "▷ 内存总量: ${TOTAL_MEM}MB | 使用并行任务数: $JOBS"
+        cd padavan-4.4/trunk
+        make -j$(nproc) all V=s
+        mkdir -p ${{ github.workspace }}/output
+        cp images/*.trx ${{ github.workspace }}/output/
 
-        # 带资源监控的构建
-        /usr/bin/time -v \
-        fakeroot ./build_firmware_modify "$DEVICE" "$BLOCK_SIZE" -j"$JOBS" \
-          2>&1 | tee build.log
-
-        [ -f "images/$DEVICE.trx" ] || {
-          echo "::error::固件未生成！错误摘要："
-          grep -iE 'error:|undefined' build.log | tail -n 20
-          exit 1
-        }
-
-    # ========== 产物处理 ==========
-    - name: Package artifacts
-      run: |
-        cd padavan-src/trunk/images
-        [ -f "$DEVICE.trx" ] || exit 1
-        
-        # 压缩优化
-        if command -v upx >/dev/null 2>&1; then
-          echo "▷ 使用UPX压缩 (版本: $(upx -V | head -1))"
-          upx --best --lzma "$DEVICE.trx" || true
-        fi
-        
-        # 生成校验文件
-        {
-          echo "MD5:    $(md5sum "$DEVICE.trx" | cut -d' ' -f1)"
-          echo "SHA256: $(sha256sum "$DEVICE.trx" | cut -d' ' -f1)"
-        } > checksums.txt
-        
-        # 打包
-        tar czvf "$DEVICE-zt-$(date +%Y%m%d-%H%M%S).tar.gz" \
-          "$DEVICE.trx" \
-          checksums.txt
-
-    # ========== 错误诊断 ==========
-    - name: Failure diagnostics
-      if: ${{ failure() }}
-      run: |
-        echo "=== 系统诊断报告 ==="
-        echo "▷ 内存状态:"
-        free -m
-        echo "▷ 磁盘使用:"
-        df -h
-        echo "▷ 最近内核消息:"
-        dmesg | tail -n 20
-
-        echo "=== 构建日志分析 ==="
-        if [ -f "padavan-src/trunk/build.log" ]; then
-          echo "▷ 最后50行日志:"
-          tail -n 50 padavan-src/trunk/build.log
-          echo "▷ 错误摘要:"
-          grep -iE 'error:|warning:|undefined' padavan-src/trunk/build.log | sort | uniq -c
-        else
-          echo "::warning::构建日志不存在"
-        fi
-
-    - name: Upload artifacts
+    # ========== 上传产物 ==========
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: firmware-${DEVICE}-${GITHUB_RUN_ID}
-        path: |
-          padavan-src/trunk/images/*.tar.gz
-          padavan-src/trunk/build.log
-        retention-days: 7
+        name: ${{ env.DEVICE }}_ZT_UI_${{ env.BUILD_TIMESTAMP }}
+        path: ${{ github.workspace }}/output/*.trx
