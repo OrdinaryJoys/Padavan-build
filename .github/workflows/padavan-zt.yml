@@ -18,6 +18,7 @@ jobs:
     - name: Setup environment
       run: |
         echo "BUILD_TIMESTAMP=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_ENV
+        echo "WORKSPACE=$GITHUB_WORKSPACE" >> $GITHUB_ENV
         sudo apt-get -qq update
         sudo apt-get -qq install unzip libtool-bin curl cmake gperf gawk flex bison nano xxd \
             fakeroot kmod cpio git python3-docutils gettext automake autopoint \
@@ -25,9 +26,9 @@ jobs:
             libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget
 
     # ========== 克隆仓库 ==========
-    - name: Clone Padavan
+    - name: Clone Padavan with submodules
       run: |
-        git clone --depth=1 $PADAVAN_REPO
+        git clone --depth=1 --recurse-submodules $PADAVAN_REPO
         cd padavan-4.4
         git submodule update --init --recursive
         echo "PADAVAN_DIR=$GITHUB_WORKSPACE/padavan-4.4" >> $GITHUB_ENV
@@ -37,11 +38,21 @@ jobs:
         git clone --depth=1 $ZEROTIER_REPO
         echo "ZEROTIER_SRC=$GITHUB_WORKSPACE/ZeroTierOne" >> $GITHUB_ENV
 
+    # ========== 验证仓库结构 ==========
+    - name: Validate repository
+      run: |
+        echo "=== Padavan目录结构验证 ==="
+        ls -l $PADAVAN_DIR/trunk/configs/templates/
+        [ -f "$PADAVAN_DIR/trunk/build_firmware_modify" ] || exit 1
+        [ -d "$PADAVAN_DIR/trunk/user" ] || exit 1
+
     # ========== 准备工具链 ==========
     - name: Setup toolchain
+      timeout-minutes: 15
       run: |
         cd $PADAVAN_DIR/toolchain-mipsel
         ./dl_toolchain.sh
+        echo "工具链路径："
         echo "$PADAVAN_DIR/toolchain-mipsel/toolchain-4.4.x/bin" >> $GITHUB_PATH
 
     # ========== 集成ZeroTier ==========
@@ -92,15 +103,42 @@ jobs:
     - name: Configure build
       run: |
         cd $PADAVAN_DIR/trunk
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_ZEROTIER/d' .config
-        echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y" >> configs/templates/$DEVICE.config
+        
+        # 清理环境
+        ./clear_tree
+        
+        # 生成初始配置
+        TEMPLATE_FILE="configs/templates/$DEVICE.config"
+        echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y" >> $TEMPLATE_FILE
+        echo "CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y" >> $TEMPLATE_FILE
+        echo "CONFIG_FIRMWARE_INCLUDE_JQ=y" >> $TEMPLATE_FILE
+        
+        # 生成最终配置
+        fakeroot ./build_firmware_modify $DEVICE --dry-run
+        
+        # 强制写入配置项
+        for config in ZEROTIER OPENSSL_EXE JQ; do
+          if ! grep -q "CONFIG_FIRMWARE_INCLUDE_${config}=y" .config; then
+            echo "CONFIG_FIRMWARE_INCLUDE_${config}=y" >> .config
+          fi
+        done
+        
+        # 验证配置
+        grep -q "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y" .config || exit 1
 
     # ========== 编译固件 ==========
     - name: Build firmware
+      timeout-minutes: 45
       run: |
         cd $PADAVAN_DIR/trunk
-        ./clear_tree
         fakeroot ./build_firmware_modify $DEVICE
+        
+        # 验证输出文件
+        if [ ! -f "images/*.trx" ]; then
+          echo "::error:: 编译产物未生成"
+          exit 1
+        fi
+        
         mkdir -p $GITHUB_WORKSPACE/output
         cp images/*.trx $GITHUB_WORKSPACE/output/
 
@@ -110,3 +148,11 @@ jobs:
       with:
         name: ${{ env.DEVICE }}_ZT_${{ env.BUILD_TIMESTAMP }}
         path: $GITHUB_WORKSPACE/output/*.trx
+        retention-days: 7
+
+    # ========== 后期清理 ==========
+    - name: Cleanup
+      if: always()
+      run: |
+        rm -rf $PADAVAN_DIR
+        rm -rf $ZEROTIER_SRC
