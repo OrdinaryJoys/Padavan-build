@@ -16,148 +16,63 @@ jobs:
     timeout-minutes: 120
 
     steps:
-    # ========== Repository Setup ==========
-    - name: Clone Padavan repository
-      uses: actions/checkout@v4
-      with:
-        repository: hanwckf/padavan-4.4
-        path: padavan-src
-        ref: main
-        fetch-depth: 0
-
-    # ========== Build Environment ==========
-    - name: Install dependencies
-      run: |
-        sudo apt-get update -y
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-          unzip libtool-bin curl cmake gperf gawk flex bison \
-          fakeroot kmod cpio git python3-docutils gettext automake \
-          texinfo build-essential help2man pkg-config zlib1g-dev libgmp3-dev \
-          libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev libssl-dev \
-          libjson-c-dev jq upx libatomic1 \
-          libstdc++6-12-dbg  # 添加调试符号库
-
-    # ========== Toolchain Setup ==========
-    - name: Setup toolchain
+    # ========== 增强版工具链配置 ==========
+    - name: Setup toolchain (enhanced)
       run: |
         cd padavan-src/toolchain-mipsel
         
-        # 增强权限验证
-        [ -x "dl_toolchain.sh" ] || {
-          echo "::error::Toolchain script is not executable"
-          chmod +x dl_toolchain.sh
+        # 验证基础环境
+        echo "当前工作目录: $(pwd)"
+        ls -la
+        
+        # 多源下载配置
+        TOOLCHAIN_URLS=(
+          "https://github.com/hanwckf/padavan-4.4/releases/download/toolchain/mipsel-4.4.x.tar.xz"
+          "https://mirror.example.com/toolchain/mipsel-4.4.x.tar.xz"
+          "https://oss-attachment.cn-hangzhou.oss.aliyun-inc.com/toolchain/mipsel-4.4.x.tar.xz"
+        )
+        
+        # 分片下载函数
+        download_with_retry() {
+          local url=$1
+          local filename=$2
+          for i in {1..5}; do
+            if wget --tries=3 --timeout=30 -c "$url" -O "$filename"; then
+              return 0
+            fi
+            sleep $((10 * i))
+          done
+          return 1
         }
         
-        # 带调试输出的下载过程
-        set -x
-        for i in {1..5}; do
-          echo "Attempt $i/5"
-          if ./dl_toolchain.sh mipsel 2>&1 | tee "toolchain_$i.log"; then
-            if [ -d "toolchain-3.4.x/bin" ]; then
-              { set +x; } 2>/dev/null
-              echo "TOOLCHAIN_PATH=$(pwd)/toolchain-3.4.x/bin" >> $GITHUB_ENV
-              exit 0
+        # 主下载逻辑
+        success=false
+        for url in "${TOOLCHAIN_URLS[@]}"; do
+          echo "尝试从 $url 下载工具链..."
+          filename="toolchain-$(date +%s).tar.xz"
+          
+          if download_with_retry "$url" "$filename"; then
+            echo "下载成功，开始解压..."
+            mkdir -p toolchain-4.4.x
+            if tar -xJf "$filename" -C toolchain-4.4.x --strip-components=1; then
+              success=true
+              break
+            else
+              echo "解压失败，尝试下一个源..."
+              rm -rf toolchain-4.4.x
             fi
           fi
-          sleep $((30 + RANDOM % 30))
         done
         
-        echo "::error::Toolchain setup failed after 5 attempts"
-        grep -iE 'error|fail' toolchain_*.log
-        exit 1
-
-    # ========== ZeroTier Integration ==========
-    - name: Integrate ZeroTier (debug mode)
-      run: |
-        set -ex  # 启用详细日志
+        if [ "$success" = false ]; then
+          echo "::error::所有下载源均失败"
+          exit 1
+        fi
         
-        # 克隆ZeroTier源码
-        git clone --depth 1 --branch $(curl -s https://api.github.com/repos/zerotier/ZeroTierOne/releases/latest | jq -r .tag_name) $ZT_REPO zerotier-src
-        
-        # 验证源码完整性
-        [ -f "zerotier-src/make-linux.mk" ] || {
-          echo "::error::ZeroTier source validation failed"
+        # 验证工具链
+        [ -f "toolchain-4.4.x/bin/mipsel-linux-uclibc-gcc" ] || {
+          echo "::error::工具链验证失败"
           exit 1
         }
         
-        # 复制并修改源码
-        mkdir -p padavan-src/trunk/user/zerotier
-        cp -rv zerotier-src/* padavan-src/trunk/user/zerotier/
-        
-        cd padavan-src/trunk
-        
-        # 带错误检查的修改操作
-        sed -i '/CFLAGS += -Os/s/$/ -Wno-error=format-truncation/' user/zerotier/Makefile || {
-          echo "::error::Failed to modify CFLAGS"
-          exit 1
-        }
-        
-        echo "LIBS += -ljson-c -latomic" >> user/zerotier/Makefile || {
-          echo "::error::Failed to update LIBS"
-          exit 1
-        }
-        
-        # 生成带时间戳的配置文件
-        cat << EOF >> .config
-        # Generated at $(date)
-        CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y
-        CONFIG_FIRMWARE_INCLUDE_ZEROTIER_UI=y
-        CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
-        EOF
-
-    # ========== Build Process ==========
-    - name: Build firmware (with debug)
-      run: |
-        cd padavan-src/trunk
-        
-        # 清理环境
-        ./clear_tree || {
-          echo "::warning::Clean tree failed, proceeding anyway"
-        }
-        
-        # 设置编译环境
-        export PATH="$TOOLCHAIN_PATH:$PATH"
-        export CC=mipsel-linux-uclibc-gcc
-        export STRIP=mipsel-linux-uclibc-strip
-        
-        # 内存优化编译
-        echo "Using $(nproc) jobs"
-        
-        # 带详细日志的编译过程
-        set -exo pipefail
-        fakeroot ./build_firmware_modify $DEVICE $BLOCK_SIZE 2>&1 | tee build.log
-        
-        # 验证产物
-        [ -f "images/$DEVICE.trx" ] || {
-          echo "::error::Firmware image missing"
-          exit 1
-        }
-
-    # ========== Artifact Handling ==========
-    - name: Package artifacts
-      run: |
-        cd padavan-src/trunk/images
-        
-        # 压缩前验证
-        [ -f "$DEVICE.trx" ] || {
-          echo "::error::Firmware file not found"
-          exit 1
-        }
-        
-        upx --best --lzma "$DEVICE.trx" || {
-          echo "::warning::UPX compression failed, proceeding without"
-        }
-        
-        md5sum "$DEVICE.trx" > checksum.md5
-        sha256sum "$DEVICE.trx" > checksum.sha256
-        
-        tar czvf "$DEVICE-zt-build.tar.gz" \
-          "$DEVICE.trx" \
-          checksum.md5 \
-          checksum.sha256
-
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: firmware-package
-        path: padavan-src/trunk/images/*.tar.gz
+        echo "TOOLCHAIN_PATH=$(pwd)/toolchain-4.4.x/bin" >> $GITHUB_ENV
