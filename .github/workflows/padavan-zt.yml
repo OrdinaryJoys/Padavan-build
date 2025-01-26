@@ -12,21 +12,21 @@ jobs:
       DEVICE: K2P
       BLOCK_SIZE: 15872
       ZT_ENABLED: "y"
-      TOOLCHAIN_DIR: ${{ github.workspace }}/padavan-4.4/toolchain-mipsel/toolchain-4.4.x
 
     steps:
     # ========== 初始化设置 ==========
-    - name: Set build timestamp
+    - name: Set build metadata
       run: |
         echo "BUILD_TIMESTAMP=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_ENV
+        echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
 
-    - name: Checkout code
+    - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        path: main-repo
+        path: src  # 明确指定检出路径
 
     # ========== 获取ZeroTier源码 ==========
-    - name: Clone ZeroTier source
+    - name: Clone ZeroTier
       uses: actions/checkout@v4
       with:
         repository: zerotier/ZeroTierOne
@@ -38,31 +38,41 @@ jobs:
         sudo apt-get update -y
         sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
           build-essential libncurses5-dev cmake flex bison gperf \
-          python3-pip python3-setuptools python3-wheel ninja-build \
+          python3-pip python3-setuptools ninja-build \
           libssl-dev libjson-c-dev zlib1g-dev jq
 
     # ========== 准备编译环境 ==========
-    - name: Prepare build environment
+    - name: Setup Padavan
       run: |
         git clone --depth=1 https://github.com/hanwckf/padavan-4.4.git
         cd padavan-4.4/toolchain-mipsel
         ./dl_toolchain.sh
         echo "${{ github.workspace }}/padavan-4.4/toolchain-mipsel/toolchain-4.4.x/bin" >> $GITHUB_PATH
 
+    # ========== 文件验证步骤 ==========
+    - name: Validate WebUI files
+      run: |
+        echo "Workspace path: ${{ github.workspace }}"
+        echo "Repository contents:"
+        ls -l ${{ github.workspace }}/src
+        echo "Checking WebUI files:"
+        ls -l ${{ github.workspace }}/src/zt-ui
+        [ -f ${{ github.workspace }}/src/zt-ui/zerotier.asp ] || exit 1
+        [ -f ${{ github.workspace }}/src/zt-ui/zt.css ] || exit 1
+        [ -f ${{ github.workspace }}/src/zt-ui/zerotier_api.cgi ] || exit 1
+
     # ========== 集成ZeroTier和Web界面 ==========
-    - name: Integrate ZeroTier with WebUI
+    - name: Integrate components
       run: |
         cd padavan-4.4/trunk
-        
-        # 创建必要目录
-        mkdir -p user/www/n56u_ribbon_fixed/zerotier
-        mkdir -p user/www/cgi-bin
-        mkdir -p user/scripts
 
-        # 复制Web界面文件
-        cp ${{ github.workspace }}/main-repo/zt-ui/zerotier.asp user/www/n56u_ribbon_fixed/
-        cp ${{ github.workspace }}/main-repo/zt-ui/zt.css user/www/n56u_ribbon_fixed/zerotier/
-        cp ${{ github.workspace }}/main-repo/zt-ui/zerotier_api.cgi user/www/cgi-bin/
+        # 创建目录结构
+        mkdir -p user/{www/n56u_ribbon_fixed/zerotier,scripts,cgi-bin}
+
+        # 复制Web界面文件（使用验证后的路径）
+        cp ${{ github.workspace }}/src/zt-ui/zerotier.asp user/www/n56u_ribbon_fixed/
+        cp ${{ github.workspace }}/src/zt-ui/zt.css user/www/n56u_ribbon_fixed/zerotier/
+        cp ${{ github.workspace }}/src/zt-ui/zerotier_api.cgi user/www/cgi-bin/
         chmod +x user/www/cgi-bin/zerotier_api.cgi
 
         # 添加菜单入口
@@ -72,7 +82,7 @@ jobs:
         mkdir -p user/zerotier
         cp -r ${{ github.workspace }}/zerotier-src/* user/zerotier/
 
-        # 创建启动脚本
+        # 服务管理脚本
         cat > user/scripts/post_wan_script.sh <<'EOF'
         #!/bin/sh
         [ $(nvram get zt_enable) = "1" ] && {
@@ -83,7 +93,7 @@ jobs:
         EOF
         chmod +x user/scripts/post_wan_script.sh
 
-        # 创建ZeroTier Makefile
+        # ZeroTier编译配置
         cat > user/zerotier/Makefile <<'EOF'
         include $(TOPDIR)/rules.mk
         PKG_NAME:=zerotier
@@ -121,7 +131,7 @@ jobs:
         $(eval $(call BuildPackage,zerotier))
         EOF
 
-    # ========== 配置固件 ==========
+    # ========== 固件配置 ==========
     - name: Configure firmware
       run: |
         cd padavan-4.4/trunk
@@ -136,12 +146,13 @@ jobs:
       run: |
         cd padavan-4.4/trunk
         make -j$(nproc) all V=s
-        mkdir -p ${{ github.workspace }}/output
-        cp images/*.trx ${{ github.workspace }}/output/
+        mkdir -p ${{ github.workspace }}/artifacts
+        cp images/*.trx ${{ github.workspace }}/artifacts/
 
     # ========== 上传产物 ==========
-    - name: Upload artifact
+    - name: Upload firmware
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ env.DEVICE }}_ZT_UI_${{ env.BUILD_TIMESTAMP }}
-        path: ${{ github.workspace }}/output/*.trx
+        name: ${{ env.DEVICE }}_ZT_${{ env.BUILD_TIMESTAMP }}
+        path: ${{ github.workspace }}/artifacts/*.trx
+        retention-days: 7
