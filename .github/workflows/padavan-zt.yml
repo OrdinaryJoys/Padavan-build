@@ -23,7 +23,22 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        path: src  # 明确指定检出路径
+        path: repo-root  # 关键修改：明确指定检出路径
+
+    # ========== 验证仓库结构 ==========
+    - name: Validate repository structure
+      run: |
+        echo "工作区路径: ${{ github.workspace }}"
+        echo "仓库内容结构:"
+        ls -l ${{ github.workspace }}/repo-root
+        
+        # 严格路径验证
+        [ -d "${{ github.workspace }}/repo-root/zt-ui" ] || { echo "❌ 缺失zt-ui目录"; exit 1; }
+        [ -f "${{ github.workspace }}/repo-root/zt-ui/zerotier.asp" ] || { echo "❌ 缺失zerotier.asp"; exit 1; }
+        [ -f "${{ github.workspace }}/repo-root/zt-ui/zt.css" ] || { echo "❌ 缺失zt.css"; exit 1; }
+        [ -f "${{ github.workspace }}/repo-root/zt-ui/zerotier_api.cgi" ] || { echo "❌ 缺失zerotier_api.cgi"; exit 1; }
+        
+        echo "✅ 仓库结构验证通过"
 
     # ========== 获取ZeroTier源码 ==========
     - name: Clone ZeroTier
@@ -49,19 +64,7 @@ jobs:
         ./dl_toolchain.sh
         echo "${{ github.workspace }}/padavan-4.4/toolchain-mipsel/toolchain-4.4.x/bin" >> $GITHUB_PATH
 
-    # ========== 文件验证步骤 ==========
-    - name: Validate WebUI files
-      run: |
-        echo "Workspace path: ${{ github.workspace }}"
-        echo "Repository contents:"
-        ls -l ${{ github.workspace }}/src
-        echo "Checking WebUI files:"
-        ls -l ${{ github.workspace }}/src/zt-ui
-        [ -f ${{ github.workspace }}/src/zt-ui/zerotier.asp ] || exit 1
-        [ -f ${{ github.workspace }}/src/zt-ui/zt.css ] || exit 1
-        [ -f ${{ github.workspace }}/src/zt-ui/zerotier_api.cgi ] || exit 1
-
-    # ========== 集成ZeroTier和Web界面 ==========
+    # ========== 集成组件 ==========
     - name: Integrate components
       run: |
         cd padavan-4.4/trunk
@@ -70,9 +73,10 @@ jobs:
         mkdir -p user/{www/n56u_ribbon_fixed/zerotier,scripts,cgi-bin}
 
         # 复制Web界面文件（使用验证后的路径）
-        cp ${{ github.workspace }}/src/zt-ui/zerotier.asp user/www/n56u_ribbon_fixed/
-        cp ${{ github.workspace }}/src/zt-ui/zt.css user/www/n56u_ribbon_fixed/zerotier/
-        cp ${{ github.workspace }}/src/zt-ui/zerotier_api.cgi user/www/cgi-bin/
+        echo "正在复制Web文件..."
+        cp -v "${{ github.workspace }}/repo-root/zt-ui/zerotier.asp" user/www/n56u_ribbon_fixed/
+        cp -v "${{ github.workspace }}/repo-root/zt-ui/zt.css" user/www/n56u_ribbon_fixed/zerotier/
+        cp -v "${{ github.workspace }}/repo-root/zt-ui/zerotier_api.cgi" user/www/cgi-bin/
         chmod +x user/www/cgi-bin/zerotier_api.cgi
 
         # 添加菜单入口
@@ -80,7 +84,7 @@ jobs:
 
         # 集成ZeroTier源码
         mkdir -p user/zerotier
-        cp -r ${{ github.workspace }}/zerotier-src/* user/zerotier/
+        cp -rv "${{ github.workspace }}/zerotier-src/"* user/zerotier/
 
         # 服务管理脚本
         cat > user/scripts/post_wan_script.sh <<'EOF'
@@ -146,8 +150,8 @@ jobs:
       run: |
         cd padavan-4.4/trunk
         make -j$(nproc) all V=s
-        mkdir -p ${{ github.workspace }}/artifacts
-        cp images/*.trx ${{ github.workspace }}/artifacts/
+        mkdir -p "${{ github.workspace }}/artifacts"
+        cp -v images/*.trx "${{ github.workspace }}/artifacts/"
 
     # ========== 上传产物 ==========
     - name: Upload firmware
