@@ -21,9 +21,11 @@ jobs:
         echo "WORKSPACE=$GITHUB_WORKSPACE" >> $GITHUB_ENV
 
     # ========== 克隆基础仓库 ==========
-    - name: Clone Padavan
+    - name: Clone Padavan (深度克隆)
       run: |
-        git clone --depth=1 $PADAVAN_REPO
+        git clone --depth=50 $PADAVAN_REPO
+        cd padavan-4.4
+        git submodule update --init --recursive
         echo "PADAVAN_DIR=$GITHUB_WORKSPACE/padavan-4.4" >> $GITHUB_ENV
 
     - name: Clone ZeroTier
@@ -76,11 +78,17 @@ jobs:
       run: |
         cd $PADAVAN_DIR/trunk
         
-        # 复制ZeroTier源码
+        # 创建ZeroTier目录结构
         mkdir -p user/zerotier
         cp -r $ZEROTIER_SRC/* user/zerotier/
         
-        # 创建编译配置
+        # 验证源码复制
+        if [ ! -f "user/zerotier/README.md" ]; then
+          echo "❌ ZeroTier源码复制失败"
+          exit 1
+        fi
+
+        # 生成Makefile
         cat > user/zerotier/Makefile <<'EOF'
         include $(TOPDIR)/rules.mk
         PKG_NAME:=zerotier
@@ -134,21 +142,44 @@ jobs:
         # 注册菜单项
         sed -i '/menuinfo\.push(/a\  menuinfo.push(["zerotier.asp", "ZeroTier"]);' user/www/n56u_ribbon_fixed/state.js
 
+    # ========== 配置验证 ==========
+    - name: Validate environment
+      run: |
+        echo "=== 工具链验证 ==="
+        $PADAVAN_DIR/toolchain-mipsel/toolchain-4.4.x/bin/mipsel-linux-uclibc-gcc --version
+        
+        echo "=== 配置文件检查 ==="
+        cd $PADAVAN_DIR/trunk
+        ls -l configs/templates/${DEVICE}.config
+
     # ========== 配置编译选项 ==========
     - name: Configure build
       run: |
         cd $PADAVAN_DIR/trunk
-        make $DEVICE\_defconfig
-        ./scripts/config --set-val CONFIG_FIRMWARE_INCLUDE_ZEROTIER y
-        ./scripts/config --set-val CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE y
-        ./scripts/config --set-val CONFIG_FIRMWARE_INCLUDE_JQ y
-        make oldconfig
+        
+        # 初始化设备配置
+        cp configs/templates/${DEVICE}.config .config
+        
+        # 设置编译选项
+        ./scripts/config --enable CONFIG_FIRMWARE_INCLUDE_ZEROTIER
+        ./scripts/config --enable CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE
+        ./scripts/config --enable CONFIG_FIRMWARE_INCLUDE_JQ
+        
+        # 非交互式配置确认
+        yes "" | make oldconfig
 
     # ========== 编译固件 ==========
     - name: Build firmware
       run: |
         cd $PADAVAN_DIR/trunk
         make -j$(nproc) all V=s
+        
+        # 验证输出文件
+        if [ ! -f "images/*.trx" ]; then
+          echo "❌ 编译产物未生成"
+          exit 1
+        fi
+        
         mkdir -p $GITHUB_WORKSPACE/output
         cp images/*.trx $GITHUB_WORKSPACE/output/
 
@@ -159,3 +190,10 @@ jobs:
         name: ${{ env.DEVICE }}_ZT_${{ env.BUILD_TIMESTAMP }}
         path: $GITHUB_WORKSPACE/output/*.trx
         retention-days: 7
+
+    # ========== 清理工作空间 ==========
+    - name: Cleanup workspace
+      if: always()
+      run: |
+        rm -rf $PADAVAN_DIR
+        rm -rf $ZEROTIER_SRC
