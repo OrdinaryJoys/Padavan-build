@@ -16,63 +16,164 @@ jobs:
     timeout-minutes: 120
 
     steps:
+    # ========== 增强版仓库克隆 ==========
+    - name: Clone repository with depth control
+      uses: actions/checkout@v4
+      with:
+        repository: hanwckf/padavan-4.4
+        path: padavan-src
+        ref: main
+        fetch-depth: 100  # 增加克隆深度避免历史记录缺失问题
+
+    # ========== 系统资源监控 ==========
+    - name: System resource monitor
+      run: |
+        echo "=== 系统资源状态 ==="
+        free -m
+        df -h
+        nproc
+
     # ========== 增强版工具链配置 ==========
-    - name: Setup toolchain (enhanced)
+    - name: Setup toolchain (multi-source)
+      id: toolchain
       run: |
         cd padavan-src/toolchain-mipsel
         
-        # 验证基础环境
+        # 验证基本环境
         echo "当前工作目录: $(pwd)"
+        echo "目录内容:"
         ls -la
         
         # 多源下载配置
-        TOOLCHAIN_URLS=(
-          "https://github.com/hanwckf/padavan-4.4/releases/download/toolchain/mipsel-4.4.x.tar.xz"
-          "https://mirror.example.com/toolchain/mipsel-4.4.x.tar.xz"
-          "https://oss-attachment.cn-hangzhou.oss.aliyun-inc.com/toolchain/mipsel-4.4.x.tar.xz"
+        TOOLCHAIN_MIRRORS=(
+          "https://ghproxy.com/https://github.com/hanwckf/padavan-4.4/releases/download/toolchain/mipsel-4.4.x.tar.xz"
+          "https://toolchain.download.nju.edu.cn/mipsel-4.4.x.tar.xz"
+          "https://mirror.iscas.ac.cn/padavan/toolchain/mipsel-4.4.x.tar.xz"
         )
         
-        # 分片下载函数
-        download_with_retry() {
+        # 带校验的下载函数
+        download_toolchain() {
           local url=$1
-          local filename=$2
-          for i in {1..5}; do
-            if wget --tries=3 --timeout=30 -c "$url" -O "$filename"; then
+          local hash="a1b2c3d4e5f6..."  # 替换为实际SHA256校验值
+          
+          echo "尝试从镜像源下载: $url"
+          if wget -q --tries=3 --timeout=30 --show-progress -c "$url" -O toolchain.tar.xz; then
+            echo "下载完成，开始校验..."
+            if sha256sum -c <<< "$hash  toolchain.tar.xz"; then
+              echo "校验成功"
               return 0
+            else
+              echo "::warning::文件校验失败"
+              rm -f toolchain.tar.xz
+              return 1
             fi
-            sleep $((10 * i))
-          done
+          fi
           return 1
         }
         
         # 主下载逻辑
-        success=false
-        for url in "${TOOLCHAIN_URLS[@]}"; do
-          echo "尝试从 $url 下载工具链..."
-          filename="toolchain-$(date +%s).tar.xz"
-          
-          if download_with_retry "$url" "$filename"; then
-            echo "下载成功，开始解压..."
-            mkdir -p toolchain-4.4.x
-            if tar -xJf "$filename" -C toolchain-4.4.x --strip-components=1; then
-              success=true
-              break
-            else
-              echo "解压失败，尝试下一个源..."
-              rm -rf toolchain-4.4.x
-            fi
+        for mirror in "${TOOLCHAIN_MIRRORS[@]}"; do
+          if download_toolchain "$mirror"; then
+            echo "成功从 $mirror 下载工具链"
+            break
           fi
         done
         
-        if [ "$success" = false ]; then
-          echo "::error::所有下载源均失败"
-          exit 1
-        fi
-        
-        # 验证工具链
-        [ -f "toolchain-4.4.x/bin/mipsel-linux-uclibc-gcc" ] || {
-          echo "::error::工具链验证失败"
+        # 解压与验证
+        echo "开始解压工具链..."
+        mkdir -p toolchain-4.4.x
+        tar -xJf toolchain.tar.xz -C toolchain-4.4.x --strip-components=1 || {
+          echo "::error::解压失败，可能原因："
+          echo "1. 文件损坏"
+          echo "2. 磁盘空间不足（当前剩余: $(df -h . | awk 'NR==2{print $4}')）"
           exit 1
         }
         
+        # 编译器验证
+        COMPILER_PATH="toolchain-4.4.x/bin/mipsel-linux-uclibc-gcc"
+        [ -x "$COMPILER_PATH" ] || {
+          echo "::error::编译器验证失败：$COMPILER_PATH 不存在或不可执行"
+          exit 1
+        }
+        
+        echo "工具链版本信息："
+        "$COMPILER_PATH" --version
+        
         echo "TOOLCHAIN_PATH=$(pwd)/toolchain-4.4.x/bin" >> $GITHUB_ENV
+
+    # ========== 构建环境诊断 ==========
+    - name: Build environment diagnostics
+      run: |
+        echo "=== 环境变量 ==="
+        printenv
+        
+        echo "=== 工具链路径验证 ==="
+        echo "工具链路径: $TOOLCHAIN_PATH"
+        ls -la "$TOOLCHAIN_PATH"
+        
+        echo "=== 编译器测试 ==="
+        "$TOOLCHAIN_PATH/mipsel-linux-uclibc-gcc" -v
+        
+        echo "=== 库文件验证 ==="
+        find "$TOOLCHAIN_PATH/../" -name 'libatomic*'
+
+    # ========== ZeroTier集成 ==========
+    - name: Integrate ZeroTier
+      run: |
+        set -ex
+        
+        # 克隆ZeroTier源码
+        git clone --depth 1 --branch $(curl -s https://api.github.com/repos/zerotier/ZeroTierOne/releases/latest | jq -r .tag_name) "$ZT_REPO" zerotier-src
+        
+        # 复制源码
+        mkdir -p padavan-src/trunk/user/zerotier
+        cp -rv zerotier-src/* padavan-src/trunk/user/zerotier/
+        
+        # 应用补丁
+        cd padavan-src/trunk
+        sed -i'' '/CFLAGS += -Os/s/$/ -Wno-error=format-truncation -Wno-error=stringop-overflow/' user/zerotier/Makefile
+        
+        # 生成配置
+        cat << EOF > .config
+        CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y
+        CONFIG_FIRMWARE_INCLUDE_ZEROTIER_UI=y
+        CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
+        CONFIG_FIRMWARE_INCLUDE_LIBATOMIC=y
+        EOF
+
+    # ========== 增强版构建过程 ==========
+    - name: Build firmware with optimizations
+      run: |
+        cd padavan-src/trunk
+        
+        # 内存优化编译
+        JOBS=$(( $(nproc) * 3 / 4 ))  # 使用75%的CPU核心
+        
+        # 带资源监控的构建
+        /usr/bin/time -v \
+        fakeroot ./build_firmware_modify "$DEVICE" "$BLOCK_SIZE" -j"$JOBS" \
+          2>&1 | tee build.log
+        
+        # 错误模式匹配
+        if grep -qE 'error:|undefined reference' build.log; then
+          echo "::error::检测到关键构建错误"
+          exit 1
+        fi
+        
+        [ -f "images/$DEVICE.trx" ] || {
+          echo "::error::固件文件未生成"
+          exit 1
+        }
+
+    # ========== 后构建诊断 ==========
+    - name: Post-build diagnostics
+      if: ${{ failure() }}
+      run: |
+        echo "=== 构建日志分析 ==="
+        tail -n 200 padavan-src/trunk/build.log
+        
+        echo "=== 关键错误摘要 ==="
+        grep -iE 'error:|warning:|undefined reference' padavan-src/trunk/build.log || true
+        
+        echo "=== 内存使用历史 ==="
+        dmesg | grep -i 'out of memory'
