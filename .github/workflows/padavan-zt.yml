@@ -21,9 +21,9 @@ jobs:
         echo "WORKSPACE=$GITHUB_WORKSPACE" >> $GITHUB_ENV
 
     # ========== 克隆基础仓库 ==========
-    - name: Clone Padavan (深度克隆)
+    - name: Clone Padavan (完整克隆)
       run: |
-        git clone --depth=50 $PADAVAN_REPO
+        git clone --depth=1 --branch=chinese $PADAVAN_REPO
         cd padavan-4.4
         git submodule update --init --recursive
         echo "PADAVAN_DIR=$GITHUB_WORKSPACE/padavan-4.4" >> $GITHUB_ENV
@@ -33,140 +33,51 @@ jobs:
         git clone --depth=1 $ZEROTIER_REPO
         echo "ZEROTIER_SRC=$GITHUB_WORKSPACE/ZeroTierOne" >> $GITHUB_ENV
 
-    # ========== 创建Web界面文件 ==========
-    - name: Create Web UI
+    # ========== 验证仓库结构 ==========
+    - name: Validate repository structure
       run: |
-        mkdir -p $GITHUB_WORKSPACE/zt-ui
+        echo "=== Padavan目录结构 ==="
+        ls -l $PADAVAN_DIR/trunk/scripts
         
-        # 生成ASP文件
-        cat > $GITHUB_WORKSPACE/zt-ui/zerotier.asp <<'EOF'
-        <% css_add("zt.css") %>
-        <div class="container">
-          <h2>ZeroTier控制面板</h2>
-          <div id="zt-status"></div>
-        </div>
-        <script>
-          // 状态更新逻辑
-        </script>
-        EOF
-        
-        # 生成CSS文件
-        cat > $GITHUB_WORKSPACE/zt-ui/zt.css <<'EOF'
-        .container { padding: 20px; }
-        #zt-status { background: #f5f5f5; padding: 15px; }
-        EOF
-        
-        # 生成API脚本
-        cat > $GITHUB_WORKSPACE/zt-ui/zerotier_api.cgi <<'EOF'
-        #!/bin/sh
-        echo "Content-type: application/json"
-        echo ""
-        # API处理逻辑
-        EOF
-        
-        chmod +x $GITHUB_WORKSPACE/zt-ui/zerotier_api.cgi
+        echo "=== 关键文件检查 ==="
+        [ -f "$PADAVAN_DIR/trunk/scripts/feeds" ] || exit 1
+        [ -d "$PADAVAN_DIR/trunk/user" ] || exit 1
 
     # ========== 准备工具链 ==========
     - name: Setup toolchain
       run: |
-        cd $PADAVAN_DIR/toolchain-mipsel
-        ./dl_toolchain.sh
-        echo "$PADAVAN_DIR/toolchain-mipsel/toolchain-4.4.x/bin" >> $GITHUB_PATH
+        cd $PADAVAN_DIR/trunk
+        ./tools/download_toolchain.sh
+
+    # ========== 配置编译系统 ==========
+    - name: Configure system
+      run: |
+        cd $PADAVAN_DIR/trunk
+        make prepare
+        
+        # 安装必要依赖
+        ./scripts/install.sh
 
     # ========== 集成ZeroTier ==========
     - name: Integrate ZeroTier
       run: |
         cd $PADAVAN_DIR/trunk
-        
-        # 创建ZeroTier目录结构
         mkdir -p user/zerotier
         cp -r $ZEROTIER_SRC/* user/zerotier/
         
-        # 验证源码复制
-        if [ ! -f "user/zerotier/README.md" ]; then
-          echo "❌ ZeroTier源码复制失败"
-          exit 1
-        fi
+        # 创建符号链接到编译系统
+        ln -sf $(pwd)/user/zerotier package/zerotier
 
-        # 生成Makefile
-        cat > user/zerotier/Makefile <<'EOF'
-        include $(TOPDIR)/rules.mk
-        PKG_NAME:=zerotier
-        PKG_VERSION:=$(shell git -C $(CURDIR) describe --tags)
-        
-        include $(INCLUDE_DIR)/package.mk
-        
-        define Package/zerotier
-          SECTION:=net
-          CATEGORY:=Network
-          TITLE:=ZeroTier One
-          DEPENDS:=+libpthread +libstdcpp +kmod-tun +libopenssl +libjson-c
-        endef
-        
-        CONFIGURE_ARGS += \
-          --host=mipsel-linux-uclibc \
-          --enable-static \
-          --disable-selinux \
-          ZT_ENABLE_NETWORK_CONTROLLER=0
-        
-        define Build/Compile
-          $(MAKE) -C $(PKG_BUILD_DIR)/one \
-            CC="$(TARGET_CC)" \
-            CXX="$(TARGET_CXX)" \
-            STRIP="$(TARGET_STRIP)"
-        endef
-        
-        define Package/zerotier/install
-          $(INSTALL_DIR) $(1)/usr/bin
-          $(INSTALL_BIN) $(PKG_BUILD_DIR)/one/zerotier-one $(1)/usr/bin/
-          ln -sf zerotier-one $(1)/usr/bin/zerotier-cli
-        endef
-        
-        $(eval $(call BuildPackage,zerotier))
-        EOF
-
-    # ========== 部署Web界面 ==========
-    - name: Deploy Web Interface
+    # ========== 配置设备选项 ==========
+    - name: Configure device
       run: |
         cd $PADAVAN_DIR/trunk
+        ./configure $DEVICE
         
-        # 创建目标目录
-        mkdir -p user/www/n56u_ribbon_fixed/zerotier
-        mkdir -p user/www/cgi-bin
-        
-        # 复制生成的文件
-        cp $GITHUB_WORKSPACE/zt-ui/zerotier.asp user/www/n56u_ribbon_fixed/
-        cp $GITHUB_WORKSPACE/zt-ui/zt.css user/www/n56u_ribbon_fixed/zerotier/
-        cp $GITHUB_WORKSPACE/zt-ui/zerotier_api.cgi user/www/cgi-bin/
-        
-        # 注册菜单项
-        sed -i '/menuinfo\.push(/a\  menuinfo.push(["zerotier.asp", "ZeroTier"]);' user/www/n56u_ribbon_fixed/state.js
-
-    # ========== 配置验证 ==========
-    - name: Validate environment
-      run: |
-        echo "=== 工具链验证 ==="
-        $PADAVAN_DIR/toolchain-mipsel/toolchain-4.4.x/bin/mipsel-linux-uclibc-gcc --version
-        
-        echo "=== 配置文件检查 ==="
-        cd $PADAVAN_DIR/trunk
-        ls -l configs/templates/${DEVICE}.config
-
-    # ========== 配置编译选项 ==========
-    - name: Configure build
-      run: |
-        cd $PADAVAN_DIR/trunk
-        
-        # 初始化设备配置
-        cp configs/templates/${DEVICE}.config .config
-        
-        # 设置编译选项
-        ./scripts/config --enable CONFIG_FIRMWARE_INCLUDE_ZEROTIER
-        ./scripts/config --enable CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE
-        ./scripts/config --enable CONFIG_FIRMWARE_INCLUDE_JQ
-        
-        # 非交互式配置确认
-        yes "" | make oldconfig
+        # 激活自定义选项
+        sed -i 's/CONFIG_FIRMWARE_INCLUDE_ZEROTIER=n/CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y/' .config
+        sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/' .config
+        sed -i 's/CONFIG_FIRMWARE_INCLUDE_JQ=n/CONFIG_FIRMWARE_INCLUDE_JQ=y/' .config
 
     # ========== 编译固件 ==========
     - name: Build firmware
@@ -175,11 +86,7 @@ jobs:
         make -j$(nproc) all V=s
         
         # 验证输出文件
-        if [ ! -f "images/*.trx" ]; then
-          echo "❌ 编译产物未生成"
-          exit 1
-        fi
-        
+        find images -name "*.trx" -exec test -f {} \; || (echo "编译失败"; exit 1)
         mkdir -p $GITHUB_WORKSPACE/output
         cp images/*.trx $GITHUB_WORKSPACE/output/
 
@@ -189,11 +96,3 @@ jobs:
       with:
         name: ${{ env.DEVICE }}_ZT_${{ env.BUILD_TIMESTAMP }}
         path: $GITHUB_WORKSPACE/output/*.trx
-        retention-days: 7
-
-    # ========== 清理工作空间 ==========
-    - name: Cleanup workspace
-      if: always()
-      run: |
-        rm -rf $PADAVAN_DIR
-        rm -rf $ZEROTIER_SRC
