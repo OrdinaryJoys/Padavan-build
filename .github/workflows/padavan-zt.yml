@@ -9,8 +9,8 @@ env:
   DEVICE: K2P
   BLOCK_SIZE: 15872
   ZT_REPO: https://github.com/zerotier/ZeroTierOne.git
-  TOOLCHAIN_URL: https://github.com/hanwckf/padavan-4.4/releases/download/toolchain/mipsel-4.4.x.tar.xz
-  TOOLCHAIN_SHA256: 8b7cc6316a9c3bc2dbb53d77d3b5f60d4b0d0453c0a1a3f3a7a3a3a3a3a3a3a3a  # 替换实际SHA256值
+  TOOLCHAIN_URL: https://cdn.jsdelivr.net/gh/hanwckf/padavan-4.4@toolchain/mipsel-4.4.x.tar.xz
+  TOOLCHAIN_SHA256: 0019dfc4b32d63c1392aa264aed2253c1e0c2fb09216f8e2cc269bbfb8bb49b5
 
 jobs:
   build:
@@ -18,75 +18,67 @@ jobs:
     timeout-minutes: 120
 
     steps:
+    # ========== 系统初始化 ==========
+    - name: Prepare environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          ca-certificates curl xz-utils \
+          python3 python3-pip jq
+
     # ========== 仓库克隆 ==========
-    - name: Clone Padavan repository
+    - name: Clone repositories
       uses: actions/checkout@v4
       with:
         repository: hanwckf/padavan-4.4
         path: padavan-src
         ref: main
         fetch-depth: 100
+        lfs: true
 
-    # ========== 系统诊断 ==========
-    - name: System diagnostics
-      run: |
-        echo "=== 系统信息 ==="
-        uname -a
-        lsb_release -a
-        echo "=== 磁盘空间 ==="
-        df -h
-        echo "=== 内存信息 ==="
-        free -m
-
-    # ========== 工具链配置 ==========
-    - name: Setup verified toolchain
+    # ========== 工具链管理 ==========
+    - name: Setup toolchain (stable)
       id: toolchain
       run: |
         cd padavan-src/toolchain-mipsel
         
-        # 清理旧文件
+        # 清理环境
         rm -rf toolchain-4.4.x *.tar.xz
 
-        # 分阶段下载
-        echo "▷ 阶段1：下载工具链 (SHA256: $TOOLCHAIN_SHA256)"
-        if ! wget -q --show-progress --progress=bar:force:noscroll "$TOOLCHAIN_URL"; then
-          echo "::error::下载失败，尝试备用方法..."
-          curl -L -o "${TOOLCHAIN_URL##*/}" "$TOOLCHAIN_URL" || exit 1
-        fi
+        # 分片下载（带重试）
+        for i in {1..5}; do
+          echo "▶ Download attempt $i/5"
+          if curl -L -C - --retry 3 --retry-delay 10 \
+             -o toolchain.tar.xz "$TOOLCHAIN_URL"; then
+            break
+          fi
+          sleep $((i*10))
+        done
 
-        # 文件验证
-        echo "▷ 阶段2：文件验证"
-        FILE_NAME="${TOOLCHAIN_URL##*/}"
-        echo "文件类型检测: $(file $FILE_NAME)"
-        echo "头部校验: $(head -c 4 $FILE_NAME | hexdump -C)"
-        
-        if ! sha256sum -c <<< "$TOOLCHAIN_SHA256  $FILE_NAME"; then
-          echo "::error::文件校验失败 (实际: $(sha256sum $FILE_NAME | cut -d' ' -f1))"
+        # 完整性验证
+        echo "▷ Actual SHA256: $(sha256sum toolchain.tar.xz | cut -d' ' -f1)"
+        if ! sha256sum -c <<< "$TOOLCHAIN_SHA256  toolchain.tar.xz"; then
+          echo "::error::校验失败！请验证下载链接和校验值"
+          echo "手动验证命令："
+          echo "curl -LO $TOOLCHAIN_URL && sha256sum toolchain.tar.xz"
           exit 1
         fi
 
         # 解压验证
-        echo "▷ 阶段3：解压工具链"
         mkdir -p toolchain-4.4.x
-        tar -xJvf "$FILE_NAME" -C toolchain-4.4.x --strip-components=1 2>&1 | tee tar.log || {
-          echo "::error::解压失败，最后5行日志:"
-          tail -5 tar.log
-          echo "解压命令回显:"
-          tar -tvf "$FILE_NAME" | head -10
+        tar -xJvf toolchain.tar.xz -C toolchain-4.4.x --strip-components=1 || {
+          echo "::error::解压失败！可能原因："
+          echo "1. 使用命令手动验证: tar -tvJf toolchain.tar.xz | head"
           exit 1
         }
 
         # 编译器验证
-        echo "▷ 阶段4：验证工具链"
         COMPILER="toolchain-4.4.x/bin/mipsel-linux-uclibc-gcc"
-        if [ ! -x "$COMPILER" ]; then
-          echo "::error::编译器缺失，目录内容:"
+        [ -x "$COMPILER" ] || {
+          echo "::error::编译器缺失，目录内容："
           ls -lR toolchain-4.4.x/bin/
           exit 1
-        fi
-        echo "编译器版本:"
-        "$COMPILER" --version
-
+        }
         echo "TOOLCHAIN_PATH=$(pwd)/toolchain-4.4.x/bin" >> $GITHUB_ENV
 
     # ========== ZeroTier集成 ==========
@@ -107,19 +99,21 @@ jobs:
         CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y
         CONFIG_FIRMWARE_INCLUDE_ZEROTIER_UI=y
         CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
+        CONFIG_FIRMWARE_OPTIMIZE_SIZE=y
         EOF
 
-    # ========== 构建过程 ==========
-    - name: Build firmware
+    # ========== 构建优化 ==========
+    - name: Build firmware (optimized)
       run: |
         cd padavan-src/trunk
-        ./clear_tree || true
+        ./clear_tree
         
         export PATH="$TOOLCHAIN_PATH:$PATH"
         export CC=mipsel-linux-uclibc-gcc
+        export STRIP=mipsel-linux-uclibc-strip
         
         # 内存优化编译
-        JOBS=$(($(nproc)*2/3))
+        JOBS=$(($(nproc)*3/4))
         echo "▷ 使用并行任务数: $JOBS"
         
         /usr/bin/time -v \
@@ -127,10 +121,8 @@ jobs:
           2>&1 | tee build.log
 
         [ -f "images/$DEVICE.trx" ] || {
-          echo "::error::固件未生成，可能原因："
-          echo "1. 编译中途失败"
-          echo "2. 输出路径错误"
-          ls -l images/
+          echo "::error::构建失败！最后10行日志："
+          tail -10 build.log
           exit 1
         }
 
@@ -138,32 +130,43 @@ jobs:
     - name: Package artifacts
       run: |
         cd padavan-src/trunk/images
-        upx --best --lzma "$DEVICE.trx" || echo "UPX压缩失败，继续..."
+        [ -f "$DEVICE.trx" ] || exit 1
         
-        md5sum "$DEVICE.trx" > checksum.md5
-        sha256sum "$DEVICE.trx" > checksum.sha256
+        # 压缩优化
+        if command -v upx &>/dev/null; then
+          upx --best --lzma "$DEVICE.trx" || true
+        fi
         
-        tar czvf "$DEVICE-zt-build-$(date +%Y%m%d).tar.gz" \
+        # 生成校验文件
+        {
+          md5sum "$DEVICE.trx"
+          sha256sum "$DEVICE.trx"
+        } | tee checksums.txt
+        
+        # 打包
+        tar czvf "$DEVICE-zt-$(date +%Y%m%d).tar.gz" \
           "$DEVICE.trx" \
-          checksum.*
+          checksums.txt
 
     # ========== 错误诊断 ==========
-    - name: Failure diagnostics
+    - name: Post-mortem analysis
       if: ${{ failure() }}
       run: |
-        echo "=== 工具链状态 ==="
-        ls -l padavan-src/toolchain-mipsel/toolchain-4.4.x/bin || true
-        
+        echo "=== 系统诊断 ==="
+        free -m
+        df -h
+        dmesg | tail -20
+
         echo "=== 构建日志摘要 ==="
         if [ -f "padavan-src/trunk/build.log" ]; then
           grep -iE 'error:|warning:|undefined' padavan-src/trunk/build.log | head -100
         else
           echo "构建日志不存在"
         fi
-        
-        echo "=== 系统诊断 ==="
-        dmesg | tail -20
-        journalctl -b --since "10 minutes ago" | grep -i oom
+
+        echo "=== 网络验证 ==="
+        ping -c 4 github.com
+        curl -I https://github.com
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
