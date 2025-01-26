@@ -18,12 +18,16 @@ jobs:
     - name: Setup environment
       run: |
         echo "BUILD_TIMESTAMP=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_ENV
-        echo "WORKSPACE=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+        sudo apt-get -qq update
+        sudo apt-get -qq install unzip libtool-bin curl cmake gperf gawk flex bison nano xxd \
+            fakeroot kmod cpio git python3-docutils gettext automake autopoint \
+            texinfo build-essential help2man pkg-config zlib1g-dev libgmp3-dev \
+            libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget
 
-    # ========== 克隆基础仓库 ==========
-    - name: Clone Padavan (完整克隆)
+    # ========== 克隆仓库 ==========
+    - name: Clone Padavan
       run: |
-        git clone --depth=1 --branch=chinese $PADAVAN_REPO
+        git clone --depth=1 $PADAVAN_REPO
         cd padavan-4.4
         git submodule update --init --recursive
         echo "PADAVAN_DIR=$GITHUB_WORKSPACE/padavan-4.4" >> $GITHUB_ENV
@@ -33,30 +37,12 @@ jobs:
         git clone --depth=1 $ZEROTIER_REPO
         echo "ZEROTIER_SRC=$GITHUB_WORKSPACE/ZeroTierOne" >> $GITHUB_ENV
 
-    # ========== 验证仓库结构 ==========
-    - name: Validate repository structure
-      run: |
-        echo "=== Padavan目录结构 ==="
-        ls -l $PADAVAN_DIR/trunk/scripts
-        
-        echo "=== 关键文件检查 ==="
-        [ -f "$PADAVAN_DIR/trunk/scripts/feeds" ] || exit 1
-        [ -d "$PADAVAN_DIR/trunk/user" ] || exit 1
-
     # ========== 准备工具链 ==========
     - name: Setup toolchain
       run: |
-        cd $PADAVAN_DIR/trunk
-        ./tools/download_toolchain.sh
-
-    # ========== 配置编译系统 ==========
-    - name: Configure system
-      run: |
-        cd $PADAVAN_DIR/trunk
-        make prepare
-        
-        # 安装必要依赖
-        ./scripts/install.sh
+        cd $PADAVAN_DIR/toolchain-mipsel
+        ./dl_toolchain.sh
+        echo "$PADAVAN_DIR/toolchain-mipsel/toolchain-4.4.x/bin" >> $GITHUB_PATH
 
     # ========== 集成ZeroTier ==========
     - name: Integrate ZeroTier
@@ -65,28 +51,56 @@ jobs:
         mkdir -p user/zerotier
         cp -r $ZEROTIER_SRC/* user/zerotier/
         
-        # 创建符号链接到编译系统
-        ln -sf $(pwd)/user/zerotier package/zerotier
+        # 生成Makefile
+        cat > user/zerotier/Makefile <<'EOF'
+        include $(TOPDIR)/rules.mk
+        PKG_NAME:=zerotier
+        PKG_VERSION:=$(shell git -C $(CURDIR) describe --tags)
+        
+        include $(INCLUDE_DIR)/package.mk
+        
+        define Package/zerotier
+          SECTION:=net
+          CATEGORY:=Network
+          TITLE:=ZeroTier One
+          DEPENDS:=+libpthread +libstdcpp +kmod-tun +libopenssl +libjson-c
+        endef
+        
+        CONFIGURE_ARGS += \
+          --host=mipsel-linux-uclibc \
+          --enable-static \
+          --disable-selinux \
+          ZT_ENABLE_NETWORK_CONTROLLER=0
+        
+        define Build/Compile
+          $(MAKE) -C $(PKG_BUILD_DIR)/one \
+            CC="$(TARGET_CC)" \
+            CXX="$(TARGET_CXX)" \
+            STRIP="$(TARGET_STRIP)"
+        endef
+        
+        define Package/zerotier/install
+          $(INSTALL_DIR) $(1)/usr/bin
+          $(INSTALL_BIN) $(PKG_BUILD_DIR)/one/zerotier-one $(1)/usr/bin/
+          ln -sf zerotier-one $(1)/usr/bin/zerotier-cli
+        endef
+        
+        $(eval $(call BuildPackage,zerotier))
+        EOF
 
-    # ========== 配置设备选项 ==========
-    - name: Configure device
+    # ========== 配置编译选项 ==========
+    - name: Configure build
       run: |
         cd $PADAVAN_DIR/trunk
-        ./configure $DEVICE
-        
-        # 激活自定义选项
-        sed -i 's/CONFIG_FIRMWARE_INCLUDE_ZEROTIER=n/CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y/' .config
-        sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/' .config
-        sed -i 's/CONFIG_FIRMWARE_INCLUDE_JQ=n/CONFIG_FIRMWARE_INCLUDE_JQ=y/' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_ZEROTIER/d' .config
+        echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y" >> configs/templates/$DEVICE.config
 
     # ========== 编译固件 ==========
     - name: Build firmware
       run: |
         cd $PADAVAN_DIR/trunk
-        make -j$(nproc) all V=s
-        
-        # 验证输出文件
-        find images -name "*.trx" -exec test -f {} \; || (echo "编译失败"; exit 1)
+        ./clear_tree
+        fakeroot ./build_firmware_modify $DEVICE
         mkdir -p $GITHUB_WORKSPACE/output
         cp images/*.trx $GITHUB_WORKSPACE/output/
 
