@@ -1,4 +1,4 @@
-name: Padavan-ZeroTier Main Branch Builder
+name: Padavan-ZeroTier 固件构建
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ env:
   DEVICE: K2P  # 修改为你的设备型号
   PADAVAN_REPO: https://github.com/hanwckf/padavan-4.4
   ZEROTIER_REPO: https://github.com/zerotier/ZeroTierOne
-  ZEROTIER_BRANCH: main  # 使用 ZeroTier 的 main 分支
+  ZEROTIER_BRANCH: main
   BUILD_TIMESTAMP: $(date -u +"%Y%m%dT%H%M%SZ")
 
 jobs:
@@ -19,7 +19,7 @@ jobs:
 
     steps:
     # ========== 基础环境配置 ==========
-    - name: Setup build environment
+    - name: 设置构建环境
       run: |
         echo "BUILD_TIMESTAMP=$(date -u +'%Y%m%dT%H%M%SZ')" >> $GITHUB_ENV
         sudo apt-get -qq update
@@ -31,17 +31,15 @@ jobs:
             libssl-dev libjson-c-dev
 
     # ========== 克隆 Padavan 仓库 ==========
-    - name: Clone Padavan repository
+    - name: 克隆 Padavan
       timeout-minutes: 15
       run: |
-        # 使用重试机制克隆 Padavan 仓库
         for i in {1..3}; do
-          echo "⟳ 克隆 Padavan 仓库 (尝试 $i/3)..."
+          echo "⟳ 克隆 Padavan (尝试 $i/3)..."
           git clone --depth=1 --branch=main "$PADAVAN_REPO" padavan-4.4 && break
           sleep 10
-          [ $i -eq 3 ] && { echo "::error:: 克隆 Padavan 仓库失败"; exit 1; }
+          [ $i -eq 3 ] && { echo "::error:: Padavan 克隆失败"; exit 1; }
         done
-
         echo "PADAVAN_DIR=$GITHUB_WORKSPACE/padavan-4.4" >> $GITHUB_ENV
 
         # 修复子模块
@@ -53,54 +51,60 @@ jobs:
         }
 
     # ========== 克隆 ZeroTier 仓库 ==========
-    - name: Clone ZeroTier repository
+    - name: 克隆 ZeroTier
       timeout-minutes: 15
       run: |
-        # 使用重试机制克隆 ZeroTier 仓库
         for i in {1..3}; do
-          echo "⟳ 克隆 ZeroTier 仓库 (尝试 $i/3)..."
+          echo "⟳ 克隆 ZeroTier (尝试 $i/3)..."
           git clone --depth=1 --branch="$ZEROTIER_BRANCH" "$ZEROTIER_REPO" ZeroTierSource && break
           sleep 10
-          [ $i -eq 3 ] && { echo "::error:: 克隆 ZeroTier 仓库失败"; exit 1; }
+          [ $i -eq 3 ] && { echo "::error:: ZeroTier 克隆失败"; exit 1; }
         done
 
-        # 验证 ZeroTier 目录结构
-        [ -d "ZeroTierSource/one" ] || {
-          echo "::error:: ZeroTier 目录结构异常"
+        # 新版结构验证
+        [ -f "ZeroTierSource/one.cpp" ] || {
+          echo "::error:: ZeroTier 结构异常"
           ls -l ZeroTierSource
           exit 1
         }
 
     # ========== 工具链安装 ==========
-    - name: Install toolchain
+    - name: 安装工具链
       timeout-minutes: 30
       run: |
         cd $PADAVAN_DIR/toolchain-mipsel
+        
+        # 多镜像源下载
+        declare -A mirrors=(
+            ["official"]="https://github.com/hanwckf/padavan-4.4/releases/download/toolchain/toolchain-4.4.x.tar.gz"
+            ["ghproxy"]="https://ghproxy.com/https://github.com/hanwckf/padavan-4.4/releases/download/toolchain/toolchain-4.4.x.tar.gz"
+        )
 
-        # 下载工具链（带重试机制）
-        for i in {1..3}; do
-          echo "⟳ 下载工具链 (尝试 $i/3)..."
-          curl -fL --retry 3 --retry-all-errors --retry-delay 5 \
-              "https://github.com/hanwckf/padavan-4.4/releases/download/toolchain/toolchain-4.4.x.tar.gz" -o toolchain.tar.gz && break
-          sleep 10
-          [ $i -eq 3 ] && { echo "::error:: 工具链下载失败"; exit 1; }
+        for mirror in "${!mirrors[@]}"; do
+          echo "⟳ 尝试镜像源: $mirror"
+          if curl -fL --retry 3 --retry-all-errors --retry-delay 5 \
+              "${mirrors[$mirror]}" -o toolchain.tar.gz; then
+            echo "✓ 下载成功"
+            tar -ztf toolchain.tar.gz >/dev/null && break
+          fi
+          rm -f toolchain.tar.gz
         done
 
         tar -zxvf toolchain.tar.gz
         echo "$PADAVAN_DIR/toolchain-mipsel/toolchain-4.4.x/bin" >> $GITHUB_PATH
 
-    # ========== 集成 ZeroTier ==========
-    - name: Integrate ZeroTier
+    # ========== ZeroTier 集成 ==========
+    - name: 集成 ZeroTier
       run: |
         cd $PADAVAN_DIR/trunk
         rm -rf user/zerotier
         mkdir -p user/zerotier
 
-        # 复制 ZeroTier 源码
+        # 复制源码（排除不需要的文件）
         rsync -av --info=progress2 "$GITHUB_WORKSPACE/ZeroTierSource/" user/zerotier/ \
-            --exclude={.git,.github,doc,artwork,windows}
+            --exclude={.git,.github,doc,artwork,windows,debian,java}
 
-        # 生成 Makefile
+        # 新版 Makefile 配置
         cat > user/zerotier/Makefile <<'EOF'
         include $(TOPDIR)/rules.mk
         
@@ -125,15 +129,15 @@ jobs:
             ZT_ENABLE_NETWORK_CONTROLLER=0
         
         define Build/Compile
-            $(MAKE) -C $(PKG_BUILD_DIR)/one \
+            $(MAKE) -C $(PKG_BUILD_DIR) \
                 CC="$(TARGET_CC)" \
-                CXX="(TARGET_CXX)" \
+                CXX="$(TARGET_CXX)" \
                 STRIP="$(TARGET_STRIP)"
         endef
         
         define Package/zerotier/install
             $(INSTALL_DIR) $(1)/usr/bin
-            $(INSTALL_BIN) $(PKG_BUILD_DIR)/one/zerotier-one $(1)/usr/bin/
+            $(INSTALL_BIN) $(PKG_BUILD_DIR)/zerotier-one $(1)/usr/bin/
             ln -sf zerotier-one $(1)/usr/bin/zerotier-cli
             $(INSTALL_DIR) $(1)/etc/init.d
             $(INSTALL_BIN) ./scripts/zerotier.init $(1)/etc/init.d/zerotier
@@ -142,28 +146,49 @@ jobs:
         $(eval $(call BuildPackage,zerotier))
         EOF
 
-    # ========== 配置和编译 ==========
-    - name: Configure and build
-      timeout-minutes: 150
+    # ========== 配置系统 ==========
+    - name: 生成配置
       run: |
         cd $PADAVAN_DIR/trunk
-
-        # 生成默认配置
+        
+        # 清理并生成新配置
         ./clear_tree
         yes "" | make oldconfig
         echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y" >> .config
 
-        # 编译固件
+        # 验证关键配置
+        grep -q "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y" .config || {
+          echo "::error:: ZeroTier 配置缺失"
+          exit 1
+        }
+
+    # ========== 编译固件 ==========
+    - name: 执行编译
+      timeout-minutes: 150
+      run: |
+        cd $PADAVAN_DIR/trunk
+        
+        # 内存优化
+        sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
+        sudo chmod 600 /swapfile
+        sudo mkswap /swapfile
+        sudo swapon /swapfile
+
+        # 带错误监控的编译
         fakeroot ./build_firmware_modify "$DEVICE" || {
-          echo "::error:: 编译失败，最后10条错误："
+          echo "::error:: 编译失败，最后10条日志："
           tail -n 10 build.log
           exit 1
         }
 
+        # 清理交换空间
+        sudo swapoff /swapfile
+        sudo rm -f /swapfile
+
     # ========== 上传产物 ==========
-    - name: Upload artifact
+    - name: 上传固件
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ env.DEVICE }}_ZT_MAIN_${{ env.BUILD_TIMESTAMP }}
+        name: ${{ env.DEVICE }}_ZT_${{ env.BUILD_TIMESTAMP }}
         path: ${{ env.PADAVAN_DIR }}/trunk/images/*.trx
         retention-days: 7
