@@ -74,23 +74,41 @@ jobs:
       run: |
         cd $PADAVAN_DIR/toolchain-mipsel
         
-        # 多镜像源下载
+        # 多镜像源配置（更新后的地址）
         declare -A mirrors=(
-            ["official"]="https://github.com/hanwckf/padavan-4.4/releases/download/toolchain/toolchain-4.4.x.tar.gz"
-            ["ghproxy"]="https://ghproxy.com/https://github.com/hanwckf/padavan-4.4/releases/download/toolchain/toolchain-4.4.x.tar.gz"
+            ["official"]="https://github.com/hanwckf/padavan-toolchain/releases/download/4.4.x/toolchain-4.4.x.tar.gz"
+            ["ghproxy"]="https://ghproxy.com/https://github.com/hanwckf/padavan-toolchain/releases/download/4.4.x/toolchain-4.4.x.tar.gz"
+            ["fastgit"]="https://hub.fastgit.xyz/hanwckf/padavan-toolchain/releases/download/4.4.x/toolchain-4.4.x.tar.gz"
+            ["china-cdn"]="https://toolchain.padavan.cn/toolchain-4.4.x.tar.gz"
         )
 
+        # 第一层下载尝试
         for mirror in "${!mirrors[@]}"; do
           echo "⟳ 尝试镜像源: $mirror"
-          if curl -fL --retry 3 --retry-all-errors --retry-delay 5 \
+          if curl -fL --connect-timeout 20 --retry 3 --retry-delay 5 \
               "${mirrors[$mirror]}" -o toolchain.tar.gz; then
             echo "✓ 下载成功"
-            tar -ztf toolchain.tar.gz >/dev/null && break
+            if tar -ztf toolchain.tar.gz >/dev/null; then
+              echo "✔ 文件校验通过"
+              break 2
+            else
+              echo "⚠ 文件损坏，继续尝试..."
+              rm -f toolchain.tar.gz
+            fi
           fi
-          rm -f toolchain.tar.gz
         done
 
-        tar -zxvf toolchain.tar.gz
+        # 第二层备用下载（archive.org备份）
+        if [ ! -f toolchain.tar.gz ]; then
+          echo "⟳ 尝试 archive.org 备份..."
+          curl -fL https://archive.org/download/padavan-toolchain-4.4.x/toolchain-4.4.x.tar.gz -o toolchain.tar.gz
+        fi
+
+        # 最终校验
+        tar -zxvf toolchain.tar.gz || {
+          echo "::error:: 工具链解压失败"
+          exit 1
+        }
         echo "$PADAVAN_DIR/toolchain-mipsel/toolchain-4.4.x/bin" >> $GITHUB_PATH
 
     # ========== ZeroTier 集成 ==========
@@ -175,7 +193,7 @@ jobs:
         sudo swapon /swapfile
 
         # 带错误监控的编译
-        fakeroot ./build_firmware_modify "$DEVICE" || {
+        fakeroot ./build_firmware_modify "$DEVICE" V=99 || {
           echo "::error:: 编译失败，最后10条日志："
           tail -n 10 build.log
           exit 1
