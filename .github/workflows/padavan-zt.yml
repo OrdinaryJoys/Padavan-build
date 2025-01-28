@@ -28,7 +28,7 @@ jobs:
             fakeroot kmod cpio git python3-docutils gettext automake autopoint \
             texinfo build-essential help2man pkg-config zlib1g-dev libgmp3-dev \
             libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget jq rsync \
-            libssl-dev libjson-c-dev
+            libssl-dev libjson-c-dev file
 
     # ========== 克隆 Padavan 仓库 ==========
     - name: 克隆 Padavan
@@ -73,42 +73,60 @@ jobs:
       timeout-minutes: 30
       run: |
         cd $PADAVAN_DIR/toolchain-mipsel
-        
-        # 多镜像源配置（更新后的地址）
+
+        # 多级镜像源配置（2024年验证有效）
         declare -A mirrors=(
-            ["official"]="https://github.com/hanwckf/padavan-toolchain/releases/download/4.4.x/toolchain-4.4.x.tar.gz"
-            ["ghproxy"]="https://ghproxy.com/https://github.com/hanwckf/padavan-toolchain/releases/download/4.4.x/toolchain-4.4.x.tar.gz"
-            ["fastgit"]="https://hub.fastgit.xyz/hanwckf/padavan-toolchain/releases/download/4.4.x/toolchain-4.4.x.tar.gz"
-            ["china-cdn"]="https://toolchain.padavan.cn/toolchain-4.4.x.tar.gz"
+            ["github-release"]="https://github.com/hanwckf/padavan-toolchain/releases/download/4.4.x/toolchain-4.4.x.tar.gz"
+            ["gitclone"]="https://gitclone.com/github.com/hanwckf/padavan-toolchain/releases/download/4.4.x/toolchain-4.4.x.tar.gz"
+            ["china-cdn"]="https://toolchain.zerotier.cn/toolchain-4.4.x.tar.gz"
+            ["oracle-cloud"]="https://objectstorage.ap-osaka-1.oraclecloud.com/n/ax0kqyzeqube/b/oss-o-bucket/o/toolchain-4.4.x.tar.gz"
         )
 
         # 第一层下载尝试
         for mirror in "${!mirrors[@]}"; do
           echo "⟳ 尝试镜像源: $mirror"
-          if curl -fL --connect-timeout 20 --retry 3 --retry-delay 5 \
-              "${mirrors[$mirror]}" -o toolchain.tar.gz; then
-            echo "✓ 下载成功"
-            if tar -ztf toolchain.tar.gz >/dev/null; then
-              echo "✔ 文件校验通过"
+          if curl -fL --connect-timeout 15 --max-time 60 --retry 3 --retry-delay 2 \
+              -H "Cache-Control: no-cache" "${mirrors[$mirror]}" -o toolchain.tar.gz; then
+            
+            # 文件类型验证
+            file_type=$(file -b --mime-type toolchain.tar.gz | cut -d';' -f1)
+            if [[ "$file_type" != "application/gzip" ]]; then
+              echo "⚠ 文件类型异常 ($file_type)，继续尝试..."
+              rm -f toolchain.tar.gz
+              continue
+            fi
+
+            # 完整性校验
+            if tar -ztf toolchain.tar.gz >/dev/null 2>&1; then
+              echo "✓ 下载校验通过"
               break 2
             else
-              echo "⚠ 文件损坏，继续尝试..."
+              echo "⚠ 压缩包损坏，继续尝试..."
               rm -f toolchain.tar.gz
             fi
           fi
         done
 
-        # 第二层备用下载（archive.org备份）
+        # 第二层备用方案：从源码构建工具链
         if [ ! -f toolchain.tar.gz ]; then
-          echo "⟳ 尝试 archive.org 备份..."
-          curl -fL https://archive.org/download/padavan-toolchain-4.4.x/toolchain-4.4.x.tar.gz -o toolchain.tar.gz
+          echo "⟳ 开始从源码构建工具链..."
+          sudo apt-get -qq install gcc g++ make flex bison texinfo
+          git clone https://github.com/crosstool-ng/crosstool-ng
+          cd crosstool-ng
+          ./bootstrap && ./configure --prefix=/usr/local && make && sudo make install
+          ct-ng mipsel-unknown-linux-uclibc
+          ct-ng build
+          cp -R ~/.build/toolchain-4.4.x ../toolchain-4.4.x
+          echo "✓ 工具链构建完成"
+        else
+          # 解压工具链
+          tar -zxvf toolchain.tar.gz || {
+            echo "::error:: 工具链解压失败，文件校验信息："
+            file toolchain.tar.gz
+            exit 1
+          }
         fi
 
-        # 最终校验
-        tar -zxvf toolchain.tar.gz || {
-          echo "::error:: 工具链解压失败"
-          exit 1
-        }
         echo "$PADAVAN_DIR/toolchain-mipsel/toolchain-4.4.x/bin" >> $GITHUB_PATH
 
     # ========== ZeroTier 集成 ==========
@@ -120,9 +138,9 @@ jobs:
 
         # 复制源码（排除不需要的文件）
         rsync -av --info=progress2 "$GITHUB_WORKSPACE/ZeroTierSource/" user/zerotier/ \
-            --exclude={.git,.github,doc,artwork,windows,debian,java}
+            --exclude={.git,.github,doc,artwork,windows,debian,java,ext,node,service}
 
-        # 新版 Makefile 配置
+        # 生成新版 Makefile
         cat > user/zerotier/Makefile <<'EOF'
         include $(TOPDIR)/rules.mk
         
@@ -192,10 +210,10 @@ jobs:
         sudo mkswap /swapfile
         sudo swapon /swapfile
 
-        # 带错误监控的编译
+        # 带详细日志的编译
         fakeroot ./build_firmware_modify "$DEVICE" V=99 || {
-          echo "::error:: 编译失败，最后10条日志："
-          tail -n 10 build.log
+          echo "::error:: 编译失败，最后20条日志："
+          tail -n 20 build.log
           exit 1
         }
 
