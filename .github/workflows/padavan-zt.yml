@@ -6,7 +6,7 @@ on:
     tags: ['v*']
 
 env:
-  DEVICE: K2P  # 修改为你的设备型号
+  DEVICE: K2P
   PADAVAN_REPO: https://github.com/hanwckf/padavan-4.4
   ZEROTIER_REPO: https://github.com/zerotier/ZeroTierOne
   ZEROTIER_BRANCH: main
@@ -28,7 +28,7 @@ jobs:
             fakeroot kmod cpio git python3-docutils gettext automake autopoint \
             texinfo build-essential help2man pkg-config zlib1g-dev libgmp3-dev \
             libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget jq rsync \
-            libssl-dev libjson-c-dev file
+            libssl-dev libjson-c-dev file swig
 
     # ========== 克隆 Padavan 仓库 ==========
     - name: 克隆 Padavan
@@ -45,10 +45,7 @@ jobs:
         # 修复子模块
         cd padavan-4.4
         git submodule sync
-        git submodule update --init --recursive trunk || {
-          echo "::error:: 子模块更新失败"
-          exit 1
-        }
+        git submodule update --init --recursive trunk
 
     # ========== 克隆 ZeroTier 仓库 ==========
     - name: 克隆 ZeroTier
@@ -70,11 +67,11 @@ jobs:
 
     # ========== 工具链安装 ==========
     - name: 安装工具链
-      timeout-minutes: 30
+      timeout-minutes: 45
       run: |
         cd $PADAVAN_DIR/toolchain-mipsel
 
-        # 多级镜像源配置（2024年验证有效）
+        # 多级镜像源配置
         declare -A mirrors=(
             ["github-release"]="https://github.com/hanwckf/padavan-toolchain/releases/download/4.4.x/toolchain-4.4.x.tar.gz"
             ["gitclone"]="https://gitclone.com/github.com/hanwckf/padavan-toolchain/releases/download/4.4.x/toolchain-4.4.x.tar.gz"
@@ -85,11 +82,11 @@ jobs:
         # 第一层下载尝试
         for mirror in "${!mirrors[@]}"; do
           echo "⟳ 尝试镜像源: $mirror"
-          if curl -fL --connect-timeout 15 --max-time 60 --retry 3 --retry-delay 2 \
+          if curl -fL --connect-timeout 15 --max-time 120 --retry 3 --retry-delay 2 \
               -H "Cache-Control: no-cache" "${mirrors[$mirror]}" -o toolchain.tar.gz; then
             
             # 文件类型验证
-            file_type=$(file -b --mime-type toolchain.tar.gz | cut -d';' -f1)
+            file_type=$(file -b --mime-type toolchain.tar.gz)
             if [[ "$file_type" != "application/gzip" ]]; then
               echo "⚠ 文件类型异常 ($file_type)，继续尝试..."
               rm -f toolchain.tar.gz
@@ -110,13 +107,35 @@ jobs:
         # 第二层备用方案：从源码构建工具链
         if [ ! -f toolchain.tar.gz ]; then
           echo "⟳ 开始从源码构建工具链..."
-          sudo apt-get -qq install gcc g++ make flex bison texinfo
-          git clone https://github.com/crosstool-ng/crosstool-ng
-          cd crosstool-ng
-          ./bootstrap && ./configure --prefix=/usr/local && make && sudo make install
+          sudo apt-get -qq install gcc g++ make flex bison texinfo gawk git unzip python3 libncurses-dev
+          
+          # 使用特定版本的crosstool-ng
+          ctng_ver=1.25.0
+          wget https://github.com/crosstool-ng/crosstool-ng/releases/download/crosstool-ng-$ctng_ver/crosstool-ng-$ctng_ver.tar.xz
+          tar -xf crosstool-ng-$ctng_ver.tar.xz
+          cd crosstool-ng-$ctng_ver
+          
+          # 修正构建配置
+          ./configure --prefix=/usr/local \
+              --enable-local \
+              --with-ncurses \
+              CFG_SHELL=/bin/bash
+          make -j$(nproc)
+          sudo make install
+          
+          # 准备构建环境
+          mkdir -p ~/ct-ng-build && cd ~/ct-ng-build
           ct-ng mipsel-unknown-linux-uclibc
-          ct-ng build
-          cp -R ~/.build/toolchain-4.4.x ../toolchain-4.4.x
+          
+          # 应用关键补丁
+          sed -i 's/CT_LIBC_UCLIBC_CONFIG_FILE=".*"/CT_LIBC_UCLIBC_CONFIG_FILE="config\/uClibc-ng.config"/' .config
+          sed -i 's/CT_CC_GCC_EXTRA_CONFIG_AUTO=y/CT_CC_GCC_EXTRA_CONFIG_AUTO=n/' .config
+          
+          # 开始构建
+          ct-ng build CT_PREFIX=~/toolchain-4.4.x CT_PARALLEL_JOBS=$(nproc)
+          
+          # 复制生成的工具链
+          cp -R ~/toolchain-4.4.x/* $PADAVAN_DIR/toolchain-mipsel/
           echo "✓ 工具链构建完成"
         else
           # 解压工具链
@@ -136,9 +155,9 @@ jobs:
         rm -rf user/zerotier
         mkdir -p user/zerotier
 
-        # 复制源码（排除不需要的文件）
+        # 复制源码并排除非必要文件
         rsync -av --info=progress2 "$GITHUB_WORKSPACE/ZeroTierSource/" user/zerotier/ \
-            --exclude={.git,.github,doc,artwork,windows,debian,java,ext,node,service}
+            --exclude={.git,.github,doc,artwork,windows,debian,java,ext,node,service,attic}
 
         # 生成新版 Makefile
         cat > user/zerotier/Makefile <<'EOF'
@@ -186,8 +205,6 @@ jobs:
     - name: 生成配置
       run: |
         cd $PADAVAN_DIR/trunk
-        
-        # 清理并生成新配置
         ./clear_tree
         yes "" | make oldconfig
         echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y" >> .config
@@ -205,15 +222,15 @@ jobs:
         cd $PADAVAN_DIR/trunk
         
         # 内存优化
-        sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
+        sudo dd if=/dev/zero of=/swapfile bs=1M count=4096
         sudo chmod 600 /swapfile
         sudo mkswap /swapfile
         sudo swapon /swapfile
 
         # 带详细日志的编译
-        fakeroot ./build_firmware_modify "$DEVICE" V=99 || {
-          echo "::error:: 编译失败，最后20条日志："
-          tail -n 20 build.log
+        fakeroot ./build_firmware_modify "$DEVICE" V=99 2>&1 | tee build.log || {
+          echo "::error:: 编译失败，最后50条日志："
+          tail -n 50 build.log
           exit 1
         }
 
