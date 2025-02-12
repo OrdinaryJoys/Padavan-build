@@ -6,9 +6,19 @@ on:
   push:
     tags:
     - 'v*'
+  workflow_dispatch:
+    inputs:
+      tname:
+        description: '设备型号名称 (对应configs/templates/目录下的配置名)'
+        required: false
+        default: 'K2P'
+  #  branches: 
+  #    - master
+#  schedule:
+#    - cron: 0 8 * * 5
   watch:
     types: [started]
-
+    
 jobs:
   build:
     runs-on: ubuntu-22.04
