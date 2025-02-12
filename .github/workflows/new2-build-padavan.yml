@@ -1,90 +1,62 @@
-name: Padavan AutoBuilder
+name: Build Padavan with ZeroTier
 
-on:
-  workflow_dispatch:
+on: 
+  release:
+    types: [published]
   push:
-    tags: ['v*']
+    tags:
+    - 'v*'
+  watch:
+    types: [started]
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    env:
-      DEVICE: K2P
-      BLOCK_SIZE: 15872
-      ZT_ENABLED: "y"
-      TOOLCHAIN_DIR: ${{ github.workspace }}/padavan-4.4/toolchain-mipsel/toolchain-4.4.x
-      ZT_SOURCE: "https://github.com/zerotier/ZeroTierOne.git"  # 官方源码仓库
+    if: github.event.repository.owner.id == github.event.sender.id
 
     steps:
-    # ========== 基础配置 ==========
-    - name: Set build timestamp
+    - name: Checkout
+      uses: actions/checkout@master
+      
+    - name: Initialization environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
       run: |
-        echo "BUILD_TIMESTAMP=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_ENV
-    - name: Checkout code
-      uses: actions/checkout@v4
+        sudo apt-get -qq update
+        sudo apt-get install -y unzip libtool-bin curl cmake gperf gawk flex bison nano xxd \
+             fakeroot kmod cpio git python3-docutils gettext automake autopoint \
+             texinfo build-essential help2man pkg-config zlib1g-dev libgmp3-dev \
+             libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev libc-dev-bin \
+             libssl-dev libjson-c-dev
 
-    # ========== 获取ZeroTier源码 ==========
-    - name: Clone ZeroTier source
+    # ========== ZeroTier集成核心步骤 ==========
+    - name: Prepare ZeroTier integration
       run: |
-        git clone --depth=1 $ZT_SOURCE zerotier-src
-        echo "ZT_VERSION=$(cd zerotier-src && git describe --tags)" >> $GITHUB_ENV
-    # ========== 依赖安装 ==========
-    - name: Install dependencies
-      run: |
-        sudo apt-get update -y
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-          unzip libtool-bin curl cmake gperf gawk flex bison \
-          fakeroot kmod cpio git python3-docutils gettext automake autopoint \
-          texinfo build-essential help2man pkg-config zlib1g-dev libgmp3-dev \
-          libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget libc-dev-bin \
-          libssl-dev libjson-c-dev libc6-i386
-    # ========== 源码准备 ==========
-    - name: Prepare source
-      run: |
+        # 克隆Padavan源码
         git clone --depth=1 https://github.com/hanwckf/padavan-4.4.git
-        cd padavan-4.4/toolchain-mipsel
-        ./dl_toolchain.sh
-        chmod -R +x toolchain-4.4.x/bin
-        sudo mkdir -p /opt/images
-    # ========== ZeroTier集成 ==========
-    - name: Integrate ZeroTier
-      run: |
-        cd padavan-4.4/trunk
+        cd padavan-4.4
         
-        # 1. 拷贝ZeroTier源码
-        mkdir -p user/zerotier
-        cp -r ../../../zerotier-src/* user/zerotier/
+        # 下载ZeroTier源码
+        git clone https://github.com/zerotier/ZeroTierOne trunk/user/zerotier
         
-        # 2. 创建ZeroTier Makefile
-        cat << 'EOF' > user/zerotier/Makefile
-        include $(TOPDIR)/rules.mk
-        PKG_NAME:=zerotier
-        PKG_VERSION:=1.10.2
-        include $(INCLUDE_DIR)/package.mk
-        define Package/zerotier
-          SECTION:=net
-          CATEGORY:=Network
-          TITLE:=ZeroTier One
-          DEPENDS:=+libpthread +libstdcpp +kmod-tun +libopenssl
-        endef
-        define Build/Prepare
-          mkdir -p $(PKG_BUILD_DIR)
-          cp -r $(PWD)/user/zerotier/* $(PKG_BUILD_DIR)/
-        endef
-        define Build/Configure
-          $(call Build/Configure/Default,--host=mipsel-linux)
-        endef
-        define Package/zerotier/install
-          $(INSTALL_DIR) $(1)/usr/bin
-          $(INSTALL_BIN) $(PKG_BUILD_DIR)/zerotier-one $(1)/usr/bin/
-          $(INSTALL_DIR) $(1)/etc/init.d
-          $(INSTALL_BIN) files/zerotier.init $(1)/etc/init.d/zerotier
-        endef
-        $(eval $(call BuildPackage,zerotier))
+        # 修改存储路径
+        sed -i 's|/var/lib/zerotier-one|/etc/storage/zerotier-one|g' trunk/user/zerotier/osdep/OSUtils.cpp
+        
+        # 创建初始化脚本
+        mkdir -p trunk/user/zerotier/files
+        cat << 'EOF' > trunk/user/zerotier/files/zerotier.init
+        #!/bin/sh
+        ENABLED=$(nvram get zt_enable)
+        [ "$ENABLED" != "1" ] && exit 0
+        /usr/bin/zerotier-one -d
+        sleep 5
+        NETWORK_ID=$(nvram get zt_network)
+        [ -n "$NETWORK_ID" ] && zerotier-cli join $NETWORK_ID
         EOF
+        chmod +x trunk/user/zerotier/files/zerotier.init
         
-        # 3. 注册Web界面
-        cd user/www/n56u_ribbon_fixed
+        # 注册Web界面
+        cd trunk/user/www/n56u_ribbon_fixed
         sed -i "/'VPN'/a\\\t{ title: 'ZeroTier', url: 'zerotier.asp' }," state.js
         cat << 'EOF' > zerotier.asp
         <% css_add("zerotier.css") %>
@@ -104,27 +76,77 @@ jobs:
           </form>
         </div>
         EOF
-        echo ".zt_status { color: green; }" > zerotier.css
-        echo "function updateZTStatus() { /* AJAX更新状态代码 */ }" > zerotier.js
 
-    # ========== 构建配置 ==========
+    - name: Clone toolchain
+      run: |
+        cd padavan-4.4/toolchain-mipsel
+        sh dl_toolchain.sh
+        mkdir -p /opt/images/
+
+    # ========== 增强编译配置 ==========
     - name: Configure firmware
+      env:
+        TNAME: K2P  # 修改为你的设备型号
       run: |
         cd padavan-4.4/trunk
-        {
-          echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y"
-          echo "CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y"
-          echo "CONFIG_FIRMWARE_INCLUDE_WEBUI_ZEROTIER=y"
-        } >> .config
-    # ========== 构建阶段 ==========
-    - name: Build firmware
+        
+        # 基础配置
+        cp -f configs/templates/$TNAME.config .config
+        
+        # 清除旧配置
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_ZEROTIER/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_JSONC/d' .config
+        
+        # 必需依赖
+        echo "CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y" >> .config
+        echo "CONFIG_FIRMWARE_INCLUDE_JSONC=y" >> .config
+        
+        # ZeroTier核心配置
+        echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y" >> .config
+        echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER_WEBUI=y" >> .config
+        
+        # 移除不需要的功能
+        disable_features=(
+          "MENTOHUST" "SCUTCLIENT" "SHADOWSOCKS" "SSOBFS" "ADBYBY"
+          "DNSFORWARDER" "XRAY" "V2RAY" "DDNSTO" "ALDRIVER" 
+          "TROJAN" "KOOLPROXY" "CADDY" "ADGUARDHOME" "WYY"
+        )
+        for feature in "${disable_features[@]}"; do
+          sed -i "/CONFIG_FIRMWARE_INCLUDE_${feature}/d" .config
+          echo "CONFIG_FIRMWARE_INCLUDE_${feature}=n" >> .config
+        done
+
+    # ========== 增强编译流程 ==========
+    - name: Build Firmware
+      env:
+        TNAME: K2P  # 修改为你的设备型号
       run: |
         cd padavan-4.4/trunk
-        fakeroot ./build_firmware_modify ${DEVICE} ${BLOCK_SIZE}
-        sudo mv images/*.trx /opt/images/
-    # ========== 产物上传 ==========
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
+        
+        # 修复权限问题
+        chmod -R 755 toolchain-mipsel/toolchain-4.4.x/bin/*
+        find toolchain-mipsel -type f -exec chmod 644 {} \;
+        
+        # 编译前清理
+        sudo ./clear_tree
+        
+        # 并行编译优化
+        CPU_CORES=$(grep -c ^processor /proc/cpuinfo)
+        make -j$((CPU_CORES + 1)) V=99 2>&1 | tee build.log
+        
+        # 错误捕获
+        if grep -q 'Error [0-9]' build.log; then
+          echo "::error::发现编译错误，请检查日志！"
+          exit 1
+        fi
+        
+        # 移动产物
+        sudo mv -f images/*.trx /opt/images/
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@master
+      if: always()
       with:
-        name: ${{ env.DEVICE }}_ZeroTier_${{ env.ZT_VERSION }}_${{ env.BUILD_TIMESTAMP }}.trx
-        path: /opt/images/*.trx
+        name: Padavan-ZeroTier
+        path: /opt/images
