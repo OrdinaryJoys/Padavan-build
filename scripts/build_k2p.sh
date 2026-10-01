@@ -36,7 +36,7 @@ python3 "$root/scripts/configure_k2p.py" "$trunk"
 
 # Verify that the selected source includes the maintenance changes before building.
 grep -q '^SRC_NAME=curl-8.22.0$' "$trunk/libs/libcurl/Makefile"
-grep -q '^SRC_NAME=openssl-1.1.1w$' "$trunk/libs/libssl/Makefile"
+grep -q '^SRC_NAME=openssl-3.5.9$' "$trunk/libs/libssl/Makefile"
 grep -q 'secure-ssl = true' "$trunk/user/rc/services_ex.c"
 printf '%s  %s\n' a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505 \
   "$trunk/user/scripts/ca-certificates.crt" | sha256sum -c -
@@ -55,7 +55,7 @@ import json,sys
 keys=['flavor','source_repository','source_commit','build_commit','kernel','toolchain_sha256']
 value=dict(zip(keys,sys.argv[2:]))
 value['firmware_partition_bytes']=15925248
-value['tls_library_status']='OpenSSL 1.1.1w is end of life; compatibility update only'
+value['tls_library_status']='OpenSSL 3.5.9 LTS; minimal built-in provider profile'
 json.dump(value,open(sys.argv[1],'w'),indent=2)
 PY
 
@@ -67,7 +67,11 @@ fakeroot ./build_firmware_modify K2P 0
 qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/bin/curl" --version > "$diagnostics/curl-version.txt"
 grep -q '^curl 8.22.0 ' "$diagnostics/curl-version.txt"
 qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/bin/openssl" version > "$diagnostics/openssl-version.txt"
-grep -q '^OpenSSL 1.1.1w ' "$diagnostics/openssl-version.txt"
+grep -q '^OpenSSL 3.5.9 ' "$diagnostics/openssl-version.txt"
+qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/bin/ssh" -V 2> "$diagnostics/openssh-version.txt"
+grep -q '^OpenSSH_9.9p2' "$diagnostics/openssh-version.txt"
+qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/sbin/openvpn" --version > "$diagnostics/openvpn-version.txt"
+grep -q '^OpenVPN 2.6.23 ' "$diagnostics/openvpn-version.txt"
 printf '%s  %s\n' a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505 \
   "$trunk/romfs/etc_ro/ca-certificates.crt" | sha256sum -c -
 
@@ -79,7 +83,7 @@ if [ "${#images[@]}" -ne 1 ]; then
 fi
 python3 "$root/scripts/validate_firmware.py" "${images[0]}" --kernel "$kernel" --output "$diagnostics/image-validation.json"
 cp "${images[0]}" "$dist/K2P-$flavor-${source_commit:0:12}.trx"
-cp "$diagnostics/"{provenance.json,image-validation.json,curl-version.txt,openssl-version.txt,compiler.txt} "$dist/"
+cp "$diagnostics/"{provenance.json,image-validation.json,curl-version.txt,openssl-version.txt,openssh-version.txt,openvpn-version.txt,compiler.txt} "$dist/"
 cp .config "$dist/firmware.config"
 cd "$dist"
 sha256sum -- *.trx > SHA256SUMS

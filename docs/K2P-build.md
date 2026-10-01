@@ -13,7 +13,7 @@
 
 加入 SmartDNS、WireGuard、HTTPS 管理支持，并保留 OpenSSH/SFTP、OpenVPN。运行时是否启用这些服务由管理界面及原有设置决定。禁用 Xray、ZeroTier、AdGuardHome、下载器等体积较大的附加程序，避免占满闪存；不超频。
 
-源码更新包括 curl 8.22.0、OpenSSL 1.1.1w、Mozilla CA 证书库、curl 默认 CA 路径、启动时 CA 路径恢复及 DDNS 证书验证。OpenSSL 1.1.1w 已停止公开维护，是旧架构的兼容性过渡更新；本次没有把旧内核、dnsmasq、OpenSSH 等组件宣称为最新版。迁移到受维护的 TLS 库需要另外进行兼容性和真机测试。
+源码更新包括 curl 8.22.0、OpenSSL 3.5.9 LTS、Mozilla CA 证书库、curl 默认 CA 路径、启动时 CA 路径恢复及 DDNS 证书验证。OpenSSH 更新至适配此架构的 9.9p2，OpenVPN 更新至 2.6.23。OpenSSL 使用内置提供者并包含 MIPS 原子运行库；此精简构建不含后量子算法。内核、dnsmasq 等旧组件仍保持原实现；升级后的 TLS 安全默认值及 SSH/VPN 互操作性需要真机测试。
 
 ## 产物验收
 
