@@ -26,8 +26,10 @@ print('\t'.join(value[key] for key in ['repository','branch','ref','kernel','too
 PY
 )
 
-git clone --depth=1 --branch "$branch" "https://github.com/$repository.git" "$root/source"
-git -C "$root/source" checkout --detach "$ref"
+git init "$root/source"
+git -C "$root/source" remote add origin "https://github.com/$repository.git"
+git -C "$root/source" fetch --depth=1 origin "$ref"
+git -C "$root/source" checkout --detach FETCH_HEAD
 source_commit=$(git -C "$root/source" rev-parse HEAD)
 test "$source_commit" = "$ref"
 build_commit=$(git -C "$root" rev-parse HEAD)
