@@ -1,106 +1,75 @@
-name: Padavan AutoBuilder
+name: Build validated K2P firmware
 
 on:
   workflow_dispatch:
   push:
-    tags: ['v*']
+    branches: [master, codex/k2p-maintenance-20261001]
+    paths:
+      - .github/workflows/new-build-padavan.yml
+      - scripts/**
+      - sources.lock.json
+
+permissions:
+  contents: read
+
+concurrency:
+  group: k2p-build-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
+    name: ${{ matrix.flavor }}
     runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [k2p-4.4, k2p-susu]
+    defaults:
+      run:
+        shell: bash
     env:
-      DEVICE: K2P
-      BLOCK_SIZE: 15872
-      ZT_ENABLED: "y"
-      TOOLCHAIN_DIR: ${{ github.workspace }}/padavan-4.4/toolchain-mipsel/toolchain-4.4.x
-
+      FLAVOR: ${{ matrix.flavor }}
     steps:
-    # ========== 代码检出 ==========
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout build helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-    # ========== 依赖安装 ==========
-    - name: Install dependencies
-      run: |
-        sudo apt-get update -y
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-          unzip libtool-bin curl cmake gperf gawk flex bison \
-          fakeroot kmod cpio git python3-docutils gettext automake autopoint \
-          texinfo build-essential help2man pkg-config zlib1g-dev libgmp3-dev \
-          libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget libc-dev-bin \
-          libssl-dev libjson-c-dev libc6-i386
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential bison flex gawk gettext texinfo git curl wget unzip \
+            libtool-bin automake autopoint pkg-config gperf cmake fakeroot \
+            kmod cpio python3 python3-docutils help2man xz-utils patch \
+            zlib1g-dev libgmp-dev libmpc-dev libmpfr-dev libncurses5-dev \
+            libltdl-dev libc6-i386 ca-certificates qemu-user
 
-    # ========== 源码准备 ==========
-    - name: Prepare source
-      run: |
-        git clone --depth=1 https://github.com/hanwckf/padavan-4.4.git || { echo "::error::Clone failed"; exit 1; }
-        cd padavan-4.4/toolchain-mipsel
-        ./dl_toolchain.sh || { echo "::error::Toolchain download failed"; exit 1; }
-        
-        # 验证工具链完整性
-        [ -x "toolchain-4.4.x/bin/mipsel-linux-uclibc-gcc" ] || {
-          echo "::error::Compiler not found"
-          ls -lR toolchain-4.4.x/bin
-          exit 1
-        }
-        
-        sudo mkdir -p /opt/images
+      - name: Check firmware validator
+        run: python3 scripts/test_validate_firmware.py
 
-    # ========== 路径修复阶段 ==========
-    - name: Fix toolchain paths
-      run: |
-        cd padavan-4.4/trunk
-        
-        # 修复内核Makefile路径
-        sed -i "s|/toolchain-4.4.x|$TOOLCHAIN_DIR|g" linux-4.4.x/Makefile
-        sed -i "s|CROSS_COMPILE := .*|CROSS_COMPILE := $TOOLCHAIN_DIR/bin/mipsel-linux-uclibc-|g" linux-4.4.x/arch/mips/Makefile
-        
-        # 修复根目录Makefile
-        sed -i "s|CROSS_COMPILE = .*|CROSS_COMPILE = $TOOLCHAIN_DIR/bin/mipsel-linux-uclibc-|g" Makefile
+      - name: Compile and validate K2P firmware
+        run: |
+          set -euo pipefail
+          mkdir -p diagnostics
+          bash scripts/build_k2p.sh "$FLAVOR" 2>&1 | tee diagnostics/build.log
 
-    # ========== 配置阶段 ==========
-    - name: Configure firmware
-      run: |
-        cd padavan-4.4/trunk
-        cp -vf configs/templates/${DEVICE}.config .config
-        
-        # 应用配置修改
-        {
-          echo "CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y"
-          echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=${ZT_ENABLED}"
-        } >> .config
-        
-        # 设置绝对路径环境变量
-        echo "export PATH=$TOOLCHAIN_DIR/bin:$PATH" >> build_env
-        echo "export CROSS_COMPILE=$TOOLCHAIN_DIR/bin/mipsel-linux-uclibc-" >> build_env
-        source build_env
+      - name: Upload validated firmware
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: K2P-${{ matrix.flavor }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
 
-    # ========== 构建阶段 ==========
-    - name: Build firmware
-      run: |
-        cd padavan-4.4/trunk
-        source build_env
-        
-        # 验证环境变量
-        echo "=== Compiler Path ==="
-        which mipsel-linux-uclibc-gcc
-        echo "=== Compiler Version ==="
-        mipsel-linux-uclibc-gcc --version || true
-        
-        # 完整构建流程
-        fakeroot ./build_firmware_modify ${DEVICE} ${BLOCK_SIZE} 2>&1 | tee build.log
-        
-        # 处理构建结果
-        if [ ! -f images/*.trx ]; then
-          echo "::error::Build failed, last 50 lines:"
-          tail -n 50 build.log
-          exit 1
-        fi
-        sudo mv images/*.trx /opt/images/
-
-    # ========== 产物上传 ==========
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ env.DEVICE }}-Firmware-$(date +%Y%m%d-%H%M%S)
-        path: /opt/images/*.trx
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: logs-${{ matrix.flavor }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: diagnostics/
+          if-no-files-found: warn
+          retention-days: 30
