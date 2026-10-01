@@ -1,0 +1,6 @@
+source/
+dist/
+diagnostics/
+toolchain.tar.xz
+__pycache__/
+*.pyc
