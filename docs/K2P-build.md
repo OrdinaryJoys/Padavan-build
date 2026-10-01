@@ -34,3 +34,5 @@ bash scripts/build_k2p.sh k2p-susu
 ```
 
 每次编译使用一个干净的目录。镜像保存在 `dist/`，诊断信息保存在 `diagnostics/`。Windows 用于更新和推送仓库，固件构建在 Linux 中进行。
+
+目标 OpenSSL 程序另外执行 RSA 2048/SHA-256 临时证书生成及安全级别 2 的验证；临时私钥不会放入产物。新建 OpenVPN 证书默认采用 RSA/DH 2048 位及 SHA-256；已有弱密钥证书如被新 TLS 库拒绝，需要重新签发。新建 SSH 配置不依赖 DSA。OpenVPN 保留 LZO，未编译 LZ4。

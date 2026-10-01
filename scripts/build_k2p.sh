@@ -72,6 +72,21 @@ qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/bin/ssh" -V 2> "$diagnostics/ope
 grep -q '^OpenSSH_9.9p2' "$diagnostics/openssh-version.txt"
 qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/sbin/openvpn" --version > "$diagnostics/openvpn-version.txt"
 grep -q '^OpenVPN 2.6.23 ' "$diagnostics/openvpn-version.txt"
+
+# Exercise the built-in RSA and SHA-256 providers with the target executable.
+# Ephemeral test keys stay outside diagnostics and uploaded artifacts.
+crypto_check="$root/source/crypto-check"
+mkdir -p "$crypto_check"
+qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/bin/openssl" req \
+  -newkey rsa:2048 -nodes -x509 -sha256 -days 1 \
+  -config "$trunk/romfs/etc_ro/openssl.cnf" -subj /CN=K2P-build-check \
+  -keyout "$crypto_check/key.pem" -out "$crypto_check/cert.pem" \
+  > "$diagnostics/crypto-check.txt" 2>&1
+qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/bin/openssl" verify \
+  -auth_level 2 -CAfile "$crypto_check/cert.pem" "$crypto_check/cert.pem" \
+  >> "$diagnostics/crypto-check.txt" 2>&1
+rm -f "$crypto_check/key.pem" "$crypto_check/cert.pem"
+rmdir "$crypto_check"
 printf '%s  %s\n' a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505 \
   "$trunk/romfs/etc_ro/ca-certificates.crt" | sha256sum -c -
 
@@ -83,7 +98,7 @@ if [ "${#images[@]}" -ne 1 ]; then
 fi
 python3 "$root/scripts/validate_firmware.py" "${images[0]}" --kernel "$kernel" --output "$diagnostics/image-validation.json"
 cp "${images[0]}" "$dist/K2P-$flavor-${source_commit:0:12}.trx"
-cp "$diagnostics/"{provenance.json,image-validation.json,curl-version.txt,openssl-version.txt,openssh-version.txt,openvpn-version.txt,compiler.txt} "$dist/"
+cp "$diagnostics/"{provenance.json,image-validation.json,curl-version.txt,openssl-version.txt,openssh-version.txt,openvpn-version.txt,crypto-check.txt,compiler.txt} "$dist/"
 cp .config "$dist/firmware.config"
 cd "$dist"
 sha256sum -- *.trx > SHA256SUMS
