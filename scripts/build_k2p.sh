@@ -77,6 +77,28 @@ grep -q '^OpenVPN 2.6.23 ' "$diagnostics/openvpn-version.txt"
 qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/bin/wg" --version > "$diagnostics/wireguard-version.txt"
 grep -q 'wireguard-tools v1.0.20260223' "$diagnostics/wireguard-version.txt"
 
+# dnsmasq serves the whole LAN: verify the version and that it still parses a
+# configuration shaped like the one services_ex.c generates.
+qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/sbin/dnsmasq" --version > "$diagnostics/dnsmasq-version.txt"
+grep -q 'Dnsmasq version 2.93' "$diagnostics/dnsmasq-version.txt"
+cat > "$diagnostics/dnsmasq-test.conf" <<'DMEOF'
+no-poll
+bogus-priv
+no-negcache
+clear-on-reload
+cache-size=1024
+dns-forward-max=512
+min-port=4096
+domain=K2P
+expand-hosts
+dhcp-authoritative
+dhcp-range=set:lan,192.168.6.2,192.168.6.244,255.255.255.0,259200
+dhcp-option=tag:lan,3,192.168.6.1
+dhcp-option=tag:lan,6,192.168.6.1
+dhcp-option=tag:lan,15,K2P
+DMEOF
+qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/sbin/dnsmasq" --test -C "$diagnostics/dnsmasq-test.conf" > "$diagnostics/dnsmasq-test.txt" 2>&1
+
 # xt_DSCP is a module on this kernel and nothing loaded it at boot, which made
 # every miniupnpd mapping fail with iptc_commit() ENOENT. The module must ship
 # and start_upnp() must register the target before miniupnpd runs.
@@ -125,7 +147,7 @@ unsquashfs -ll "$diagnostics/rootfs.squashfs" | grep -Eq -- '-rwxr-xr-x .*usr/bi
 rm -f "$diagnostics/rootfs.squashfs"
 
 cp "${images[0]}" "$dist/K2P-$flavor-${source_commit:0:12}.trx"
-cp "$diagnostics/"{provenance.json,image-validation.json,curl-version.txt,openssl-version.txt,openssh-version.txt,openvpn-version.txt,wireguard-version.txt,crypto-check.txt,compiler.txt} "$dist/"
+cp "$diagnostics/"{provenance.json,image-validation.json,curl-version.txt,openssl-version.txt,openssh-version.txt,openvpn-version.txt,wireguard-version.txt,dnsmasq-version.txt,dnsmasq-test.txt,crypto-check.txt,compiler.txt} "$dist/"
 cp .config "$dist/firmware.config"
 cd "$dist"
 sha256sum -- *.trx > SHA256SUMS
