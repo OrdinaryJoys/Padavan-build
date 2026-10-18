@@ -93,6 +93,9 @@ done
 # every miniupnpd mapping fail with iptc_commit() ENOENT. The module must ship
 # and start_upnp() must register the target before miniupnpd runs.
 find "$trunk/romfs/lib/modules" -name 'xt_DSCP.ko' | grep -q .
+# miniupnpd hardening: Content-Length parsing must reject non-digits and clamp.
+strings "$trunk/romfs/usr/bin/miniupnpd" > "$diagnostics/miniupnpd-strings.txt"
+grep -q 'Content-Length overflow : %lu' "$diagnostics/miniupnpd-strings.txt"
 grep -q 'modprobe xt_DSCP' "$trunk/user/rc/services_ex.c"
 
 # Exercise the built-in RSA and SHA-256 providers with the target executable.
@@ -137,7 +140,7 @@ unsquashfs -ll "$diagnostics/rootfs.squashfs" | grep -Eq -- '-rwxr-xr-x .*usr/bi
 rm -f "$diagnostics/rootfs.squashfs"
 
 cp "${images[0]}" "$dist/K2P-$flavor-${source_commit:0:12}.trx"
-cp "$diagnostics/"{provenance.json,image-validation.json,curl-version.txt,openssl-version.txt,openssh-version.txt,openvpn-version.txt,wireguard-version.txt,dnsmasq-version.txt,crypto-check.txt,compiler.txt} "$dist/"
+cp "$diagnostics/"{provenance.json,image-validation.json,curl-version.txt,openssl-version.txt,openssh-version.txt,openvpn-version.txt,wireguard-version.txt,dnsmasq-version.txt,miniupnpd-strings.txt,crypto-check.txt,compiler.txt} "$dist/"
 cp .config "$dist/firmware.config"
 cd "$dist"
 sha256sum -- *.trx > SHA256SUMS
