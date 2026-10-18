@@ -13,7 +13,17 @@
 
 加入 SmartDNS、WireGuard、HTTPS 管理支持，并保留 OpenSSH/SFTP、OpenVPN。运行时是否启用这些服务由管理界面及原有设置决定。禁用 Xray、ZeroTier、AdGuardHome、下载器等体积较大的附加程序，避免占满闪存；不超频。
 
-源码更新包括 curl 8.22.0、OpenSSL 3.5.9 LTS、Mozilla CA 证书库、curl 默认 CA 路径、启动时 CA 路径恢复及 DDNS 证书验证。OpenSSH 更新至适配此架构的 9.9p2，OpenVPN 更新至 2.6.23。OpenSSL 使用内置提供者并包含 MIPS 原子运行库；此精简构建不含后量子算法。内核、dnsmasq 等旧组件仍保持原实现；升级后的 TLS 安全默认值及 SSH/VPN 互操作性需要真机测试。
+源码更新包括 curl 8.23.0、OpenSSL 3.5.9 LTS、Mozilla CA 证书库、curl 默认 CA 路径、启动时 CA 路径恢复及 DDNS 证书验证。OpenSSH 更新至适配此架构的 9.9p2，OpenVPN 更新至 2.6.23，WireGuard 工具更新至 1.0.20260223。OpenSSL 使用内置提供者并包含 MIPS 原子运行库；此精简构建不含后量子算法。
+
+**本版针对性修复（2026-10-18）：**
+
+- `CONFIG_NETFILTER_XT_TARGET_DSCP` 从模块改为内建：设备上没有任何环节加载 `xt_DSCP.ko`，导致 `miniupnpd` 每次端口映射都报 `iptc_commit() ... No chain/target/match by that name`（实测 390 次/14 天），且规则只写入一半。改为内建后该报错消失，UPnP 行为不变。
+- OpenSSL 恢复 `-DOPENSSL_PREFER_CHACHA_OVER_GCM`：MT7621 无 AES 指令，实测 ChaCha20-Poly1305 32.9 MB/s、AES-256-GCM 8.8 MB/s（3.7 倍）。作为 TLS 服务端（HTTPS 管理、VPN）时优先 ChaCha，可显著降低握手与传输占用。
+- curl 8.22.0 → 8.23.0；WireGuard 工具 1.0.20210914 → 1.0.20260223，下载均校验 SHA256。
+
+构建门禁新增：`openssl ciphers -tls1_3` 首项必须为 `TLS_CHACHA20_POLY1305_SHA256`；镜像内不得再出现 `xt_DSCP.ko`（必须内建）；`wg --version` 必须为 1.0.20260223；解包镜像后必须能列出 SquashFS 内容，且 `openvpn-cert.sh`、`sshd-session`、`ca-certificates.crt` 存在、`openvpn-cert.sh` 具可执行位。
+
+内核、dnsmasq、miniupnpd、busybox、udpxy、inadyn 等旧组件保持原实现：它们要么是随仓库内嵌的整棵源码树（升级等于替换数百个文件），要么是设备上的生命线服务（DNS、UPnP、shell），在没有真机回归的前提下替换的收益低于风险。升级后的 TLS 安全默认值及 SSH/VPN 互操作性需要真机测试。
 
 ## 产物验收
 

@@ -37,7 +37,7 @@ trunk="$root/source/trunk"
 python3 "$root/scripts/configure_k2p.py" "$trunk"
 
 # Verify that the selected source includes the maintenance changes before building.
-grep -q '^SRC_NAME=curl-8.22.0$' "$trunk/libs/libcurl/Makefile"
+grep -q '^SRC_NAME=curl-8.23.0$' "$trunk/libs/libcurl/Makefile"
 grep -q '^SRC_NAME=openssl-3.5.9$' "$trunk/libs/libssl/Makefile"
 grep -q 'secure-ssl = true' "$trunk/user/rc/services_ex.c"
 printf '%s  %s\n' a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505 \
@@ -67,13 +67,27 @@ fakeroot ./build_firmware_modify K2P 0
 
 # Inspect the actual target programs without starting a router or network service.
 qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/bin/curl" --version > "$diagnostics/curl-version.txt"
-grep -q '^curl 8.22.0 ' "$diagnostics/curl-version.txt"
+grep -q '^curl 8.23.0 ' "$diagnostics/curl-version.txt"
 qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/bin/openssl" version > "$diagnostics/openssl-version.txt"
 grep -q '^OpenSSL 3.5.9 ' "$diagnostics/openssl-version.txt"
+# MT7621 has no AES acceleration: the server-side cipher order must put
+# ChaCha20-Poly1305 first, otherwise every TLS handshake burns ~3.7x more CPU.
+qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/bin/openssl" ciphers -tls1_3 \
+  > "$diagnostics/openssl-ciphers.txt"
+test "$(cut -d: -f1 "$diagnostics/openssl-ciphers.txt" | head -1)" = "TLS_CHACHA20_POLY1305_SHA256"
 qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/bin/ssh" -V 2> "$diagnostics/openssh-version.txt"
 grep -q '^OpenSSH_9.9p2' "$diagnostics/openssh-version.txt"
 qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/sbin/openvpn" --version > "$diagnostics/openvpn-version.txt"
 grep -q '^OpenVPN 2.6.23 ' "$diagnostics/openvpn-version.txt"
+qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/bin/wg" --version > "$diagnostics/wireguard-version.txt"
+grep -q 'wireguard-tools v1.0.20260223' "$diagnostics/wireguard-version.txt"
+
+# The DSCP target must be built into the kernel: miniupnpd uses "-j DSCP" on
+# every UPnP mapping and nothing loads the module form on the device.
+if find "$trunk/romfs/lib/modules" -name 'xt_DSCP.ko' | grep -q .; then
+  echo "DSCP target must be built in (=y), but a loadable xt_DSCP.ko is shipped" >&2
+  exit 1
+fi
 
 # Exercise the built-in RSA and SHA-256 providers with the target executable.
 # Ephemeral test keys stay outside diagnostics and uploaded artifacts.
@@ -99,8 +113,24 @@ if [ "${#images[@]}" -ne 1 ]; then
   exit 1
 fi
 python3 "$root/scripts/validate_firmware.py" "${images[0]}" --kernel "$kernel" --output "$diagnostics/image-validation.json"
+
+# Read the shipped rootfs back: a header/CRC-valid image is not necessarily a
+# usable one (unreadable SquashFS, missing or non-executable helpers).
+python3 - "${images[0]}" "$diagnostics/rootfs.squashfs" <<'PY'
+import pathlib, struct, sys
+data = pathlib.Path(sys.argv[1]).read_bytes()
+kernel_size = struct.unpack('>I', data[60:64])[0]
+pathlib.Path(sys.argv[2]).write_bytes(data[kernel_size:])
+PY
+unsquashfs -l "$diagnostics/rootfs.squashfs" > "$diagnostics/rootfs-list.txt"
+grep -qx 'squashfs-root/usr/bin/openvpn-cert.sh' "$diagnostics/rootfs-list.txt"
+grep -qx 'squashfs-root/usr/libexec/sshd-session' "$diagnostics/rootfs-list.txt"
+grep -qx 'squashfs-root/etc_ro/ca-certificates.crt' "$diagnostics/rootfs-list.txt"
+unsquashfs -ll "$diagnostics/rootfs.squashfs" | grep -Eq -- '-rwxr-xr-x .*usr/bin/openvpn-cert.sh'
+rm -f "$diagnostics/rootfs.squashfs"
+
 cp "${images[0]}" "$dist/K2P-$flavor-${source_commit:0:12}.trx"
-cp "$diagnostics/"{provenance.json,image-validation.json,curl-version.txt,openssl-version.txt,openssh-version.txt,openvpn-version.txt,crypto-check.txt,compiler.txt} "$dist/"
+cp "$diagnostics/"{provenance.json,image-validation.json,curl-version.txt,openssl-version.txt,openssl-ciphers.txt,openssh-version.txt,openvpn-version.txt,wireguard-version.txt,crypto-check.txt,compiler.txt} "$dist/"
 cp .config "$dist/firmware.config"
 cd "$dist"
 sha256sum -- *.trx > SHA256SUMS
