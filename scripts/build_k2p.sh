@@ -104,6 +104,7 @@ grep -q 'atoi_buffer' "$trunk/user/miniupnpd/miniupnpd-2.x/minissdp.c"
 # udpxy must not be started when the IPTV/MAN interface does not exist.
 grep -q 'udpxy: %s not present, skip start' "$trunk/user/rc/net.c"
 grep -q 'disabled stale gfwlist= line' "$trunk/user/dnsmasq/dnsmasq.sh"
+grep -q 'ssh -Q key' "$trunk/user/openssh/sshd.sh"
 grep -q 'modprobe xt_DSCP' "$trunk/user/rc/services_ex.c"
 
 # Exercise the built-in RSA and SHA-256 providers with the target executable.
