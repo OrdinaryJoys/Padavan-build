@@ -13,7 +13,7 @@
 
 加入 SmartDNS、WireGuard、HTTPS 管理支持，并保留 OpenSSH/SFTP、OpenVPN。运行时是否启用这些服务由管理界面及原有设置决定。禁用 Xray、ZeroTier、AdGuardHome、下载器等体积较大的附加程序，避免占满闪存；不超频。
 
-源码更新包括 curl 8.23.0、OpenSSL 3.5.9 LTS、Mozilla CA 证书库、curl 默认 CA 路径、启动时 CA 路径恢复及 DDNS 证书验证。OpenSSH 更新至适配此架构的 9.9p2，OpenVPN 更新至 2.6.23，WireGuard 工具更新至 1.0.20260223。OpenSSL 使用内置提供者并包含 MIPS 原子运行库；此精简构建不含后量子算法。
+源码更新包括 curl 8.23.0、OpenSSL 3.5.9 LTS、Mozilla CA 证书库、curl 默认 CA 路径、启动时 CA 路径恢复及 DDNS 证书验证。OpenSSH 更新至适配此架构的 10.6p1（同时安装 `sshd-session` 与 `sshd-auth`），OpenVPN 更新至 2.6.23，WireGuard 工具更新至 1.0.20260223。OpenSSL 使用内置提供者并包含 MIPS 原子运行库；此精简构建不含后量子算法。
 
 **本版针对性修复（2026-10-18）：**
 
@@ -21,7 +21,7 @@
 - **加密套件说明（不涉及编译开关）**：MT7621 无 AES 指令，实测 ChaCha20-Poly1305 32.9 MB/s、AES-256-GCM 8.8 MB/s（约 3.7 倍）。OpenSSL 3.x 已不存在 `OPENSSL_PREFER_CHACHA_OVER_GCM` 宏（构建期无法改变顺序），偏好由各服务自行决定：管理页 `https_clist` 默认以 `ECDH+CHACHA20` 开头，OpenSSH 默认首选 `chacha20-poly1305@openssh.com`，OpenVPN 在启用时应配置 `data-ciphers CHACHA20-POLY1305`。
 - curl 8.22.0 → 8.23.0；WireGuard 工具 1.0.20210914 → 1.0.20260223，下载均校验 SHA256。
 
-构建门禁新增：镜像内必须存在 `xt_DSCP.ko` 且源码在启动 UPnP 前 `modprobe xt_DSCP`；`wg --version` 必须为 1.0.20260223；解包镜像后必须能列出 SquashFS 内容，且 `openvpn-cert.sh`、`sshd-session`、`ca-certificates.crt` 存在、`openvpn-cert.sh` 具可执行位。
+构建门禁新增：OpenSSH 版本必须为 10.6p1 且镜像内含 `sshd-auth`；镜像内必须存在 `xt_DSCP.ko` 且源码在启动 UPnP 前 `modprobe xt_DSCP`；`wg --version` 必须为 1.0.20260223；解包镜像后必须能列出 SquashFS 内容，且 `openvpn-cert.sh`、`sshd-session`、`ca-certificates.crt` 存在、`openvpn-cert.sh` 具可执行位。
 
 内核、dnsmasq、miniupnpd、busybox、udpxy、inadyn 等旧组件保持原实现：它们要么是随仓库内嵌的整棵源码树（升级等于替换数百个文件），要么是设备上的生命线服务（DNS、UPnP、shell），在没有真机回归的前提下替换的收益低于风险。升级后的 TLS 安全默认值及 SSH/VPN 互操作性需要真机测试。
 
