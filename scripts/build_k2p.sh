@@ -84,7 +84,8 @@ strings "$trunk/romfs/usr/sbin/dnsmasq" > "$diagnostics/dnsmasq-version.txt"
 grep -qx 'dnsmasq-2.93' "$diagnostics/dnsmasq-version.txt"
 for opt in no-poll bogus-priv no-negcache clear-on-reload cache-size \
            dns-forward-max min-port expand-hosts dhcp-authoritative \
-           dhcp-range dhcp-option servers-file dhcp-hostsfile bind-dynamic; do
+           dhcp-range dhcp-option servers-file dhcp-hostsfile bind-dynamic \
+           min-ttl filter-aaaa; do
   grep -q -- "$opt" "$diagnostics/dnsmasq-version.txt" || {
     echo "dnsmasq no longer supports option: $opt" >&2; exit 1; }
 done
@@ -102,6 +103,7 @@ grep -q 'memset(data, 0, sizeof(struct NameValueParserData))' "$trunk/user/miniu
 grep -q 'atoi_buffer' "$trunk/user/miniupnpd/miniupnpd-2.x/minissdp.c"
 # udpxy must not be started when the IPTV/MAN interface does not exist.
 grep -q 'udpxy: %s not present, skip start' "$trunk/user/rc/net.c"
+grep -q 'disabled stale gfwlist= line' "$trunk/user/dnsmasq/dnsmasq.sh"
 grep -q 'modprobe xt_DSCP' "$trunk/user/rc/services_ex.c"
 
 # Exercise the built-in RSA and SHA-256 providers with the target executable.
