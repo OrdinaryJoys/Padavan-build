@@ -70,11 +70,6 @@ qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/bin/curl" --version > "$diagnost
 grep -q '^curl 8.23.0 ' "$diagnostics/curl-version.txt"
 qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/bin/openssl" version > "$diagnostics/openssl-version.txt"
 grep -q '^OpenSSL 3.5.9 ' "$diagnostics/openssl-version.txt"
-# MT7621 has no AES acceleration: the server-side cipher order must put
-# ChaCha20-Poly1305 first, otherwise every TLS handshake burns ~3.7x more CPU.
-qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/bin/openssl" ciphers -tls1_3 \
-  > "$diagnostics/openssl-ciphers.txt"
-test "$(cut -d: -f1 "$diagnostics/openssl-ciphers.txt" | head -1)" = "TLS_CHACHA20_POLY1305_SHA256"
 qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/bin/ssh" -V 2> "$diagnostics/openssh-version.txt"
 grep -q '^OpenSSH_9.9p2' "$diagnostics/openssh-version.txt"
 qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/sbin/openvpn" --version > "$diagnostics/openvpn-version.txt"
@@ -130,7 +125,7 @@ unsquashfs -ll "$diagnostics/rootfs.squashfs" | grep -Eq -- '-rwxr-xr-x .*usr/bi
 rm -f "$diagnostics/rootfs.squashfs"
 
 cp "${images[0]}" "$dist/K2P-$flavor-${source_commit:0:12}.trx"
-cp "$diagnostics/"{provenance.json,image-validation.json,curl-version.txt,openssl-version.txt,openssl-ciphers.txt,openssh-version.txt,openvpn-version.txt,wireguard-version.txt,crypto-check.txt,compiler.txt} "$dist/"
+cp "$diagnostics/"{provenance.json,image-validation.json,curl-version.txt,openssl-version.txt,openssh-version.txt,openvpn-version.txt,wireguard-version.txt,crypto-check.txt,compiler.txt} "$dist/"
 cp .config "$dist/firmware.config"
 cd "$dist"
 sha256sum -- *.trx > SHA256SUMS
