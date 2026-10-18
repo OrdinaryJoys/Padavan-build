@@ -81,7 +81,7 @@ grep -q 'wireguard-tools v1.0.20260223' "$diagnostics/wireguard-version.txt"
 # returns 0 there, so it aborts before parsing arguments), so verify the binary
 # statically: version tag plus every option Padavan's generated config uses.
 strings "$trunk/romfs/usr/sbin/dnsmasq" > "$diagnostics/dnsmasq-version.txt"
-grep -qx '2.93' "$diagnostics/dnsmasq-version.txt"
+grep -qx 'dnsmasq-2.93' "$diagnostics/dnsmasq-version.txt"
 for opt in no-poll bogus-priv no-negcache clear-on-reload cache-size \
            dns-forward-max min-port expand-hosts dhcp-authoritative \
            dhcp-range dhcp-option servers-file dhcp-hostsfile bind-dynamic; do
