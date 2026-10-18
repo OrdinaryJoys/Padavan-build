@@ -77,12 +77,11 @@ grep -q '^OpenVPN 2.6.23 ' "$diagnostics/openvpn-version.txt"
 qemu-mipsel -L "$trunk/romfs" "$trunk/romfs/usr/bin/wg" --version > "$diagnostics/wireguard-version.txt"
 grep -q 'wireguard-tools v1.0.20260223' "$diagnostics/wireguard-version.txt"
 
-# The DSCP target must be built into the kernel: miniupnpd uses "-j DSCP" on
-# every UPnP mapping and nothing loads the module form on the device.
-if find "$trunk/romfs/lib/modules" -name 'xt_DSCP.ko' | grep -q .; then
-  echo "DSCP target must be built in (=y), but a loadable xt_DSCP.ko is shipped" >&2
-  exit 1
-fi
+# xt_DSCP is a module on this kernel and nothing loaded it at boot, which made
+# every miniupnpd mapping fail with iptc_commit() ENOENT. The module must ship
+# and start_upnp() must register the target before miniupnpd runs.
+find "$trunk/romfs/lib/modules" -name 'xt_DSCP.ko' | grep -q .
+grep -q 'modprobe xt_DSCP' "$trunk/user/rc/services_ex.c"
 
 # Exercise the built-in RSA and SHA-256 providers with the target executable.
 # Ephemeral test keys stay outside diagnostics and uploaded artifacts.

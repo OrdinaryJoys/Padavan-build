@@ -17,11 +17,11 @@
 
 **本版针对性修复（2026-10-18）：**
 
-- `CONFIG_NETFILTER_XT_TARGET_DSCP` 从模块改为内建：设备上没有任何环节加载 `xt_DSCP.ko`，导致 `miniupnpd` 每次端口映射都报 `iptc_commit() ... No chain/target/match by that name`（实测 390 次/14 天），且规则只写入一半。改为内建后该报错消失，UPnP 行为不变。
+- **UPnP/DSCP 修复（运行期）**：`xt_DSCP` 在这颗内核上是可加载模块，而设备上没有任何环节在开机时加载它，`miniupnpd` 每次写 `-j DSCP` 都被内核以 ENOENT 拒绝（`iptc_commit() ... No chain/target/match by that name`，实测 390 次/14 天），映射规则只写入一半。现在 `start_upnp()` 在启动 `miniupnpd` 前执行 `modprobe xt_DSCP`，UPnP 行为不变、报错消失。曾尝试把 target 编进内核，但 CI 内核仍按模块编译（`.config` 生效路径待查），因此采用确定性的运行期加载。
 - **加密套件说明（不涉及编译开关）**：MT7621 无 AES 指令，实测 ChaCha20-Poly1305 32.9 MB/s、AES-256-GCM 8.8 MB/s（约 3.7 倍）。OpenSSL 3.x 已不存在 `OPENSSL_PREFER_CHACHA_OVER_GCM` 宏（构建期无法改变顺序），偏好由各服务自行决定：管理页 `https_clist` 默认以 `ECDH+CHACHA20` 开头，OpenSSH 默认首选 `chacha20-poly1305@openssh.com`，OpenVPN 在启用时应配置 `data-ciphers CHACHA20-POLY1305`。
 - curl 8.22.0 → 8.23.0；WireGuard 工具 1.0.20210914 → 1.0.20260223，下载均校验 SHA256。
 
-构建门禁新增：镜像内不得再出现 `xt_DSCP.ko`（DSCP 目标必须内建）；`wg --version` 必须为 1.0.20260223；解包镜像后必须能列出 SquashFS 内容，且 `openvpn-cert.sh`、`sshd-session`、`ca-certificates.crt` 存在、`openvpn-cert.sh` 具可执行位。
+构建门禁新增：镜像内必须存在 `xt_DSCP.ko` 且源码在启动 UPnP 前 `modprobe xt_DSCP`；`wg --version` 必须为 1.0.20260223；解包镜像后必须能列出 SquashFS 内容，且 `openvpn-cert.sh`、`sshd-session`、`ca-certificates.crt` 存在、`openvpn-cert.sh` 具可执行位。
 
 内核、dnsmasq、miniupnpd、busybox、udpxy、inadyn 等旧组件保持原实现：它们要么是随仓库内嵌的整棵源码树（升级等于替换数百个文件），要么是设备上的生命线服务（DNS、UPnP、shell），在没有真机回归的前提下替换的收益低于风险。升级后的 TLS 安全默认值及 SSH/VPN 互操作性需要真机测试。
 
