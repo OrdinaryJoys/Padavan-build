@@ -97,7 +97,7 @@ find "$trunk/romfs/lib/modules" -name 'xt_DSCP.ko' | grep -q .
 strings "$trunk/romfs/usr/bin/miniupnpd" > "$diagnostics/miniupnpd-strings.txt"
 grep -q 'Content-Length overflow : %lu' "$diagnostics/miniupnpd-strings.txt"
 # miniupnpd: upstream 2017 SSDP/SOAP parsing fixes must be present in the tree.
-grep -q 'CDATA is at least' "$trunk/user/miniupnpd/miniupnpd-2.x/minixml.c"
+grep -q 'p->xmlend >= (p->xml + (9 + 3))' "$trunk/user/miniupnpd/miniupnpd-2.x/minixml.c"
 grep -q 'memset(data, 0, sizeof(struct NameValueParserData))' "$trunk/user/miniupnpd/miniupnpd-2.x/upnpreplyparse.c"
 grep -q 'atoi_buffer' "$trunk/user/miniupnpd/miniupnpd-2.x/minissdp.c"
 # udpxy must not be started when the IPTV/MAN interface does not exist.
