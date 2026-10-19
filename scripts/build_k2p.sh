@@ -131,6 +131,10 @@ grep -q 'chmod("/etc/inadyn.conf", 0600)' "$trunk/user/rc/services_ex.c"
 # Hardening must be applied by rc on every boot (storage may predate it).
 grep -q 'fput_int("/proc/sys/kernel/kptr_restrict", 1)' "$trunk/user/rc/init.c"
 grep -q 'fput_int("/proc/sys/kernel/dmesg_restrict", 1)' "$trunk/user/rc/init.c"
+# zlib carries fixes for CVE-2018-25032 / CVE-2022-37434 (1.2.11 is affected).
+grep -q 'SRC_NAME=zlib-1.3.2' "$trunk/libs/libz/Makefile"
+printf '%s  %s\n' bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16 \
+  "$trunk/libs/libz/zlib-1.3.2.tar.gz" | sha256sum -c -
 grep -q 'dmesg_restrict' "$trunk/user/scripts/reset_ss.sh"
 
 # Exercise the built-in RSA and SHA-256 providers with the target executable.
