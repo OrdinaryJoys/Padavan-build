@@ -93,10 +93,13 @@ done
 # xt_DSCP is a module on this kernel and nothing loaded it at boot, which made
 # every miniupnpd mapping fail with iptc_commit() ENOENT. The module must ship
 # and start_upnp() must register the target before miniupnpd runs.
-find "$trunk/romfs/lib/modules" -name 'xt_DSCP.ko' | grep -q .
+find "$trunk/romfs/lib/modules" -name 'xt_DSCP.ko' -print -quit | grep -q .
 # miniupnpd hardening: Content-Length parsing must reject non-digits and clamp.
 strings "$trunk/romfs/usr/bin/miniupnpd" > "$diagnostics/miniupnpd-strings.txt"
 grep -q 'Content-Length overflow : %lu' "$diagnostics/miniupnpd-strings.txt"
+# ... and the 1 MiB body limit must answer 413 instead of buffering forever.
+grep -q 'Content-Length over limit' "$diagnostics/miniupnpd-strings.txt"
+grep -q 'CONTENT_LENGTH_LIMIT' "$trunk/user/miniupnpd/miniupnpd-2.x/upnphttp.c"
 # miniupnpd: upstream 2017 SSDP/SOAP parsing fixes must be present in the tree.
 grep -q 'p->xmlend >= (p->xml + (9 + 3))' "$trunk/user/miniupnpd/miniupnpd-2.x/minixml.c"
 grep -q 'memset(data, 0, sizeof(struct NameValueParserData))' "$trunk/user/miniupnpd/miniupnpd-2.x/upnpreplyparse.c"
@@ -105,9 +108,11 @@ grep -q 'atoi_buffer' "$trunk/user/miniupnpd/miniupnpd-2.x/minissdp.c"
 grep -q 'udpxy: %s not present, skip start' "$trunk/user/rc/net.c"
 # K2P-09: the legacy RT28xx radio-off stub is a no-op for HIF_MT and must not
 # be called from RTMPDrvClose on mt7615 (it only produced a false failure log).
-# The 3.4 tree ships a different driver layout, so this applies to 4.4 only.
+# Match the negated guard, not the plain IS_HIF_TYPE() that already existed.
 if [ "$flavor" = "k2p-4.4" ]; then
-  grep -q 'IS_HIF_TYPE(pAd, HIF_MT)' "$trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/common/rtmp_init_inf.c"
+  grep -q '!IS_HIF_TYPE(pAd, HIF_MT)' "$trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/common/rtmp_init_inf.c"
+else
+  grep -q '!IS_HIF_TYPE(pAd, HIF_MT)' "$trunk/proprietary/rt_wifi/rtpci/5.0.4.0/mt7615/embedded/common/rtmp_init_inf.c"
 fi
 grep -q 'disabled stale gfwlist= line' "$trunk/user/dnsmasq/dnsmasq.sh"
 grep -q 'ssh -Q key' "$trunk/user/openssh/sshd.sh"
@@ -152,6 +157,7 @@ grep -qx 'squashfs-root/usr/libexec/sshd-session' "$diagnostics/rootfs-list.txt"
 grep -qx 'squashfs-root/usr/libexec/sshd-auth' "$diagnostics/rootfs-list.txt"
 grep -qx 'squashfs-root/etc_ro/ca-certificates.crt' "$diagnostics/rootfs-list.txt"
 unsquashfs -ll "$diagnostics/rootfs.squashfs" | grep -Eq -- '-rwxr-xr-x .*usr/bin/openvpn-cert.sh'
+unsquashfs -ll "$diagnostics/rootfs.squashfs" | grep -Eq 'init -> sbin/rc'
 rm -f "$diagnostics/rootfs.squashfs"
 
 cp "${images[0]}" "$dist/K2P-$flavor-${source_commit:0:12}.trx"
