@@ -1,7 +1,7 @@
 {
   "k2p-4.4": {
     "repository": "OrdinaryJoys/padavan-4.4",
-    "ref": "dcefe850d7db50071a85b558f7d99e0289fd133d",
+    "ref": "43f3cad918ab7e9b6cab43341e4623e5f1530557",
     "base_commit": "51cc9417b749da9964b9a595a32ec77c38d7ad9f",
     "kernel": "4.4",
     "toolchain_directory": "toolchain-4.4.x",
@@ -11,7 +11,7 @@
   },
   "k2p-susu": {
     "repository": "OrdinaryJoys/Padavan-SUSU",
-    "ref": "29fc6f88cbda4c967b9f71247f9b17a5c9af7be3",
+    "ref": "100addfb70943ca4704c139596713368bf0e5dac",
     "base_commit": "fb001860231faaa2de71587e3546e1b01ff75651",
     "kernel": "3.4",
     "toolchain_directory": "toolchain-3.4.x",
