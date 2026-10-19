@@ -100,6 +100,7 @@ grep -q 'Content-Length overflow : %lu' "$diagnostics/miniupnpd-strings.txt"
 # ... and the 1 MiB body limit must answer 413 instead of buffering forever.
 grep -q 'Content-Length over limit' "$diagnostics/miniupnpd-strings.txt"
 grep -q 'CONTENT_LENGTH_LIMIT' "$trunk/user/miniupnpd/miniupnpd-2.x/upnphttp.c"
+grep -q 'BuildResp2_upnphttp(h, 413' "$trunk/user/miniupnpd/miniupnpd-2.x/upnphttp.c"
 # miniupnpd: upstream 2017 SSDP/SOAP parsing fixes must be present in the tree.
 grep -q 'p->xmlend >= (p->xml + (9 + 3))' "$trunk/user/miniupnpd/miniupnpd-2.x/minixml.c"
 grep -q 'memset(data, 0, sizeof(struct NameValueParserData))' "$trunk/user/miniupnpd/miniupnpd-2.x/upnpreplyparse.c"
@@ -116,7 +117,13 @@ else
 fi
 grep -q 'disabled stale gfwlist= line' "$trunk/user/dnsmasq/dnsmasq.sh"
 grep -q 'ssh -Q key' "$trunk/user/openssh/sshd.sh"
+grep -q 'ssh-dss' "$trunk/user/openssh/sshd.sh"
 grep -q 'modprobe xt_DSCP' "$trunk/user/rc/services_ex.c"
+# The shipped rc must really carry the DSCP load (source grep alone is not enough).
+strings "$trunk/romfs/sbin/rc" | grep -q 'modprobe xt_DSCP'
+# Kernel hardening must be part of the generated start_script template.
+grep -q 'kptr_restrict' "$trunk/user/scripts/reset_ss.sh"
+grep -q 'dmesg_restrict' "$trunk/user/scripts/reset_ss.sh"
 
 # Exercise the built-in RSA and SHA-256 providers with the target executable.
 # Ephemeral test keys stay outside diagnostics and uploaded artifacts.
