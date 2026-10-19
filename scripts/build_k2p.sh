@@ -128,6 +128,9 @@ grep -q 'custom config moved to dnsmasq.conf.bad' "$trunk/user/dnsmasq/dnsmasq.s
 grep -q 'kept sshd_config.bad' "$trunk/user/openssh/sshd.sh"
 # The DDNS config carries the password; it must not be world readable.
 grep -q 'chmod("/etc/inadyn.conf", 0600)' "$trunk/user/rc/services_ex.c"
+# Hardening must be applied by rc on every boot (storage may predate it).
+grep -q 'fput_int("/proc/sys/kernel/kptr_restrict", 1)' "$trunk/user/rc/init.c"
+grep -q 'fput_int("/proc/sys/kernel/dmesg_restrict", 1)' "$trunk/user/rc/init.c"
 grep -q 'dmesg_restrict' "$trunk/user/scripts/reset_ss.sh"
 
 # Exercise the built-in RSA and SHA-256 providers with the target executable.
