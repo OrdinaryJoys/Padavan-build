@@ -105,7 +105,10 @@ grep -q 'atoi_buffer' "$trunk/user/miniupnpd/miniupnpd-2.x/minissdp.c"
 grep -q 'udpxy: %s not present, skip start' "$trunk/user/rc/net.c"
 # K2P-09: the legacy RT28xx radio-off stub is a no-op for HIF_MT and must not
 # be called from RTMPDrvClose on mt7615 (it only produced a false failure log).
-grep -q 'IS_HIF_TYPE(pAd, HIF_MT)' "$trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/common/rtmp_init_inf.c"
+# The 3.4 tree ships a different driver layout, so this applies to 4.4 only.
+if [ "$flavor" = "k2p-4.4" ]; then
+  grep -q 'IS_HIF_TYPE(pAd, HIF_MT)' "$trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/common/rtmp_init_inf.c"
+fi
 grep -q 'disabled stale gfwlist= line' "$trunk/user/dnsmasq/dnsmasq.sh"
 grep -q 'ssh -Q key' "$trunk/user/openssh/sshd.sh"
 grep -q 'modprobe xt_DSCP' "$trunk/user/rc/services_ex.c"
