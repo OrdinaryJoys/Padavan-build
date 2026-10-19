@@ -135,6 +135,13 @@ grep -q 'fput_int("/proc/sys/kernel/dmesg_restrict", 1)' "$trunk/user/rc/init.c"
 grep -q 'SRC_NAME=zlib-1.3.2' "$trunk/libs/libz/Makefile"
 printf '%s  %s\n' bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16 \
   "$trunk/libs/libz/zlib-1.3.2.tar.gz" | sha256sum -c -
+# pppd security backports: CVE-2020-8597 (already fixed in this tree) plus
+# CVE-2026-85495 (lcp_reqci nak_buffer) and the MS-CHAP challenge length checks.
+grep -q 'len - vallen >= sizeof (rhostname)' "$trunk/user/pppd/pppd/eap.c"
+! grep -q 'vallen >= len + sizeof' "$trunk/user/pppd/pppd/eap.c"
+grep -q 'nakp - nak_buffer > PPP_MRU - 8' "$trunk/user/pppd/pppd/lcp.c"
+grep -q 'at least 8 bytes' "$trunk/user/pppd/pppd/chap_ms.c"
+grep -q 'at least 16 bytes' "$trunk/user/pppd/pppd/chap_ms.c"
 grep -q 'dmesg_restrict' "$trunk/user/scripts/reset_ss.sh"
 
 # Exercise the built-in RSA and SHA-256 providers with the target executable.
