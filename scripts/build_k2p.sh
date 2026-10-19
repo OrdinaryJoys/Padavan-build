@@ -186,7 +186,13 @@ grep -qx 'squashfs-root/usr/libexec/sshd-auth' "$diagnostics/rootfs-list.txt"
 grep -q 'ln -sfn sbin/rc init' "$trunk/user/rc/Makefile"
 grep -qx 'squashfs-root/etc_ro/ca-certificates.crt' "$diagnostics/rootfs-list.txt"
 unsquashfs -ll "$diagnostics/rootfs.squashfs" | grep -Eq -- '-rwxr-xr-x .*usr/bin/openvpn-cert.sh'
-unsquashfs -ll "$diagnostics/rootfs.squashfs" | grep -Eq 'init -> sbin/rc'
+if ! unsquashfs -ll "$diagnostics/rootfs.squashfs" | grep -Eq 'init -> sbin/rc'; then
+  # Some trees materialise /init as a byte copy of rc (the staging copy loses
+  # the symlink). Accept it only when the contents are identical.
+  init_hash=$(unsquashfs -cat "$diagnostics/rootfs.squashfs" init | sha256sum | cut -d' ' -f1)
+  rc_hash=$(unsquashfs -cat "$diagnostics/rootfs.squashfs" sbin/rc | sha256sum | cut -d' ' -f1)
+  [ -n "$init_hash" ] && [ "$init_hash" = "$rc_hash" ]
+fi
 rm -f "$diagnostics/rootfs.squashfs"
 
 cp "${images[0]}" "$dist/K2P-$flavor-${source_commit:0:12}.trx"
