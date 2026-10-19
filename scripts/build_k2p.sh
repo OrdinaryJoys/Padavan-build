@@ -170,6 +170,9 @@ unsquashfs -l "$diagnostics/rootfs.squashfs" > "$diagnostics/rootfs-list.txt"
 grep -qx 'squashfs-root/usr/bin/openvpn-cert.sh' "$diagnostics/rootfs-list.txt"
 grep -qx 'squashfs-root/usr/libexec/sshd-session' "$diagnostics/rootfs-list.txt"
 grep -qx 'squashfs-root/usr/libexec/sshd-auth' "$diagnostics/rootfs-list.txt"
+# The /init symlink is created by a romfs rule that used to race; make the
+# source rule atomic and keep asserting the resulting image.
+grep -q 'ln -sfn sbin/rc init' "$trunk/user/rc/Makefile"
 grep -qx 'squashfs-root/etc_ro/ca-certificates.crt' "$diagnostics/rootfs-list.txt"
 unsquashfs -ll "$diagnostics/rootfs.squashfs" | grep -Eq -- '-rwxr-xr-x .*usr/bin/openvpn-cert.sh'
 unsquashfs -ll "$diagnostics/rootfs.squashfs" | grep -Eq 'init -> sbin/rc'
