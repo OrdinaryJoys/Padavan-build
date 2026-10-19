@@ -123,6 +123,9 @@ grep -q 'modprobe xt_DSCP' "$trunk/user/rc/services_ex.c"
 strings "$trunk/romfs/sbin/rc" | grep -q 'modprobe xt_DSCP'
 # Kernel hardening must be part of the generated start_script template.
 grep -q 'kptr_restrict' "$trunk/user/scripts/reset_ss.sh"
+# Boot-time guards must ship: a broken stored config must not take DNS/SSH down.
+grep -q 'custom config moved to dnsmasq.conf.bad' "$trunk/user/dnsmasq/dnsmasq.sh"
+grep -q 'kept sshd_config.bad' "$trunk/user/openssh/sshd.sh"
 grep -q 'dmesg_restrict' "$trunk/user/scripts/reset_ss.sh"
 
 # Exercise the built-in RSA and SHA-256 providers with the target executable.
