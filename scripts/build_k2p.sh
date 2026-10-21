@@ -153,6 +153,19 @@ grep -q 'custom config moved to dnsmasq.conf.bad' "$trunk/user/dnsmasq/dnsmasq.s
 grep -q 'kept sshd_config.bad' "$trunk/user/openssh/sshd.sh"
 # The DDNS config carries the password; it must not be world readable.
 grep -q 'chmod("/etc/inadyn.conf", 0600)' "$trunk/user/rc/services_ex.c"
+
+# 4.4 hardening: firmware upload must fail cleanly without /tmp space and must
+# not silently truncate; the hardware watchdog must be armed; RPS defaults must
+# be written at boot instead of relying on manual runtime tuning.
+if [ "$flavor" = "k2p-4.4" ]; then
+  grep -q 'not enough free space in /tmp' "$trunk/user/httpd/upload.c"
+  grep -q 'short write' "$trunk/user/httpd/upload.c"
+  grep -q '/dev/watchdog' "$trunk/user/rc/watchdog.c"
+  strings "$trunk/romfs/sbin/rc" | grep -q '/dev/watchdog'
+  grep -q 'rps_sock_flow_entries' "$trunk/user/rc/smp.c"
+  strings "$trunk/romfs/sbin/rc" | grep -q 'rps_sock_flow_entries'
+  strings "$trunk/romfs/sbin/rc" | grep -q 'rps_flow_cnt'
+fi
 # Hardening must be applied by rc on every boot (storage may predate it).
 grep -q 'fput_int("/proc/sys/kernel/kptr_restrict", 1)' "$trunk/user/rc/init.c"
 grep -q 'fput_int("/proc/sys/kernel/dmesg_restrict", 1)' "$trunk/user/rc/init.c"
