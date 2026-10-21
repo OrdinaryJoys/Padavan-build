@@ -163,6 +163,8 @@ if [ "$flavor" = "k2p-4.4" ]; then
   grep -q '/dev/watchdog' "$trunk/user/rc/watchdog.c"
   strings "$trunk/romfs/sbin/rc" | grep -q '/dev/watchdog'
   grep -q 'rps_sock_flow_entries' "$trunk/user/rc/smp.c"
+  grep -q 'get_login_valid' "$trunk/user/httpd/httpd.c"
+  grep -q 'get_login_safe() || get_login_valid()' "$trunk/user/httpd/web_ex.c"
   strings "$trunk/romfs/sbin/rc" | grep -q 'rps_sock_flow_entries'
   strings "$trunk/romfs/sbin/rc" | grep -q 'rps_flow_cnt'
 fi
