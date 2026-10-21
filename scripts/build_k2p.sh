@@ -165,6 +165,8 @@ if [ "$flavor" = "k2p-4.4" ]; then
   grep -q 'rps_sock_flow_entries' "$trunk/user/rc/smp.c"
   grep -q 'get_login_valid' "$trunk/user/httpd/httpd.c"
   grep -q 'get_login_safe() || get_login_valid()' "$trunk/user/httpd/web_ex.c"
+  grep -q 'unlink("/tmp/fwcheck.log")' "$trunk/user/httpd/upload.c"
+  grep -q '32768' "$trunk/user/rc/smp.c"
   strings "$trunk/romfs/sbin/rc" | grep -q 'rps_sock_flow_entries'
   strings "$trunk/romfs/sbin/rc" | grep -q 'rps_flow_cnt'
 fi
