@@ -115,6 +115,31 @@ if [ "$flavor" = "k2p-4.4" ]; then
 else
   grep -q '!IS_HIF_TYPE(pAd, HIF_MT)' "$trunk/proprietary/rt_wifi/rtpci/5.0.4.0/mt7615/embedded/common/rtmp_init_inf.c"
 fi
+
+# SUSU is the roaming/performance line: its defaults must actually enable the
+# features the driver exposes (802.11r, RSSI kick/threshold, band steering) and
+# hardware NAT must not stay at the vendor's "disabled" mode 2.
+if [ "$flavor" = "k2p-susu" ]; then
+  grep -q '"wl_HT_80211R", "1"' "$trunk/user/shared/defaults.c"
+  grep -q '"rt_HT_80211R", "1"' "$trunk/user/shared/defaults.c"
+  grep -q '"wl_KickStaRssiLow", "-75"' "$trunk/user/shared/defaults.c"
+  grep -q '"rt_KickStaRssiLow", "-75"' "$trunk/user/shared/defaults.c"
+  grep -q '"wl_AssocReqRssiThres", "-80"' "$trunk/user/shared/defaults.c"
+  grep -q '"rt_AssocReqRssiThres", "-80"' "$trunk/user/shared/defaults.c"
+  grep -q '"wl_BandSteering", "1"' "$trunk/user/shared/defaults.c"
+  grep -q '"rt_BandSteering", "1"' "$trunk/user/shared/defaults.c"
+  grep -q 'nvram_wlan_get_int(is_aband, "BandSteering")' "$trunk/user/rc/ralink.c"
+  grep -q '"hw_nat_mode", "3"' "$trunk/user/shared/defaults.c"
+  grep -q 'CONFIG_FIRMWARE_WIFI_DRIVER=5.0.4.0' "$trunk/configs/templates/K2P.config"
+  MT7615_KO=$(find "$trunk/romfs/lib/modules" -name 'mt_7615e.ko' -print -quit)
+  [ -n "$MT7615_KO" ] || { echo "mt_7615e.ko missing" >&2; exit 1; }
+  strings "$MT7615_KO" | grep -q 'RRMEnable'
+  strings "$MT7615_KO" | grep -q 'WNMEnable'
+  strings "$MT7615_KO" | grep -q 'BandSteering'
+  test -x "$trunk/romfs/sbin/ralinkiappd"
+  test -x "$trunk/romfs/bin/hw_nat"
+  find "$trunk/romfs/lib/modules" -name 'hw_nat.ko' -print -quit | grep -q .
+fi
 grep -q 'disabled stale gfwlist= line' "$trunk/user/dnsmasq/dnsmasq.sh"
 grep -q 'ssh -Q key' "$trunk/user/openssh/sshd.sh"
 grep -q 'ssh-dss' "$trunk/user/openssh/sshd.sh"
