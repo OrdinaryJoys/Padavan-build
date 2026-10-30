@@ -39,8 +39,9 @@ CASE_NAMES = ('busybox-exec-adapter-preflight', 'capture-seal-replay-once',
               'changed-input-before-seal', 'changed-input-after-seal',
               'changed-directory-after-seal', 'tampered-flat', 'cache-alias',
               'ticket-mismatch', 'oversized-input', 'managed-foreground',
+              'changed-deduplicated-file-alias', 'changed-deduplicated-directory-alias',
               'wrapper-migration-daemon-loopback', 'wrapper-graph-race')
-REJECT_CASES = set(CASE_NAMES[2:10]) | {'wrapper-graph-race'}
+REJECT_CASES = set(CASE_NAMES[2:12]) | {'wrapper-graph-race'}
 FILESYSTEM_LIMITS = {'etc': 6 * 1024 * 1024, 'tmp': 24 * 1024 * 1024,
                      'var': 4 * 1024 * 1024, 'run': 1024 * 1024}
 LIMITS = {'command_seconds': 45, 'worker_seconds': 180, 'output_bytes': 131072,
@@ -506,6 +507,16 @@ def worker_cases(rootfs, sysroot, env):
                         'Actual wrapper did not retain original migration backup')
                 stopped = stop_daemon(rootfs)
         else:
+            deduplicated_alias = deduplicated_original = None
+            if case == 'changed-deduplicated-file-alias':
+                deduplicated_original = extra
+                deduplicated_alias = root / 'duplicate-alias'
+                deduplicated_alias.symlink_to(extra)
+                regular(main, main.read_bytes() + ('conf-file=' + str(deduplicated_alias) + '\n').encode())
+            elif case == 'changed-deduplicated-directory-alias':
+                deduplicated_original = directory / '10-base.conf'
+                deduplicated_alias = directory / '20-alias.conf'
+                deduplicated_alias.symlink_to(deduplicated_original)
             if case == 'oversized-input':
                 regular(candidate, b'#x\n' * (2097152 // 3 + 1))
             if case == 'managed-foreground':
@@ -542,6 +553,13 @@ def worker_cases(rootfs, sysroot, env):
                         cache = alias
                     elif case == 'ticket-mismatch':
                         ticket = ('0' if ticket[0] != '0' else '1') + ticket[1:]
+                    elif case in ('changed-deduplicated-file-alias', 'changed-deduplicated-directory-alias'):
+                        # Keep selected names and bytes unchanged. Only the
+                        # previously skipped alias now targets a new inode.
+                        replacement = root / 'same-bytes-other-inode'
+                        regular(replacement, deduplicated_original.read_bytes())
+                        deduplicated_alias.unlink()
+                        deduplicated_alias.symlink_to(replacement)
                     rc, out, err = run_bounded(dns + ['--test', '--snapshot-use', str(cache),
                                                     '--snapshot-ticket', ticket, '--snapshot-managed'], env)
                     if case == 'capture-seal-replay-once':

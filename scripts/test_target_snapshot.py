@@ -93,6 +93,20 @@ class TargetSnapshotControls(unittest.TestCase):
             with self.subTest(count=len(value)), self.assertRaises(RuntimeError):
                 gate.validate_records(value)
 
+    def test_deduplicated_file_and_directory_alias_rejections_are_mandatory(self):
+        for name in ('changed-deduplicated-file-alias', 'changed-deduplicated-directory-alias'):
+            valid = records()
+            index = gate.CASE_NAMES.index(name)
+            self.assertEqual(valid[index]['exit_code'], 1)
+            self.assertEqual(valid[index]['generator_executions'], 1)
+            for status in (0, -9, 127):
+                bad = copy.deepcopy(valid)
+                bad[index]['exit_code'] = status
+                with self.subTest(case=name, status=status), self.assertRaises(RuntimeError):
+                    gate.validate_records(bad)
+            with self.assertRaises(RuntimeError):
+                gate.validate_records([row for row in valid if row['case'] != name])
+
     def test_exec_signal_and_false_rejection_statuses_fail(self):
         for status in (0, 127, 126, -9, 21, True):
             value = records()
