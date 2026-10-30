@@ -126,14 +126,16 @@ def expected_events(fault):
     return events + ['reader-close']
 
 
-def validate_records(records, expected_owner=0):
-    require(type(records) is list and [row.get('case') if type(row) is dict else None for row in records] == list(CASE_NAMES),
+def validate_records(records, expected_owner=0, include_shipped=True):
+    require(type(include_shipped) is bool, 'Writer shipped-case selection must be boolean')
+    specs = [('shipped-unsafe-image-prewrite', None, 20, 'PREWRITE', None), *CASES] if include_shipped else list(CASES)
+    require(type(records) is list and [row.get('case') if type(row) is dict else None for row in records] == [spec[0] for spec in specs],
             'Writer case order/set missing, duplicate or unexpected')
-    specs = [('shipped-unsafe-image-prewrite', None, 20, 'PREWRITE', None), *CASES]
-    for index, (row, spec) in enumerate(zip(records, specs)):
+    for row, spec in zip(records, specs):
         name, fault, code, state, matches = spec
+        shipped = name == 'shipped-unsafe-image-prewrite'
         require(set(row) == FIELDS, 'Writer record keys changed: ' + name)
-        require(row['backend'] == ('actual-shipped-writer' if index == 0 else 'inert-production-source-MIPS-probe'),
+        require(row['backend'] == ('actual-shipped-writer' if shipped else 'inert-production-source-MIPS-probe'),
                 'Writer backend role changed: ' + name)
         require(row['fault'] == fault and type(row['exit_code']) is int and row['exit_code'] == code,
                 'Writer exit/fault mismatch: ' + name)
@@ -146,7 +148,7 @@ def validate_records(records, expected_owner=0):
         image_bytes = 0 if state == 'PREWRITE' else IMAGE_BYTES
         require(r == {'state': state, 'pid': row['child_pid'], 'target': 'firmware', 'image_bytes': image_bytes,
                       'verified_bytes': IMAGE_BYTES if state == 'VERIFIED' else 0}, 'Writer status mismatch: ' + name)
-        require(row['events'] == ([] if index == 0 else expected_events(fault)), 'Writer phase/event order mismatch: ' + name)
+        require(row['events'] == ([] if shipped else expected_events(fault)), 'Writer phase/event order mismatch: ' + name)
         require(row['payload_matches_snapshot'] is matches, 'Writer payload preservation mismatch: ' + name)
         require(type(row['record_metadata']) is dict and set(row['record_metadata']) == {'uid', 'mode', 'nlink'} and
                 all(type(value) is int for value in row['record_metadata'].values()) and

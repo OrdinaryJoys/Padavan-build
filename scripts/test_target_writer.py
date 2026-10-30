@@ -17,12 +17,13 @@ def records():
     for index, (name, fault, code, state, matches) in enumerate([
             ('shipped-unsafe-image-prewrite', None, 20, 'PREWRITE', None), *writer.CASES]):
         pid = 123 + index
-        rows.append({'case': name, 'backend': 'actual-shipped-writer' if index == 0 else 'inert-production-source-MIPS-probe',
+        shipped = name == 'shipped-unsafe-image-prewrite'
+        rows.append({'case': name, 'backend': 'actual-shipped-writer' if shipped else 'inert-production-source-MIPS-probe',
                      'fault': fault, 'exit_code': code, 'child_pid': pid,
                      'record': {'state': state, 'pid': pid, 'target': 'firmware',
                                 'image_bytes': 0 if state == 'PREWRITE' else writer.IMAGE_BYTES,
                                 'verified_bytes': writer.IMAGE_BYTES if state == 'VERIFIED' else 0},
-                     'events': [] if index == 0 else writer.expected_events(fault),
+                     'events': [] if shipped else writer.expected_events(fault),
                      'payload_matches_snapshot': matches, 'record_metadata': {'uid': 0, 'mode': 0o600, 'nlink': 1}})
     return rows
 
@@ -82,6 +83,24 @@ class TargetWriterTests(unittest.TestCase):
             path.write_text('controller final report'); self.assertEqual(path.read_text(), 'controller final report')
     def test_exact_twenty_one_records_are_accepted(self):
         self.assertEqual(len(records()), 21); writer.validate_records(records())
+
+    def test_source_only_preflight_requires_exact_twenty_cases_and_preserves_roles(self):
+        source = records()[1:]
+        self.assertEqual(len(source), 20)
+        writer.validate_records(source, include_shipped=False)
+        other_owner = copy.deepcopy(source)
+        for row in other_owner: row['record_metadata']['uid'] = 99
+        writer.validate_records(other_owner, expected_owner=99, include_shipped=False)
+        with self.assertRaises(ValueError): writer.validate_records(source)
+        with self.assertRaises(ValueError): writer.validate_records(records(), include_shipped=False)
+        for selection in (0, 1, 'false', None):
+            with self.subTest(selection=selection), self.assertRaises(ValueError):
+                writer.validate_records(source, include_shipped=selection)
+        bad_role = copy.deepcopy(source); bad_role[0]['backend'] = 'actual-shipped-writer'
+        bad_events = copy.deepcopy(source); bad_events[0]['events'] = []
+        for rows in (source[:-1], source + source[:1], list(reversed(source)), bad_role, bad_events):
+            with self.subTest(cases=len(rows)), self.assertRaises(ValueError):
+                writer.validate_records(rows, include_shipped=False)
 
     def test_missing_duplicate_and_reordered_cases_are_rejected(self):
         for rows in (records()[:-1], records() + records()[:1], list(reversed(records()))):

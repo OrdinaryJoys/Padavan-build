@@ -79,6 +79,10 @@ mkdir -p "$toolchain"
 tar -xJf "$root/toolchain.tar.xz" -C "$toolchain"
 test -x "$toolchain/bin/mipsel-linux-uclibc-gcc"
 "$toolchain/bin/mipsel-linux-uclibc-gcc" --version > "$diagnostics/compiler.txt"
+if [ "$flavor" = "k2p-4.4" ]; then
+  python3 "$root/scripts/preflight_target_writer.py" --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --output "$diagnostics/target-writer-preflight.json"
+fi
 
 write_provenance() {
   python3 - "$diagnostics/provenance.json" "$flavor" "$repository" "$source_commit" "$build_commit" "$kernel" "$toolchain_sha256" "$branch" "$root/source" "$root" "$trunk/.config" "$1" <<'PY'
