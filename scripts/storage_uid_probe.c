@@ -26,6 +26,11 @@ int main(int argc, char **argv)
         fprintf(stderr, "UID probe retained capabilities or capget failed\n");
         return 79;
     }
+    if (getgroups(0, NULL) != 0) {
+        fprintf(stderr, "UID probe retained supplementary groups\n");
+        return 79;
+    }
+    fprintf(stderr, "UID_PROBE uid=99 euid=99 gid=99 egid=99 groups=0 capabilities=0\n");
     execvp(argv[1], argv + 1);
     perror("UID probe exec");
     return 80;

@@ -6,10 +6,12 @@ the read-only validator, never to tar. No MTD, service or router is accessed.
 """
 import argparse
 import fcntl
+import hashlib
 import io
 import json
 import os
 from pathlib import Path
+import posixpath
 import re
 import shlex
 import shutil
@@ -19,6 +21,82 @@ import tempfile
 
 
 PUBLIC_DNS = b'192.0.2.55 fixture.example.invalid\n'
+
+
+def command_diagnostic(result):
+    return {'returncode': result.returncode,
+            'stdout': result.stdout.decode(errors='replace'),
+            'stderr': result.stderr.decode(errors='replace')}
+
+
+def path_modes(path):
+    records = []
+    for item in reversed([path, *path.parents]):
+        try:
+            info = item.stat()
+            records.append({'path': str(item), 'mode': oct(info.st_mode & 0o7777),
+                            'uid': info.st_uid, 'gid': info.st_gid})
+        except OSError as error:
+            records.append({'path': str(item), 'error': str(error)})
+    return records
+
+
+def prepare_uid_runtime(rootfs, sysroot, directory):
+    """Copy public target bytes out of possibly private checkout ancestors.
+
+    Preserve file/directory modes; only rebase image-internal library links.
+    Never include the romfs dev tree or widen any checkout permissions.
+    """
+    runtime = directory / 'uid-runtime'
+    runtime.mkdir(mode=0o755)
+    runtime.chmod(0o755)  # This synthetic parent must not inherit umask077.
+    for name in ('bin', 'usr'):
+        destination = runtime / name
+        destination.mkdir(mode=0o755)
+        destination.chmod((rootfs / name).stat().st_mode & 0o7777)
+    runtime = runtime.resolve()
+    hashes = {}
+    binary = rootfs / 'bin/busybox'
+    if binary.is_symlink() or not binary.is_file() or binary.stat().st_mode & 0o005 != 0o005:
+        raise RuntimeError('Shipped BusyBox is not an ordinary publicly readable/executable file')
+    shutil.copy2(binary, runtime / 'bin/busybox')
+    sources = {'bin/busybox': binary}
+    for name in ('lib', 'usr/lib'):
+        source = sysroot / name
+        if not source.is_dir():
+            raise RuntimeError('Target runtime library directory missing: ' + str(source))
+        shutil.copytree(source, runtime / name, symlinks=True)
+        for path in (runtime / name).rglob('*'):
+            relative = path.relative_to(runtime).as_posix()
+            if path.is_symlink():
+                target = os.readlink(path)
+                logical = posixpath.normpath(posixpath.join('/' + posixpath.dirname(relative), target)).lstrip('/')
+                if not logical.startswith(('lib/', 'usr/lib/')):
+                    raise RuntimeError('Target library symlink leaves copied runtime: ' + relative)
+                path.unlink()
+                path.symlink_to(posixpath.relpath(logical, posixpath.dirname(relative)))
+            elif path.is_file():
+                sources[relative] = source / path.relative_to(runtime / name)
+            elif not path.is_dir():
+                raise RuntimeError('Non-ordinary target library entry: ' + relative)
+    for relative, source in sources.items():
+        copied = runtime / relative
+        original_mode = source.stat().st_mode & 0o7777
+        if original_mode & 0o004 == 0 or copied.stat().st_mode & 0o7777 != original_mode:
+            raise RuntimeError('Target runtime file unreadable or mode changed: ' + relative)
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        if hashlib.sha256(copied.read_bytes()).hexdigest() != digest:
+            raise RuntimeError('Target runtime copy differs: ' + relative)
+        hashes[relative] = {'sha256': digest, 'mode': oct(original_mode)}
+    for path in runtime.rglob('*'):
+        if path.is_symlink():
+            try:
+                resolved = path.resolve(strict=True)
+            except (OSError, RuntimeError) as error:
+                raise RuntimeError('Invalid target library link: ' + str(path)) from error
+            if not resolved.is_relative_to(runtime):
+                raise RuntimeError('Target library link escapes isolated runtime')
+    return runtime, hashes
 
 
 def install_functions(script):
@@ -58,16 +136,17 @@ def public_dns_fixture(mode=None, unknown=False, alias=False, hardlink=False):
     return output.getvalue()
 
 
-def check_storage_access(rootfs, sysroot, directory):
+def check_storage_access(rootfs, sysroot, directory, diagnostics=None):
     """Root restore, real uid99 reads, conservative migration/alias controls."""
     prefix = [] if os.geteuid() == 0 else ['sudo', '-n']
     qemu = shutil.which('qemu-mipsel')
     if not qemu:
         raise RuntimeError('qemu-mipsel missing')
-    busybox = [qemu, '-L', str(sysroot), str(rootfs / 'bin/busybox')]
     helper = [qemu, '-L', str(sysroot), str(rootfs / 'sbin/storage_validate')]
     functions = install_functions((rootfs / 'sbin/mtd_storage.sh').read_text())
     functions = functions.replace('/sbin/storage_validate', shlex.join(helper))
+    runtime, runtime_hashes = prepare_uid_runtime(rootfs, sysroot, directory)
+    busybox = [qemu, '-L', str(runtime), str(runtime / 'bin/busybox')]
     probe = directory / 'storage-uid-probe'
     subprocess.run(['cc', '-Wall', '-Wextra', '-Werror',
                     str(Path(__file__).with_name('storage_uid_probe.c')), '-o', str(probe)],
@@ -76,6 +155,30 @@ def check_storage_access(rootfs, sysroot, directory):
     def uid99_read(path):
         return subprocess.run([*prefix, str(probe), *busybox, 'cat', str(path)],
                               capture_output=True, timeout=20)
+
+    source_access = {}
+    for path in (rootfs / 'bin/busybox', sysroot / 'lib/ld-uClibc.so.0'):
+        result = subprocess.run([*prefix, str(probe), '/usr/bin/test', '-r', str(path)],
+                                capture_output=True, timeout=20)
+        source_access[str(path)] = {'uid99_native_read': command_diagnostic(result), 'ancestors': path_modes(path)}
+    identities = {}
+    if diagnostics is not None:
+        diagnostics.update({'schema_version': 1, 'runtime': str(runtime),
+                            'runtime_file_bytes_and_modes': runtime_hashes,
+                            'source_image_directory_modes': {
+                                name: oct((rootfs / name).stat().st_mode & 0o7777)
+                                for name in ('bin', 'usr', 'lib', 'usr/lib')},
+                            'uid_identity': identities, 'original_checkout_access': source_access,
+                            'runtime_busybox_ancestors': path_modes(runtime / 'bin/busybox')})
+    for option in ('-u', '-g'):
+        result = subprocess.run([*prefix, str(probe), *busybox, 'id', option],
+                                capture_output=True, timeout=20)
+        identities[option] = command_diagnostic(result)
+        if result.returncode or result.stdout.strip() != b'99':
+            raise RuntimeError('Isolated target UID99 identity failed: ' + json.dumps(
+                {'identity': identities, 'source_access': source_access,
+                 'runtime_busybox_ancestors': path_modes(runtime / 'bin/busybox')}))
+    print('Target UID99 runtime preflight: ' + json.dumps({'identity': identities, 'source_access': source_access}), flush=True)
 
     def metadata(path):
         result = subprocess.run([*prefix, *busybox, 'stat', '-c', '%a:%u:%h', str(path)],
@@ -126,17 +229,26 @@ def check_storage_access(rootfs, sysroot, directory):
                 raise RuntimeError(name + ': explicit private directory boundary was widened')
             public_result = uid99_read(tree / 'dnsmasq/hosts')
             if accessible:
+                root_read = subprocess.run([*prefix, *busybox, 'cat', str(tree / 'dnsmasq/hosts')],
+                                           capture_output=True, timeout=20)
+                if root_read.returncode or root_read.stdout != PUBLIC_DNS:
+                    raise RuntimeError(name + ': root target read mismatch: ' + json.dumps(command_diagnostic(root_read)))
                 if public_result.returncode or public_result.stdout != PUBLIC_DNS:
-                    raise RuntimeError(name + ': uid99 public read failed: ' + public_result.stderr.decode(errors='replace'))
+                    raise RuntimeError(name + ': uid99 public read failed: ' + json.dumps(
+                        {'read': command_diagnostic(public_result), 'identity': identities,
+                         'fixture_ancestors': path_modes(tree / 'dnsmasq/hosts'),
+                         'runtime_busybox_ancestors': path_modes(runtime / 'bin/busybox')}))
             elif not denied(public_result):
-                raise RuntimeError(name + ': uid99 private/alias directory read was not denied')
-            if not denied(uid99_read(tree / 'private/secret')):
-                raise RuntimeError(name + ': uid99 private key read was not denied')
+                raise RuntimeError(name + ': uid99 private/alias read not denied: ' + json.dumps(command_diagnostic(public_result)))
+            private_result = uid99_read(tree / 'private/secret')
+            if not denied(private_result):
+                raise RuntimeError(name + ': uid99 private key read not denied: ' + json.dumps(command_diagnostic(private_result)))
             if accessible:
                 # Root-running or DAC-bypassing tests must fail this control.
                 subprocess.run([*prefix, *busybox, 'chmod', '700', str(dns)], check=True, capture_output=True, timeout=20)
-                if not denied(uid99_read(tree / 'dnsmasq/hosts')):
-                    raise RuntimeError(name + ':0700 parent negative control did not reject uid99')
+                negative = uid99_read(tree / 'dnsmasq/hosts')
+                if not denied(negative):
+                    raise RuntimeError(name + ':0700 parent control did not reject uid99: ' + json.dumps(command_diagnostic(negative)))
             records.append({'fixture': name, 'validator': 'accepted', 'target_tar': 'shipped-install-functions',
                             'dns_directory_mode': expected_mode, 'directory_owner': 0, 'public_file_mode': '0644',
                             'private_file_mode': '0600', 'real_linux_uid': 99, 'groups': 'cleared',
@@ -150,9 +262,11 @@ def check_storage_access(rootfs, sysroot, directory):
     return records
 
 
-def permission_profile(profile, rootfs, sysroot, directory):
+def permission_profile(profile, rootfs, sysroot, directory, diagnostics=None):
     if profile == 'k2p-4.4':
-        return {'checks': check_storage_access(rootfs, sysroot, directory),
+        checks = (check_storage_access(rootfs, sysroot, directory) if diagnostics is None else
+                  check_storage_access(rootfs, sysroot, directory, diagnostics=diagnostics))
+        return {'checks': checks,
                 'new_permission_gate': 'passed', 'known_limitations': []}
     if profile == 'k2p-susu':
         return {'checks': [], 'new_permission_gate': 'not-run-unfixed-legacy-source',
@@ -269,7 +383,13 @@ def check(rootfs, output, sysroot=None, profile='k2p-4.4'):
             fcntl.flock(held, fcntl.LOCK_UN)
         checked.append({'fixture': 'busybox-inherited-flock', 'target_tar': 'not-required', 'validator': 'lock-verified-by-host'})
 
-        permissions = permission_profile(profile, rootfs, sysroot, directory)
+        runtime_diagnostics = {}
+        try:
+            permissions = permission_profile(profile, rootfs, sysroot, directory, diagnostics=runtime_diagnostics)
+        finally:
+            if runtime_diagnostics:
+                runtime_output = output.with_name(output.stem + '-runtime.json')
+                runtime_output.write_text(json.dumps(runtime_diagnostics, indent=2) + '\n')
         checked.extend(permissions.pop('checks'))
     output.write_text(json.dumps({'checks': checked, 'target': 'qemu-mipsel with shipped libc/BusyBox',
                                   'profile': profile, **permissions,

@@ -43,7 +43,7 @@ class TargetStorageProfileTests(unittest.TestCase):
         calls = []
         def run(arguments, **options):
             calls.append(arguments)
-            metadata = b'755:1001:2\n' if 'stat' in arguments else b''
+            metadata = b'755:1001:2\n' if 'stat' in arguments else b'99\n' if 'id' in arguments else b''
             return subprocess.CompletedProcess(arguments, 0, metadata, b'')
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -53,6 +53,8 @@ class TargetStorageProfileTests(unittest.TestCase):
                 'func_install_tar()\n{\n return 0\n}\n')
             with mock.patch.object(storage.os, 'geteuid', return_value=1001), \
                  mock.patch.object(storage.shutil, 'which', return_value='/usr/bin/qemu-mipsel'), \
+                 mock.patch.object(storage, 'prepare_uid_runtime', return_value=(root, {})), \
+                 mock.patch('builtins.print'), \
                  mock.patch.object(storage.subprocess, 'run', side_effect=run):
                 with self.assertRaisesRegex(RuntimeError, 'initial fixture directory is not root0755'):
                     storage.check_storage_access(root, root, root)
