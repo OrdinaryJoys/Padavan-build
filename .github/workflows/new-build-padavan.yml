@@ -40,14 +40,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential bison flex gawk gettext texinfo git curl wget unzip \
+            build-essential clang libclang-rt-dev libssl-dev openssl bison flex gawk gettext texinfo git curl wget unzip bzip2 \
             libtool-bin automake autopoint pkg-config gperf cmake fakeroot \
             kmod cpio python3 python3-docutils help2man xz-utils patch \
             zlib1g-dev libgmp-dev libmpc-dev libmpfr-dev libncurses5-dev \
             libltdl-dev libc6-i386 ca-certificates qemu-user squashfs-tools
 
       - name: Check firmware validator
-        run: python3 scripts/test_validate_firmware.py
+        run: |
+          set -euo pipefail
+          mkdir -p diagnostics
+          python3 -m unittest discover -s scripts -p 'test_*.py' 2>&1 | tee diagnostics/build-helper-tests.txt
+          if grep -Eq '^OK \(skipped=[1-9]' diagnostics/build-helper-tests.txt; then
+            echo "Required build-helper tests were skipped" >&2
+            exit 1
+          fi
 
       - name: Compile and validate K2P firmware
         run: |

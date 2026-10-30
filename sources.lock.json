@@ -1,22 +1,22 @@
 {
   "k2p-4.4": {
     "repository": "OrdinaryJoys/padavan-4.4",
-    "ref": "b1d81cb851f1ea8f1cc32136e77f461e35d478c9",
+    "ref": "121349767ddeb916495fa5f229b232805b1edc4f",
     "base_commit": "51cc9417b749da9964b9a595a32ec77c38d7ad9f",
     "kernel": "4.4",
     "toolchain_directory": "toolchain-4.4.x",
     "toolchain_url": "https://github.com/hanwckf/padavan-toolchain/releases/download/linux-4.4-v1.0/mipsel-linux-uclibc.tar.xz",
     "toolchain_sha256": "928db92fb2dd2d9f7cc540a40cbadaa2224b582e7b186f46c743d458ad768dc6",
-    "branch": "codex/k2p-review-fixes-20261019"
+    "branch": "codex/k2p-deep-review-20261030"
   },
   "k2p-susu": {
     "repository": "OrdinaryJoys/Padavan-SUSU",
-    "ref": "23fec060a877f16458edda6419d659ee29226893",
+    "ref": "adadb6c62a65fd7412043da2755598b41809d34a",
     "base_commit": "fb001860231faaa2de71587e3546e1b01ff75651",
     "kernel": "3.4",
     "toolchain_directory": "toolchain-3.4.x",
     "toolchain_url": "https://github.com/hanwckf/padavan-toolchain/releases/download/v1.1/mipsel-linux-uclibc.tar.xz",
     "toolchain_sha256": "737476a822e43c3d76be36bc6343c8a8a351e3bdd3861f34e914dfe9df90d347",
-    "branch": "codex/k2p-review-fixes-20261019"
+    "branch": "codex/k2p-deep-review-20261030"
   }
 }

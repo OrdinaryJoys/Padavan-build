@@ -2,5 +2,6 @@ source/
 dist/
 diagnostics/
 toolchain.tar.xz
+qemu-runtime/
 __pycache__/
 *.pyc
