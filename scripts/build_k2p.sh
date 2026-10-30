@@ -51,7 +51,8 @@ for required_test in test_independent_http_edges test_real_http_io test_request_
   test -f "$root/source/tests/$required_test.py"
 done
 if [ "$flavor" = "k2p-4.4" ]; then
-  for required_test in test_config_publish test_upgrade_storage_gate test_startup_capacity_linux; do
+  for required_test in test_config_publish test_upgrade_storage_gate test_startup_capacity_linux \
+                       test_dns_dynamic_config test_firmware_writer_protocol test_upgrade_upload_no_public_writer; do
     test -f "$root/source/tests/$required_test.py"
   done
 fi
@@ -141,8 +142,15 @@ if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/check_target_upgrade.py" --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --sysroot "$qemu_root" \
     --output "$diagnostics/target-upgrade.json"
+  python3 "$root/scripts/check_target_dynamic_dns.py" --rootfs "$trunk/romfs" \
+    --trunk "$trunk" --sysroot "$qemu_root" --output "$diagnostics/target-dynamic-dns.json"
+  python3 "$root/scripts/check_target_writer.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --sysroot "$qemu_root" \
+    --output "$diagnostics/target-writer.json"
   strings "$trunk/romfs/sbin/rc" | grep -F 'Storage save failed before upgrade' > /dev/null
   strings "$trunk/romfs/sbin/storage_validate" | grep -F 'Startup config publish:' > /dev/null
+  strings "$trunk/romfs/bin/mtd_write" | grep -F -- '--upgrade-write' > /dev/null
+  strings "$trunk/romfs/usr/sbin/dnsmasq" | grep -F 'conf-script time budget exceeded' > /dev/null
 fi
 
 # Inspect the actual target programs without starting a router or network service.
@@ -312,7 +320,7 @@ cp "${images[0]}" "$dist/K2P-$flavor-${source_commit:0:12}.trx"
 cp "$diagnostics/"{provenance.json,image-validation.json,curl-version.txt,openssl-version.txt,openssh-version.txt,openvpn-version.txt,wireguard-version.txt,dnsmasq-version.txt,miniupnpd-strings.txt,crypto-check.txt,compiler.txt,target-abi.txt,target-http-io.txt,target-storage.json,target-services.json} "$dist/"
 cp "$diagnostics/"{source-worktree.patch,build-worktree.patch,source-host-tests.txt} "$dist/"
 if [ "$flavor" = "k2p-4.4" ]; then
-  cp "$diagnostics/"{target-config-publish.json,target-upgrade.json,target-upgrade-probe.c,target-upgrade-probe} "$dist/"
+  cp "$diagnostics/"{target-config-publish.json,target-upgrade.json,target-upgrade-probe.c,target-upgrade-probe,target-dynamic-dns.json,target-writer.json,target-writer-probe.c,target-writer-probe} "$dist/"
 fi
 cp "$diagnostics/"{provenance.configured_input.json,provenance.validated_output.json,firmware-configured.config,source-worktree.configured_input.patch,build-worktree.configured_input.patch} "$dist/"
 cp .config "$dist/firmware.config"

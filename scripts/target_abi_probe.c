@@ -8,6 +8,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -67,6 +68,28 @@ int main(void)
 	step = "renameat/unlinkat";
 	if (renameat(parent, "probe", parent, "renamed") ||
 	    unlinkat(parent, "renamed", 0) || unlinkat(parent, "link", 0)) goto done;
+	step = "fmemopen";
+	{
+		FILE *memory = fmemopen(buffer, sizeof(buffer), "r");
+		if (!memory) goto done;
+		found = fgetc(memory) == contents[0] && !ferror(memory);
+		if (fclose(memory) || !found) goto done;
+	}
+	step = "waitid WNOWAIT";
+	{
+		pid_t child = fork(), reaped;
+		int status;
+		siginfo_t child_info;
+		if (child < 0) goto done;
+		if (!child) _exit(17);
+		memset(&child_info, 0, sizeof(child_info));
+		do { found = waitid(P_PID, (id_t)child, &child_info, WEXITED | WNOWAIT); }
+		while (found && errno == EINTR);
+		do { reaped = waitpid(child, &status, 0); } while (reaped < 0 && errno == EINTR);
+		if (found || child_info.si_pid != child || child_info.si_code != CLD_EXITED ||
+		    child_info.si_status != 17 || reaped != child ||
+		    !WIFEXITED(status) || WEXITSTATUS(status) != 17) goto done;
+	}
 	result = 0;
 done:
 	if (result) fprintf(stderr, "target ABI failed at %s: %s\n", step, strerror(errno));

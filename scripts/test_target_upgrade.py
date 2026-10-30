@@ -1,7 +1,8 @@
-"""Generator/strict-validator tests; native traces are not a MIPS/flash claim."""
+"""Strict target proof/generator tests; native wait controls are not MIPS claims."""
 import copy
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import struct
 import subprocess
@@ -12,44 +13,34 @@ spec = importlib.util.spec_from_file_location('upgrade', Path(__file__).with_nam
 upgrade = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(upgrade)
 
-HEADER = 'int write_storage_to_mtd(void);\n'
-# Small synthetic contract for testing the generator itself. The actual target
-# proof reads its functions from --trunk, never this fixture or repository tests.
-SOURCE = r'''
-int write_storage_to_mtd(void)
+
+def inputs():
+    functions = {name: ('void' if name in ('firmware_upgrade_stop_watchdog', 'notify_watchdog_time') else 'int') +
+                 ' ' + name + '(void) { ' + ('return;' if name in ('firmware_upgrade_stop_watchdog', 'notify_watchdog_time') else 'return 0;') + ' }'
+                 for name in upgrade.REQUIRED_HELPERS}
+    markers = '\n'.join(('#define open fixture_open', '#define ioctl fixture_ioctl', '#define reboot fake_reboot',
+                         '#define sync fake_sync', '#define mlockall fixture_mlockall', '#define munlockall fixture_munlockall',
+                         '#define daemon fixture_daemon', 'static int _eval(', 'static int doSystem('))
+    adapter = 'FUNCTIONS = ' + repr(upgrade.RC_HELPERS) + '\n'
+    adapter += 'def generate(root):\n    return ' + repr(markers + '\n') + " + '\\n'.join(function(source('trunk/user/rc/rc.c'), n) for n in FUNCTIONS) + '\\n' + '\\n'.join(function(source('trunk/user/rc/watchdog.c'), n) for n in " + repr(upgrade.WD_HELPERS) + ')\n'
+    return {'rc.c': '\n'.join(functions[n] for n in upgrade.RC_HELPERS),
+            'rc.h': 'int write_storage_to_mtd(void);\nint firmware_upgrade_inhibited(void);\n',
+            'watchdog.c': '\n'.join(functions[n] for n in upgrade.WD_HELPERS),
+            'upgrade_gate_harness.py': adapter}
+
+
+RUN = r'''
+static int firmware_upgrade_run(const char *writer,const char *record,pid_t *child)
 {
- return doSystem("/sbin/mtd_storage.sh %s", "save");
-}
-static int flash_firmware(void)
-{
- int status;char *services[]={"pppd",NULL};
- storage_save_time(60);
- status=write_storage_to_mtd();
- if(status!=0){logmessage("firmware","first failed");return 0;}
- if(check_if_file_exist(SCRIPT_SHUTDOWN)){
-  status=doSystem("%s %d",SCRIPT_SHUTDOWN,0);
-  if(status!=0){logmessage("firmware","hook failed");return 0;}
-  status=write_storage_to_mtd();
-  if(status!=0){logmessage("firmware","second failed");return 0;}
- }
- stop_misc();stop_services(0);
-#if defined(USE_STORAGE)
- safe_remove_all_stor_devices(0);
-#endif
-#if defined(USE_USB_SUPPORT)
- stop_usb_printer_spoolers();
-#endif
- stop_igmpproxy(NULL);kill_services(services,6,1);sync();sleep(1);
- if(eval("/tmp/mtd_write","-r","write",FW_IMG_NAME,FW_MTD_NAME)!=0)start_watchdog();
- return 1;
+ char *args[]={(char*)writer,"--upgrade-write",FW_IMG_NAME,FW_MTD_NAME,(char*)record,NULL};
+ sigset_t block,previous;pid_t waited;int status=-1;*child=-1;
+ sigemptyset(&block);sigaddset(&block,SIGCHLD);
+ if(sigprocmask(SIG_BLOCK,&block,&previous)!=0)return -1;
+ if(_eval(args,NULL,0,child)==0){do waited=waitpid(*child,&status,0);while(waited<0&&errno==EINTR);if(waited!=*child)status=-1;}
+ if(sigprocmask(SIG_SETMASK,&previous,NULL)!=0)status=-1;
+ return status;
 }
 '''
-EXPECTED_NAMES = (
-    'status-success', 'status-system-minus1', 'status-exit1-wait256', 'status-signal15',
-    'first-save-exit1', 'first-save-system-minus1', 'first-save-signal15', 'first-save-lock-failure',
-    'hook-exit1', 'hook-system-minus1', 'hook-signal15', 'second-save-exit1',
-    'second-save-system-minus1', 'second-save-signal15', 'no-hook-one-save-success',
-    'hook-two-saves-success', 'firmware-eval-failure-restarts-watchdog')
 
 
 class TargetUpgradeProofTests(unittest.TestCase):
@@ -57,104 +48,129 @@ class TargetUpgradeProofTests(unittest.TestCase):
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory(prefix='test-upgrade-proof-')
         cls.root = Path(cls.temp.name)
-        cls.binary = cls.compile_source(SOURCE, 'positive')
-        cls.records = upgrade.execute_cases([str(cls.binary)])
+        code = r'''
+#define _GNU_SOURCE
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <signal.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#define FW_IMG_NAME "/synthetic/image"
+#define FW_MTD_NAME "firmware"
+static int mode;
+static int _eval(char *const args[],char *path,int timeout,int *child){
+ pid_t pid;assert(!path&&!timeout&&!strcmp(args[1],"--upgrade-write"));
+ if(mode<0){errno=EAGAIN;return EAGAIN;}pid=fork();assert(pid>=0);
+ if(pid){*child=pid;return 0;}if(mode==999){kill(getpid(),SIGKILL);_exit(99);}_exit(mode);
+}
+'''
+        code = code.replace('#include <stdlib.h>', '#include <stdlib.h>\n#include <string.h>')
+        code += upgrade.extract_function(RUN, 'firmware_upgrade_run')
+        code += '\nint main(int argc,char**argv){pid_t child;sigset_t current;assert(argc==2);mode=atoi(argv[1]);int raw=firmware_upgrade_run("/synthetic/writer","/synthetic/status",&child);sigprocmask(SIG_SETMASK,NULL,&current);printf("%d %d\\n",raw,sigismember(&current,SIGCHLD));return 0;}\n'
+        path = cls.root / 'wait.c'; path.write_text(code)
+        cls.binary = cls.root / 'wait'
+        subprocess.run(['clang', '-Wall', '-Wextra', '-Werror', '-fsanitize=address,undefined',
+                        str(path), '-o', str(cls.binary)], check=True, capture_output=True)
+        cls.records = [{'case': name, 'inputs': options.copy(), 'observed': upgrade.expected_trace(options)}
+                       for name, options in upgrade.CASES]
 
     @classmethod
     def tearDownClass(cls):
         cls.temp.cleanup()
 
-    @classmethod
-    def compile_source(cls, source, name):
-        generated, _ = upgrade.generate_source(source, HEADER)
-        path, binary = cls.root / (name + '.c'), cls.root / name
-        path.write_text(generated)
-        result = subprocess.run(['cc', '-std=gnu99', '-Wall', '-Wextra', '-Werror',
-                                 '-Wno-unused-parameter', '-Wno-unused-function', str(path), '-o', str(binary)],
-                                capture_output=True, text=True, timeout=30)
-        if result.returncode:
-            raise AssertionError(result.stderr)
-        return binary
-
-    def test_native_generator_runs_all_seventeen_contract_cases(self):
-        self.assertEqual(upgrade.CASE_NAMES, EXPECTED_NAMES)
-        self.assertEqual(tuple(row['case'] for row in self.records), EXPECTED_NAMES)
+    def test_required_cases_and_helpers_have_independent_fixed_identity(self):
+        self.assertEqual(len(upgrade.CASE_NAMES), 59)
+        self.assertEqual(hashlib.sha256('\n'.join(upgrade.CASE_NAMES).encode()).hexdigest(),
+                         '73188c31c0156327af07b8071bcf6819263ec1341f4301b29f46b5dedb13d388')
+        self.assertEqual(len(upgrade.REQUIRED_HELPERS), 16)
+        self.assertIn('firmware_upgrade_disable_watchdog', upgrade.REQUIRED_HELPERS)
+        self.assertIn('watchdog_main', upgrade.REQUIRED_HELPERS)
         upgrade.validate_records(self.records)
 
     def test_missing_duplicate_or_reordered_case_is_rejected(self):
-        variants = [self.records[:-1], [self.records[0], *self.records], list(reversed(self.records))]
-        for records in variants:
-            with self.subTest(length=len(records)), self.assertRaisesRegex(ValueError, 'case set/order'):
+        for records in (self.records[:-1], [self.records[0], *self.records], list(reversed(self.records))):
+            with self.assertRaisesRegex(ValueError, 'case set/order'):
                 upgrade.validate_records(records)
 
-    def test_wrong_phase_trace_status_and_types_are_rejected(self):
-        for key, value in [('phase', 1), ('trace', ['time', 'save', 'stop_misc', 'log']),
-                           ('phase', False), ('save_calls', 1.0)]:
-            records = copy.deepcopy(self.records); records[4]['observed'][key] = value
-            with self.subTest(key=key, value=value), self.assertRaisesRegex(ValueError, 'mismatch'):
+    def test_wrong_safe_unknown_reboot_phase_trace_and_types_are_rejected(self):
+        for name, key, value in [('unknown-signal-with-prewrite', 'phase', 0),
+                                 ('verified-direct-reboot-return', 'reboots', 0),
+                                 ('resident-request-failure', 'stops', [1] * 7),
+                                 ('no-hook-safe-prewrite', 'trace', ['writer', 'reboot']),
+                                 ('no-hook-safe-prewrite', 'phase', False),
+                                 ('no-hook-safe-prewrite', 'mlocks', 1.0)]:
+            records = copy.deepcopy(self.records)
+            records[upgrade.CASE_NAMES.index(name)]['observed'][key] = value
+            with self.subTest(name=name, key=key), self.assertRaisesRegex(ValueError, 'mismatch'):
                 upgrade.validate_records(records)
-
-    def test_broken_raw_status_propagation_is_caught_by_native_control(self):
-        wrong = SOURCE.replace('return doSystem("/sbin/mtd_storage.sh %s", "save");',
-                               'doSystem("/sbin/mtd_storage.sh %s", "save"); return 0;')
-        binary = self.compile_source(wrong, 'wrong-status')
-        with self.assertRaisesRegex(ValueError, 'status-system-minus1'):
-            upgrade.execute_cases([str(binary)])
-
-    def test_stopping_services_before_gate_is_caught_by_native_control(self):
-        wrong = SOURCE.replace('storage_save_time(60);', 'stop_misc();storage_save_time(60);')
-        binary = self.compile_source(wrong, 'unsafe-stop')
-        with self.assertRaisesRegex(ValueError, 'first-save-exit1'):
-            upgrade.execute_cases([str(binary)])
 
     def test_old_missing_ambiguous_helpers_and_header_fail_closed(self):
-        for text, header in [(SOURCE.replace('int write_storage_to_mtd', 'void write_storage_to_mtd'), HEADER),
-                             (SOURCE.split('static int flash_firmware')[0], HEADER),
-                             (SOURCE + SOURCE, HEADER),
-                             (SOURCE, 'void write_storage_to_mtd(void);')]:
-            with self.subTest(header=header), self.assertRaises(ValueError):
-                upgrade.generate_source(text, header)
+        for mutation in ('old', 'missing', 'ambiguous', 'header'):
+            data = inputs()
+            if mutation == 'old': data['rc.c'] = data['rc.c'].replace('int write_storage_to_mtd', 'void write_storage_to_mtd')
+            if mutation == 'missing': data['watchdog.c'] = ''
+            if mutation == 'ambiguous': data['rc.c'] += '\n' + data['rc.c']
+            if mutation == 'header': data['rc.h'] = 'void write_storage_to_mtd(void);'
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                upgrade.generate_source(data, Path('/tmp/synthetic'))
 
-    def test_braces_in_comments_and_strings_do_not_truncate_extraction(self):
+    def test_complete_helper_group_is_embedded_once_in_generated_source(self):
+        generated, functions = upgrade.generate_source(inputs(), Path('/tmp/synthetic'))
+        self.assertEqual(tuple(functions), upgrade.REQUIRED_HELPERS)
+        self.assertTrue(generated.startswith('#define USE_STORAGE 1\n#define USE_USB_SUPPORT 1\n'))
+        for body in functions.values():
+            self.assertEqual(generated.count(body), 1)
+
+    def test_comments_strings_and_braces_do_not_forge_or_truncate_functions(self):
         function = 'static int flash_firmware(void) { const char *text="}"; /* { */ return 0; }'
-        self.assertEqual(upgrade.extract_int_function(function, 'flash_firmware'), function)
+        text = '/* int flash_firmware(void) { return 0; } */\n' + function
+        self.assertEqual(upgrade.extract_function(text, 'flash_firmware'), function)
 
-    def test_new_unstubbed_effect_callback_is_rejected_before_compilation(self):
-        wrong = SOURCE.replace('storage_save_time(60);', 'system("must not run");storage_save_time(60);')
-        with self.assertRaisesRegex(ValueError, 'Unstubbed callback.*system'):
-            upgrade.generate_source(wrong, HEADER)
+    def test_new_unstubbed_effect_callback_is_rejected(self):
+        data = inputs(); data['rc.c'] = data['rc.c'].replace('return 0;', 'system("must never run"); return 0;', 1)
+        with self.assertRaisesRegex(ValueError, 'Unstubbed.*system'):
+            upgrade.generate_source(data, Path('/tmp/synthetic'))
+
+    def test_adapter_cannot_omit_functions_or_inert_boundaries(self):
+        for mutation in ('helpers', 'omitted', 'reboot'):
+            data = inputs()
+            if mutation == 'helpers': data['upgrade_gate_harness.py'] = data['upgrade_gate_harness.py'].replace(repr(upgrade.RC_HELPERS), '()', 1)
+            if mutation == 'omitted': data['upgrade_gate_harness.py'] = data['upgrade_gate_harness.py'].replace('for n in FUNCTIONS', 'for n in FUNCTIONS[:-1]')
+            if mutation == 'reboot': data['upgrade_gate_harness.py'] = data['upgrade_gate_harness.py'].replace('#define reboot fake_reboot', '')
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                upgrade.generate_source(data, Path('/tmp/synthetic'))
+
+    def test_native_wait_contract_retains_normal_exit_signal_and_launch_failure(self):
+        for argument, expected in [('20', 20 << 8), ('0', 0), ('999', 9), ('-1', -1)]:
+            result = subprocess.run([str(self.binary), argument], check=True, text=True, capture_output=True)
+            self.assertEqual(result.stdout.strip(), f'{expected} 0')
 
     def test_mips_gate_rejects_native_binary_and_wrong_endianness(self):
         with self.assertRaisesRegex(ValueError, 'ELF32 MIPS'):
             upgrade.validate_mips_elf(self.binary.read_bytes())
         header = bytearray(52); header[:7] = b'\x7fELF\x01\x01\x01'; struct.pack_into('<H', header, 18, 8)
-        upgrade.validate_mips_elf(header)
-        header[5] = 2
+        upgrade.validate_mips_elf(header); header[5] = 2
         with self.assertRaisesRegex(ValueError, 'ELF32 MIPS'):
             upgrade.validate_mips_elf(header)
 
-    def test_export_preserves_exact_generated_and_compiled_diagnostic_bytes(self):
-        generated_data = self.binary.with_suffix('.c').read_bytes()
-        binary_data = self.binary.read_bytes()
+    def test_export_preserves_exact_compiled_and_generated_diagnostic_bytes(self):
+        generated = (self.root / 'wait.c').read_bytes(); binary = self.binary.read_bytes()
         with tempfile.TemporaryDirectory() as temp:
-            output = Path(temp) / 'target-upgrade.json'
-            upgrade.export_probe(output, generated_data, binary_data)
-            for name, expected in [('target-upgrade-probe.c', generated_data),
-                                   ('target-upgrade-probe', binary_data)]:
-                with self.subTest(name=name):
-                    exported = (output.parent / name).read_bytes()
-                    self.assertEqual(exported, expected)
-                    self.assertEqual(hashlib.sha256(exported).hexdigest(),
-                                     hashlib.sha256(expected).hexdigest())
+            output = Path(temp) / 'report.json'
+            upgrade.export_probe(output, generated, binary)
+            for name, expected in [('target-upgrade-probe.c', generated), ('target-upgrade-probe', binary)]:
+                exported = (output.parent / name).read_bytes()
+                self.assertEqual(exported, expected)
+                self.assertEqual(hashlib.sha256(exported).digest(), hashlib.sha256(expected).digest())
             self.assertEqual((output.parent / 'target-upgrade-probe').stat().st_mode & 0o777, 0o755)
-            self.assertFalse(output.exists())
 
-    def test_susu_config_never_silently_uses_new_upgrade_proof(self):
+    def test_susu_never_silently_uses_new_upgrade_proof(self):
         with tempfile.TemporaryDirectory() as temp:
-            trunk = Path(temp)
-            (trunk / '.config').write_text('CONFIG_LINUXDIR=linux-3.4.x\nCONFIG_FIRMWARE_PRODUCT_ID="K2P"\n')
+            trunk = Path(temp); (trunk / '.config').write_text('CONFIG_LINUXDIR=linux-3.4.x\nCONFIG_FIRMWARE_PRODUCT_ID="K2P"\n')
             with self.assertRaisesRegex(ValueError, 'no legacy/SUSU fallback'):
-                upgrade.check(trunk, Path('/missing-cross-gcc'), trunk, trunk / 'result.json')
+                upgrade.check(trunk, Path('/missing'), trunk, trunk / 'result.json')
 
 
 if __name__ == '__main__':
