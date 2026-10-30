@@ -1,7 +1,10 @@
 import copy
 import importlib.util
+import os
 from pathlib import Path
 import struct
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -48,6 +51,35 @@ def sources():
 
 
 class TargetWriterTests(unittest.TestCase):
+    def test_controller_output_reservation_rejects_existing_files_and_aliases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'report.json'
+            original = writer.prepare_output(path)
+            self.assertEqual(original.st_uid, os.geteuid())
+            self.assertEqual(original.st_mode & 0o7777, 0o600)
+            with self.assertRaises(FileExistsError): writer.prepare_output(path)
+            alias = Path(directory) / 'alias'; alias.symlink_to(path)
+            with self.assertRaises(FileExistsError): writer.prepare_output(alias)
+
+    def test_same_uid_worker_truncate_preserves_owner_inode_and_controller_rewrite(self):
+        # Portable subprocess control only; this does not claim a UID transition.
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'report.json'; before = writer.prepare_output(path)
+            subprocess.run([sys.executable, '-c', 'import pathlib,sys;pathlib.Path(sys.argv[1]).write_text("worker")', str(path)], check=True)
+            after = path.stat(); self.assertEqual((before.st_uid, before.st_ino), (after.st_uid, after.st_ino))
+            path.write_text('controller final report'); self.assertEqual(path.read_text(), 'controller final report')
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Real root worker transition requires Linux/sudo CI')
+    def test_linux_root_worker_preserves_controller_inode_and_parent_rewrite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'report.json'; before = writer.prepare_output(path)
+            command = (['sudo', '-n'] if os.geteuid() else []) + [
+                sys.executable, '-c',
+                'import os,pathlib,sys;assert os.geteuid()==0;p=pathlib.Path(sys.argv[1]);p.write_text("root worker");p.chmod(0o644);print(os.geteuid())', str(path)]
+            result = subprocess.run(command, check=True, capture_output=True, text=True)
+            self.assertEqual(result.stdout, '0\n')
+            after = path.stat(); self.assertEqual((before.st_uid, before.st_ino), (after.st_uid, after.st_ino))
+            path.write_text('controller final report'); self.assertEqual(path.read_text(), 'controller final report')
     def test_exact_twenty_one_records_are_accepted(self):
         self.assertEqual(len(records()), 21); writer.validate_records(records())
 

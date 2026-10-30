@@ -216,6 +216,23 @@ def execute(command, environment):
     return process.pid, process.returncode, stdout, stderr
 
 
+def prepare_output(path):
+    """Reserve the report as the unprivileged controller before sudo writes.
+
+    Refuse every pre-existing path, including links. A root worker truncating
+    this file keeps its inode and controller ownership for the final rewrite.
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        st = os.fstat(fd)
+        require(stat.S_ISREG(st.st_mode) and st.st_uid == os.geteuid() and st.st_nlink == 1 and
+                st.st_size == 0 and st.st_mode & 0o7777 == 0o600, 'Unsafe controller-owned report reservation')
+    finally:
+        os.close(fd)
+    return st
+
+
 def run_probe_case(command, base, spec):
     name, fault, _, _, _ = spec
     directory = base / name; directory.mkdir(mode=0o700)
@@ -291,12 +308,17 @@ def check(trunk, rootfs, compiler, sysroot, output):
                             capture_output=True, text=True, timeout=60)
     require(result.returncode == 0, 'Writer probe compilation failed: ' + result.stdout + result.stderr)
     probe_binding = validate_elf_binding(probe.read_bytes()); probe.chmod(0o755)
+    reserved = prepare_output(output)
     command = (['sudo', '-n'] if os.geteuid() else []) + [
         'env', 'PATH=' + os.environ['PATH'], 'unshare', '--mount', '--fork', '--kill-child=KILL',
         '--propagation', 'private', sys.executable, str(Path(__file__).resolve()), '--worker',
         '--trunk', str(trunk), '--rootfs', str(rootfs), '--compiler', str(compiler),
         '--sysroot', str(sysroot), '--output', str(output)]
     subprocess.run(command, check=True, timeout=180)
+    actual = output.lstat()
+    require(stat.S_ISREG(actual.st_mode) and actual.st_nlink == 1 and actual.st_uid == reserved.st_uid and
+            actual.st_dev == reserved.st_dev and actual.st_ino == reserved.st_ino,
+            'Privileged worker replaced the controller-owned report inode')
     partial = json.loads(output.read_text()); validate_records(partial['checks'])
     report = {'schema_version': 1, 'status': 'PASS', 'profile': 'k2p-4.4', 'required_cases': list(CASE_NAMES),
               'checks': partial['checks'], 'source_sha256': {name: hashlib.sha256(text.encode()).hexdigest() for name, text in texts.items()},
