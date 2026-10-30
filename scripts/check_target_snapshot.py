@@ -526,6 +526,10 @@ def worker_cases(rootfs, sysroot, env):
         first_answer = after_answer = None
         remaining, stopped = 0, True
         if case == 'busybox-exec-adapter-preflight':
+            awk_rc, awk_out, awk_err = run_bounded(['qemu-mipsel', '-L', str(sysroot), str(rootfs / 'bin/busybox'),
+                                                   'awk', 'BEGIN {print "TARGET_AWK_OK"}'], env)
+            require(awk_rc == 0 and awk_out == b'TARGET_AWK_OK\n' and not awk_err,
+                    'Shipped BusyBox awk applet is not usable')
             smoke = ('set -eu; d=/tmp/snapshot-tool-smoke; mkdir "$d"; '
                      'printf "x\\n" | awk "{print}" | head -c2 | sed s/x/y/ > "$d/value"; '
                      '[ "$(cat "$d/value")" = y ]; [ "$(stat -c %s "$d/value")" = 2 ]; '
