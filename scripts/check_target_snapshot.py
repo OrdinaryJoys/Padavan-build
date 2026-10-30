@@ -175,12 +175,16 @@ def preflight(args):
             fixture_root.mkdir(mode=0o700)
             custom, candidate, main = (fixture_root / name for name in ('custom', 'candidate', 'main'))
             counter, generator, cache = (fixture_root / name for name in ('counter', 'generator.sh', 'cache'))
+            shared, alias = fixture_root / 'shared.conf', fixture_root / 'duplicate-alias'
+            regular(shared, b'cache-size=123\n')
+            alias.symlink_to(shared)
             script = '#!/bin/sh\nn=0\n[ ! -f ' + str(counter) + ' ] || n=$(cat ' + str(counter) + ')\n'
             script += 'n=$((n+1))\nprintf "%s\\n" "$n" > ' + str(counter) + '\nprintf "address=/snapshot.fixture/192.0.2.51\\n"\n'
             regular(generator, script.encode(), 0o700)
             regular(custom, ('conf-script=' + str(generator) + '\n').encode())
             regular(candidate, custom.read_bytes() + b'# candidate\n')
-            regular(main, ('no-resolv\nno-hosts\nconf-file=' + str(custom) + '\n').encode())
+            regular(main, ('no-resolv\nno-hosts\nconf-file=' + str(shared) + '\nconf-file=' + str(alias) +
+                           '\nconf-file=' + str(custom) + '\n').encode())
             dns = [qemu, str(binary)]
             rc, _, err = run_bounded(dns + ['--test', '-C', str(main), '--snapshot-capture', str(cache),
                                            '--snapshot-overlay', str(custom), '--snapshot-candidate', str(candidate),
@@ -198,6 +202,13 @@ def preflight(args):
             require(rc == 0 and b'syntax check OK' in err and counter.read_text().strip() == '1',
                     'Static replay repeated generator or failed syntax')
             report['checks'].append({'case': 'static-capture-seal-replay-once', 'exit_code': 0, 'generator_executions': 1})
+            # The real target parser must have recorded the skipped alias,
+            # which crosses the fixed-width device/inode module interface.
+            manifest = (cache / 'manifest').read_bytes()
+            require(len(manifest) > 48 and struct.unpack_from('>Q', manifest, 40)[0] == 5,
+                    'Static parser omitted its deduplicated source reference')
+            report['checks'].append({'case': 'static-deduplicated-alias-interface', 'exit_code': 0,
+                                     'generator_executions': 1, 'source_records': 5})
             tamper_flat(cache / 'flat.conf')
             rc, _, err = run_bounded(replay)
             require(rc == 1 and b'snapshot' in err.lower() and counter.read_text().strip() == '1',
@@ -210,7 +221,7 @@ def preflight(args):
     finally:
         regular(compile_log, bytes(log), 0o600)
         write_output(args.output, output_identity_before, report)
-    print('Target DNS snapshot preflight: full static compile and2 parser-only controls PASS')
+    print('Target DNS snapshot preflight: full static compile and3 parser-only controls PASS')
 
 
 def elf(data):
