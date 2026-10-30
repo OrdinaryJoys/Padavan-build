@@ -45,6 +45,21 @@ def report():
 
 
 class TargetSnapshotControls(unittest.TestCase):
+    def test_native_tool_adapter_survives_a_masked_alternatives_link(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); real = root / 'real-awk'; covered = root / 'etc/alternatives'
+            covered.mkdir(parents=True); public = root / 'awk'; alternative = covered / 'awk'
+            real.write_text('#!/bin/sh\nprintf "RESOLVED:%s\\n" "$1"\n');real.chmod(0o700)
+            alternative.symlink_to(real);public.symlink_to(alternative)
+            with mock.patch.object(gate.shutil, 'which', return_value=str(public)):
+                bindings = gate.resolve_native_tools(('awk',))
+            self.assertEqual(bindings, {'awk': real.resolve()})
+            alternative.unlink();self.assertFalse(public.exists())
+            tools = root / 'tools';tools.mkdir()
+            gate.install_native_tools(tools, bindings)
+            ran = subprocess.run([str(tools / 'awk'), 'argument with spaces'], capture_output=True, text=True, check=True)
+            self.assertEqual(ran.stdout, 'RESOLVED:argument with spaces\n')
+
     def test_fixture_install_stages_on_destination_filesystem_and_keeps_candidate(self):
         with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory(
                 dir='/dev/shm' if sys.platform.startswith('linux') and Path('/dev/shm').is_dir() else None) as target_dir:

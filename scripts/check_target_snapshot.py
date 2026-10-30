@@ -53,6 +53,7 @@ ROLES = {'dns': 'Actual shipped MIPS dnsmasq under qemu-mipsel',
          'network': 'Only loopback UDP DNS in a fresh private Linux network namespace',
          'cleanup': 'Explicit checked daemon termination plus kernel teardown of private PID namespace'}
 SHA = re.compile(r'[0-9a-f]{64}\Z')
+NATIVE_TOOLS = ('awk', 'cat', 'df', 'head', 'md5sum', 'mkdir', 'rm', 'sed', 'stat')
 CHECK_KEYS = {'case', 'exit_code', 'outcome', 'generator_executions', 'flat_sha256',
               'flat_bytes', 'first_answer', 'after_cleanup_answer', 'workspaces_remaining',
               'daemon_stopped'}
@@ -351,6 +352,22 @@ def regular(path, data, mode=0o600):
     path.chmod(mode)
 
 
+def resolve_native_tools(names=NATIVE_TOOLS):
+    result = {}
+    for name in names:
+        found = shutil.which(name)
+        require(found is not None, 'Required native fixture tool missing: ' + name)
+        actual = Path(found).resolve(strict=True)
+        require(actual.is_file() and os.access(actual, os.X_OK), 'Invalid native fixture executable: ' + name)
+        result[name] = actual
+    return result
+
+
+def install_native_tools(directory, bindings):
+    for name, executable in bindings.items():
+        regular(directory / name, ('#!/bin/sh\nexec ' + shlex.quote(str(executable)) + ' "$@"\n').encode(), 0o700)
+
+
 def tamper_flat(path):
     data = path.read_bytes()
     # The early preflight is unprivileged; make only its private owned fixture
@@ -509,21 +526,28 @@ def worker_cases(rootfs, sysroot, env):
         first_answer = after_answer = None
         remaining, stopped = 0, True
         if case == 'busybox-exec-adapter-preflight':
+            smoke = ('set -eu; d=/tmp/snapshot-tool-smoke; mkdir "$d"; '
+                     'printf "x\\n" | awk "{print}" | head -c2 | sed s/x/y/ > "$d/value"; '
+                     '[ "$(cat "$d/value")" = y ]; [ "$(stat -c %s "$d/value")" = 2 ]; '
+                     'md5sum "$d/value" >/dev/null; df -Pk /tmp >/dev/null; rm -rf "$d"; '
+                     'printf "COREUTILS_PREFLIGHT_OK\\n"; /usr/sbin/dnsmasq --version')
             rc, out, err = run_bounded(['qemu-mipsel', '-L', str(sysroot), str(rootfs / 'bin/busybox'),
-                                       'sh', '-c', '/usr/sbin/dnsmasq --version'], env)
-            require(rc == 0 and b'Dnsmasq version 2.93' in out + err, 'Actual BusyBox exec adapter failed')
+                                       'sh', '-c', smoke], env)
+            require(rc == 0 and b'Dnsmasq version 2.93' in out + err and
+                    b'COREUTILS_PREFLIGHT_OK' in out, 'Actual BusyBox/native-tool exec adapter failed: ' +
+                    (out + err).decode(errors='replace')[:2048])
         elif case.startswith('wrapper-'):
             old = custom.read_bytes()
             rc, out, err = run_bounded(['qemu-mipsel', '-L', str(sysroot), str(rootfs / 'bin/busybox'),
                                        'sh', str(rootfs / 'usr/bin/dnsmasq.sh'), '--launch'], env)
+            remaining = len(list(Path('/tmp').glob('.dnsmasq-startup.*')))
+            require(remaining == 0, 'Wrapper did not clean its startup workspace')
             if case == 'wrapper-graph-race':
                 require(rc == 1 and not Path('/var/run/snapshot-daemon.pid').exists() and
                         custom.read_bytes() == old, 'Changed graph launched daemon or replaced original')
             else:
                 require(rc == 0, 'Actual wrapper launch failed: ' + (out + err).decode(errors='replace')[:2048])
                 first_answer = query_dns()
-                remaining = len(list(Path('/tmp').glob('.dnsmasq-startup.*')))
-                require(remaining == 0, 'Wrapper did not clean snapshot after daemon parsed it')
                 after_answer = query_dns()
                 backups = list((custom.parent / '.config-backups').glob('dnsmasq.conf.before-migration*'))
                 require(len(backups) == 1 and backups[0].read_bytes() == old,
@@ -658,6 +682,12 @@ def validate_report(report, source_sha, shipped):
 def worker(args):
     expected = json.loads(args.expected_output)
     namespaces = namespace_guard(json.loads(args.anchor_fds))
+    # Resolve alternatives before /etc is covered. In Ubuntu, /usr/bin/awk
+    # reaches gawk through /etc/alternatives and becomes dangling afterward.
+    native_tools = resolve_native_tools()
+    for executable in native_tools.values():
+        require(not any(executable.is_relative_to('/' + name) for name in FILESYSTEM_LIMITS) and
+                not executable.is_relative_to('/usr/sbin'), 'Native fixture tool would be covered by a mount')
     # The guard is complete before the first mount. All covered paths are private.
     for name, size in FILESYSTEM_LIMITS.items():
         subprocess.run(['mount', '-n', '-t', 'tmpfs', '-o',
@@ -681,6 +711,7 @@ def worker(args):
         subprocess.run(['mount', '-n', '--bind', '/usr/sbin', '/sbin'], check=True, capture_output=True)
     tools = Path('/tmp/snapshot-tools')
     tools.mkdir(mode=0o700)
+    install_native_tools(tools, native_tools)
     regular(tools / 'nvram', b'#!/bin/sh\n[ "$1" = get ] && [ "$2" = dhcp_filter_aaa ] || exit 1\nprintf "0\\n"\n', 0o700)
     regular(tools / 'logger', b'#!/bin/sh\nexit 0\n', 0o700)
     regular(Path('/etc/passwd'), b'root:x:0:0:root:/:/bin/sh\nnobody:x:99:99:nobody:/:/bin/false\n', 0o644)
