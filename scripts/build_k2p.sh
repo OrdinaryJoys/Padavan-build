@@ -127,7 +127,7 @@ qemu-mipsel -L "$qemu_root" "$diagnostics/target-abi-probe" > "$diagnostics/targ
   -o "$diagnostics/target-http-io-probe" -lrt
 qemu-mipsel -L "$qemu_root" "$diagnostics/target-http-io-probe" > "$diagnostics/target-http-io.txt"
 python3 "$root/scripts/check_target_storage.py" "$trunk/romfs" \
-  --sysroot "$qemu_root" --output "$diagnostics/target-storage.json"
+  --sysroot "$qemu_root" --profile "$flavor" --output "$diagnostics/target-storage.json"
 python3 "$root/scripts/check_target_services.py" "$trunk/romfs" \
   --sysroot "$qemu_root" --output "$diagnostics/target-services.json"
 

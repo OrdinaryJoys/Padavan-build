@@ -2,6 +2,15 @@ name: Build validated K2P firmware
 
 on:
   workflow_dispatch:
+    inputs:
+      flavor:
+        description: Firmware flavor to rebuild
+        type: choice
+        default: both
+        options:
+          - both
+          - k2p-4.4
+          - k2p-susu
   push:
     branches: [master, codex/k2p-maintenance-20261001, codex/k2p-fixes-20261018]
     paths:
@@ -24,7 +33,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        flavor: [k2p-4.4, k2p-susu]
+        flavor: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.flavor != 'both' && inputs.flavor != '' && format('["{0}"]', inputs.flavor) || '["k2p-4.4","k2p-susu"]') }}
     defaults:
       run:
         shell: bash
