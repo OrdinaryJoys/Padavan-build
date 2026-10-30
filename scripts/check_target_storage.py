@@ -76,8 +76,8 @@ def check(rootfs, output, sysroot=None):
             archive = directory / (name + '.tar')
             archive.write_bytes(data)
             result = target('sbin/storage_validate', archive, str(16 * 1024 * 1024))
-            if result.returncode == 0:
-                raise RuntimeError(f'{name}: invalid fixture was accepted')
+            if result.returncode != 1:
+                raise RuntimeError(f'{name}: expected controlled validator rejection (1), got {result.returncode}: {result.stderr.decode(errors="replace")}')
             checked.append({'fixture': name, 'validator': 'rejected', 'target_tar': 'not-executed'})
 
         # The production script relies on these BusyBox applet options; native

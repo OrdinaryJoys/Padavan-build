@@ -38,14 +38,24 @@ jobs:
 
       - name: Install build dependencies
         run: |
+          set -euo pipefail
+          mkdir -p diagnostics
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential clang-14 libclang-rt-14-dev libssl-dev openssl bison flex gawk gettext texinfo git curl wget unzip bzip2 \
+            build-essential clang-14 libclang-common-14-dev libssl-dev openssl bison flex gawk gettext texinfo git curl wget unzip bzip2 \
             libtool-bin automake autopoint pkg-config gperf cmake fakeroot \
             kmod cpio python3 python3-docutils help2man xz-utils patch \
             zlib1g-dev libgmp-dev libmpc-dev libmpfr-dev libncurses5-dev \
             libltdl-dev libc6-i386 ca-certificates qemu-user squashfs-tools
           echo /usr/lib/llvm-14/bin >> "$GITHUB_PATH"
+          /usr/lib/llvm-14/bin/clang --version > diagnostics/host-compiler.txt
+          /usr/lib/llvm-14/bin/clang -print-resource-dir >> diagnostics/host-compiler.txt
+          printf '%s\n' '#include <stdlib.h>' \
+            'int main(void) { int *p=malloc(sizeof(*p)); if(!p) return 1; *p=1; int value=*p; free(p); return value-1; }' \
+            > diagnostics/host-sanitizer-probe.c
+          /usr/lib/llvm-14/bin/clang -Wall -Wextra -Werror -fsanitize=address,undefined \
+            diagnostics/host-sanitizer-probe.c -o diagnostics/host-sanitizer-probe
+          diagnostics/host-sanitizer-probe
 
       - name: Check firmware validator
         run: |

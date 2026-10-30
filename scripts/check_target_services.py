@@ -13,7 +13,7 @@ def check(rootfs, sysroot, output):
     def target(program, *args, expected=0):
         result = subprocess.run(['qemu-mipsel', '-L', str(sysroot), str(rootfs / program), *map(str, args)],
                                 capture_output=True, text=True, timeout=60)
-        if (result.returncode != 0) != (expected != 0):
+        if result.returncode != expected:
             raise RuntimeError(f'{program} parser returned {result.returncode}: {result.stdout}{result.stderr}')
         return result
 
@@ -42,7 +42,7 @@ def check(rootfs, sysroot, output):
         records.append({'program': 'sshd', 'case': 'valid-restrictive-policy', 'exit_code': 0,
                         'effective_policy': ['passwordauthentication no', 'permitrootlogin no', 'allowusers fixture']})
         ssh.write_text(ssh.read_text() + 'K2PDefinitelyInvalid yes\n')
-        result = target('usr/sbin/sshd', '-t', '-f', ssh, expected=1)
+        result = target('usr/sbin/sshd', '-t', '-f', ssh, expected=255)
         records.append({'program': 'sshd', 'case': 'invalid-option-rejected', 'exit_code': result.returncode})
 
     output.write_text(json.dumps({'checks': records, 'target': 'shipped MIPS DNS/SSH parsers with real target libraries',
