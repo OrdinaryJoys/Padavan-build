@@ -50,7 +50,8 @@ for required_test in test_independent_http_edges test_real_http_io test_request_
                      test_storage_regressions test_runtime_audit_nvram; do
   test -f "$root/source/tests/$required_test.py"
 done
-python3 -m unittest discover -s "$root/source/tests" -p 'test_*.py' \
+# Keep Linux /tmp rewriting exercised even if the runner sets another temp dir.
+TMPDIR=/tmp python3 -m unittest discover -s "$root/source/tests" -p 'test_*.py' \
   2>&1 | tee "$diagnostics/source-host-tests.txt"
 if grep -Eq '^OK \(skipped=[1-9]' "$diagnostics/source-host-tests.txt"; then
   echo "Required source tests were skipped; check host dependencies" >&2
