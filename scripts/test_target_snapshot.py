@@ -45,6 +45,24 @@ def report():
 
 
 class TargetSnapshotControls(unittest.TestCase):
+    def test_fixture_install_stages_on_destination_filesystem_and_keeps_candidate(self):
+        with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory(
+                dir='/dev/shm' if sys.platform.startswith('linux') and Path('/dev/shm').is_dir() else None) as target_dir:
+            candidate, destination = Path(source_dir) / 'candidate', Path(target_dir) / 'custom'
+            candidate.write_bytes(b'public candidate\n')
+            destination.write_bytes(b'old policy\n')
+            original = gate.os.replace
+            def checked_replace(stage, target):
+                self.assertEqual(stage.parent, target.parent)
+                self.assertEqual(stage.stat().st_dev, target.parent.stat().st_dev)
+                return original(stage, target)
+            with mock.patch.object(gate.os, 'replace', side_effect=checked_replace) as renamed:
+                gate.install_fixture_config(candidate, destination)
+                renamed.assert_called_once()
+            self.assertEqual(candidate.read_bytes(), b'public candidate\n')
+            self.assertEqual(destination.read_bytes(), candidate.read_bytes())
+            self.assertFalse((destination.parent / '.snapshot-test-install').exists())
+
     def test_corruption_fixture_can_modify_its_owned0400_leaf_without_root(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'flat.conf'

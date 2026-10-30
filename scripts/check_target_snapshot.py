@@ -488,6 +488,18 @@ def fixture(case):
     return root, main, custom, candidate, extra, directory, count
 
 
+def install_fixture_config(candidate, destination):
+    # /tmp and /etc are deliberately distinct tmpfs mounts. Model the
+    # publisher's same-filesystem staging and atomic rename, not EXDEV.
+    stage = destination.parent / '.snapshot-test-install'
+    require(not stage.exists() and not stage.is_symlink(), 'Fixture install stage already exists')
+    try:
+        regular(stage, candidate.read_bytes())
+        os.replace(stage, destination)
+    finally:
+        stage.unlink(missing_ok=True)
+
+
 def worker_cases(rootfs, sysroot, env):
     dns = ['qemu-mipsel', '-L', str(sysroot), str(rootfs / 'usr/sbin/dnsmasq')]
     checks = []
@@ -543,9 +555,7 @@ def worker_cases(rootfs, sysroot, env):
                 flat_hash, flat_size = sha(flat), len(flat)
                 # Keep the private candidate, as the real publisher does. Only
                 # the declared live overlay is promoted to a new inode.
-                install = root / 'install'
-                regular(install, candidate.read_bytes())
-                os.replace(install, custom)
+                install_fixture_config(candidate, custom)
                 if case == 'changed-input-before-seal':
                     regular(extra, extra.read_bytes() + b'# changed\n')
                 rc, out, err = run_bounded(dns + ['--snapshot-seal', str(cache),
