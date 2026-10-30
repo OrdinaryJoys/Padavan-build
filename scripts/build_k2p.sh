@@ -50,6 +50,11 @@ for required_test in test_independent_http_edges test_real_http_io test_request_
                      test_storage_regressions test_runtime_audit_nvram; do
   test -f "$root/source/tests/$required_test.py"
 done
+if [ "$flavor" = "k2p-4.4" ]; then
+  for required_test in test_config_publish test_upgrade_storage_gate test_startup_capacity_linux; do
+    test -f "$root/source/tests/$required_test.py"
+  done
+fi
 # Keep Linux /tmp rewriting exercised even if the runner sets another temp dir.
 TMPDIR=/tmp python3 -m unittest discover -s "$root/source/tests" -p 'test_*.py' \
   2>&1 | tee "$diagnostics/source-host-tests.txt"
@@ -130,6 +135,15 @@ python3 "$root/scripts/check_target_storage.py" "$trunk/romfs" \
   --sysroot "$qemu_root" --profile "$flavor" --output "$diagnostics/target-storage.json"
 python3 "$root/scripts/check_target_services.py" "$trunk/romfs" \
   --sysroot "$qemu_root" --output "$diagnostics/target-services.json"
+if [ "$flavor" = "k2p-4.4" ]; then
+  python3 "$root/scripts/check_target_config_publish.py" --rootfs "$trunk/romfs" \
+    --sysroot "$qemu_root" --output "$diagnostics/target-config-publish.json"
+  python3 "$root/scripts/check_target_upgrade.py" --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --sysroot "$qemu_root" \
+    --output "$diagnostics/target-upgrade.json"
+  strings "$trunk/romfs/sbin/rc" | grep -F 'Storage save failed before upgrade' > /dev/null
+  strings "$trunk/romfs/sbin/storage_validate" | grep -F 'Startup config publish:' > /dev/null
+fi
 
 # Inspect the actual target programs without starting a router or network service.
 qemu-mipsel -L "$qemu_root" "$trunk/romfs/usr/bin/curl" --version > "$diagnostics/curl-version.txt"
@@ -215,8 +229,13 @@ strings "$trunk/romfs/sbin/rc" | grep -F 'modprobe xt_DSCP' > /dev/null
 grep -q 'kptr_restrict' "$trunk/user/scripts/reset_ss.sh"
 # Invalid user policy must not silently become permissive defaults. Supported
 # legacy migrations are validated before installation and retain a backup.
-grep -q 'invalid custom config; original preserved; automatic defaults disabled' "$trunk/user/dnsmasq/dnsmasq.sh"
-grep -q 'invalid stored config; original preserved; automatic defaults disabled' "$trunk/user/openssh/sshd.sh"
+if [ "$flavor" = "k2p-4.4" ]; then
+  grep -Fq 'invalid custom config or bounded validation failed; original preserved; automatic defaults disabled' "$trunk/user/dnsmasq/dnsmasq.sh"
+  grep -Fq 'invalid stored config or bounded validation failed; original preserved; automatic defaults disabled' "$trunk/user/openssh/sshd.sh"
+else
+  grep -Fq 'invalid custom config; original preserved; automatic defaults disabled' "$trunk/user/dnsmasq/dnsmasq.sh"
+  grep -Fq 'invalid stored config; original preserved; automatic defaults disabled' "$trunk/user/openssh/sshd.sh"
+fi
 # The DDNS config must be private before the first password byte is written.
 # Source-presence checks complement the helper's host-side failure-path tests.
 grep -Fq 'fp = open_private_config(conf_file)' "$trunk/user/rc/services_ex.c"
@@ -292,6 +311,9 @@ write_provenance validated_output
 cp "${images[0]}" "$dist/K2P-$flavor-${source_commit:0:12}.trx"
 cp "$diagnostics/"{provenance.json,image-validation.json,curl-version.txt,openssl-version.txt,openssh-version.txt,openvpn-version.txt,wireguard-version.txt,dnsmasq-version.txt,miniupnpd-strings.txt,crypto-check.txt,compiler.txt,target-abi.txt,target-http-io.txt,target-storage.json,target-services.json} "$dist/"
 cp "$diagnostics/"{source-worktree.patch,build-worktree.patch,source-host-tests.txt} "$dist/"
+if [ "$flavor" = "k2p-4.4" ]; then
+  cp "$diagnostics/"{target-config-publish.json,target-upgrade.json,target-upgrade-probe.c,target-upgrade-probe} "$dist/"
+fi
 cp "$diagnostics/"{provenance.configured_input.json,provenance.validated_output.json,firmware-configured.config,source-worktree.configured_input.patch,build-worktree.configured_input.patch} "$dist/"
 cp .config "$dist/firmware.config"
 cd "$dist"
