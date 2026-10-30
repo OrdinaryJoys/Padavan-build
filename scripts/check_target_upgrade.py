@@ -19,12 +19,15 @@ RC_HELPERS = ('write_storage_to_mtd', 'firmware_upgrade_inhibited', 'firmware_up
 WD_HELPERS = ('start_watchdog', 'notify_watchdog_time', 'watchdog_main')
 REQUIRED_HELPERS = RC_HELPERS + WD_HELPERS
 SOURCE_PATHS = {'rc.c': 'trunk/user/rc/rc.c', 'rc.h': 'trunk/user/rc/rc.h',
-                'watchdog.c': 'trunk/user/rc/watchdog.c', 'upgrade_gate_harness.py': 'tests/upgrade_gate_harness.py'}
-PROFILE = 'USE_STORAGE=1, USE_USB_SUPPORT=1 superset; synthetic file owner mapping; all service/device/lock/reboot backends inert'
+                'watchdog.c': 'trunk/user/rc/watchdog.c', 'upgrade_gate_harness.py': 'tests/upgrade_gate_harness.py',
+                'hook_runner.h': 'trunk/user/rc/hook_runner.h'}
+HOOK_CONTRACT = dict(timeout_ms=30000, term_ms=2000, kill_ms=1000, stream_limit_bytes=131072, proc_entry_limit=8192)
+PROFILE = 'USE_STORAGE=1, USE_USB_SUPPORT=1 superset; synthetic file owner mapping; service/device/lock/reboot and hook-outcome backends inert'
 LIMITS = ('Synthetic files use test-user-to-root metadata mapping; no claim of real UID transitions.',
           'All daemon, hook, Storage, hardware ioctl, mlock, sync, sleep and reboot effects are inert; fork/wait and synthetic file I/O are real target syscalls.',
           'Lock failure is a modeled save wait256; real target Storage locking is a separate proof.',
-          'This proves target control flow/ABI, not physical flash/disarm/boot, memory residency under pressure, management survival, or rollback.')
+          'This proves target control flow/ABI, not physical flash/disarm/boot, memory residency under pressure, management survival, or rollback.',
+          'Shutdown-hook outcomes are injected here; the actual bounded supervisor requires the separate mandatory target-hook proof.')
 NAMES = ('watchdog', 'rstats', 'detect_internet', 'networkmap', 'lld2d', 'infosvr', 'crond')
 
 
@@ -102,12 +105,21 @@ def read_source_inputs(trunk):
 
 
 def generate_source(inputs, fixture_root):
+    for literal in ('#define HOOK_RUNNER_TIMEOUT_MS 30000U', '#define HOOK_RUNNER_TERM_MS 2000U',
+                    '#define HOOK_RUNNER_KILL_MS 1000U', '#define HOOK_RUNNER_STREAM_LIMIT (128U * 1024U)',
+                    '#define HOOK_RUNNER_PROC_LIMIT 8192U'):
+        if literal not in inputs.get('hook_runner.h', ''):
+            raise ValueError('Missing/changed bounded hook contract: ' + literal)
+    if '#include "hook_runner.h"' not in inputs['rc.c']:
+        raise ValueError('rc does not include the bounded hook supervisor')
     header = inputs['rc.h']
     for name in ('write_storage_to_mtd', 'firmware_upgrade_inhibited'):
         if not re.search(r'\bint\s+' + name + r'\s*\(\s*void\s*\)\s*;', header):
             raise ValueError('Missing/old int header prototype: ' + name)
     functions = {name: extract_function(inputs['rc.c'], name) for name in RC_HELPERS}
     functions.update({name: extract_function(inputs['watchdog.c'], name) for name in WD_HELPERS})
+    if not re.search(r'\bshutdown_hook_run\s*\(\s*script_name\s*,\s*0\s*,\s*HOOK_RUNNER_TIMEOUT_MS\s*,\s*HOOK_RUNNER_TERM_MS\s*,\s*HOOK_RUNNER_KILL_MS\s*\)', functions['flash_firmware']):
+        raise ValueError('Upgrade hook must use the bounded supervisor production budget')
     for name, body in functions.items():
         expected = 'void' if name in ('firmware_upgrade_stop_watchdog', 'notify_watchdog_time') else 'int'
         if not re.match(r'(?:static\s+)?' + expected + r'\s+', body):
@@ -123,7 +135,7 @@ def generate_source(inputs, fixture_root):
         'stop_crond', 'stop', 'start', 'storage_save_time', 'check_if_file_exist', 'sync', 'reboot',
         'mlockall', 'munlockall', 'kill_pidfile_s', 'eval', 'sigaction', 'daemon', 'perror', 'exit',
         'getpid', 'oom_score_adjust', 'fopen', 'fprintf', 'fclose', 'nvram_set_int_temp',
-        'hw_watchdog_init', 'wd_alarmtimer', 'remove', 'pause'}
+        'hw_watchdog_init', 'wd_alarmtimer', 'remove', 'pause', 'shutdown_hook_run'}
     for name, body in functions.items():
         calls = set(re.findall(r'\b([a-zA-Z_]\w*)\s*\(', mask_c(body)))
         if len(body) > 65536 or calls - allowed:
@@ -297,9 +309,10 @@ def check(trunk, compiler, sysroot, output):
         records = execute_cases([qemu, '-L', str(sysroot), str(binary)], fixture)
     output.parent.mkdir(parents=True, exist_ok=True)
     export_probe(output, generated_data, binary_data)
-    report = dict(schema_version=2, status='PASS', profile='k2p-4.4',
+    report = dict(schema_version=3, status='PASS', profile='k2p-4.4',
                   target='real MIPS cross compiler and qemu-mipsel with target sysroot',
                   preprocessor_profile=PROFILE, probe_fixture_root=str(fixture),
+                  hook_runner_contract=HOOK_CONTRACT,
                   required_helpers=list(REQUIRED_HELPERS), required_cases=list(CASE_NAMES), checks=records,
                   source_files=SOURCE_PATHS, source_sha256={**{key: hashlib.sha256(value.encode()).hexdigest() for key, value in inputs.items()},
                   **{key: hashlib.sha256(value.encode()).hexdigest() for key, value in functions.items()}},

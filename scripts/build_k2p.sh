@@ -52,7 +52,9 @@ for required_test in test_independent_http_edges test_real_http_io test_request_
 done
 if [ "$flavor" = "k2p-4.4" ]; then
   for required_test in test_config_publish test_upgrade_storage_gate test_startup_capacity_linux \
-                       test_dns_dynamic_config test_firmware_writer_protocol test_upgrade_upload_no_public_writer; do
+                       test_dns_dynamic_config test_dns_snapshot test_hook_runner \
+                       test_watchdog_dns_recovery test_watchdog_scheduled_update \
+                       test_notification_consumer test_firmware_writer_protocol test_upgrade_upload_no_public_writer; do
     test -f "$root/source/tests/$required_test.py"
   done
 fi
@@ -82,6 +84,12 @@ test -x "$toolchain/bin/mipsel-linux-uclibc-gcc"
 if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/preflight_target_writer.py" --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --output "$diagnostics/target-writer-preflight.json"
+  python3 "$root/scripts/check_target_hook.py" --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --output "$diagnostics/target-hook.json"
+  python3 "$root/scripts/check_target_snapshot.py" --preflight --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --output "$diagnostics/target-snapshot-preflight.json"
+  python3 "$root/scripts/check_target_watchdog.py" --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --output "$diagnostics/target-watchdog-preflight.json"
 fi
 
 write_provenance() {
@@ -151,10 +159,16 @@ if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/check_target_writer.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --sysroot "$qemu_root" \
     --output "$diagnostics/target-writer.json"
+  python3 "$root/scripts/check_target_watchdog.py" --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --sysroot "$qemu_root" \
+    --output "$diagnostics/target-watchdog.json"
+  python3 "$root/scripts/check_target_snapshot.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
+    --sysroot "$qemu_root" --output "$diagnostics/target-snapshot.json"
   strings "$trunk/romfs/sbin/rc" | grep -F 'Storage save failed before upgrade' > /dev/null
   strings "$trunk/romfs/sbin/storage_validate" | grep -F 'Startup config publish:' > /dev/null
   strings "$trunk/romfs/bin/mtd_write" | grep -F -- '--upgrade-write' > /dev/null
   strings "$trunk/romfs/usr/sbin/dnsmasq" | grep -F 'conf-script time budget exceeded' > /dev/null
+  strings "$trunk/romfs/usr/sbin/dnsmasq" | grep -F 'snapshot source graph changed' > /dev/null
 fi
 
 # Inspect the actual target programs without starting a router or network service.
@@ -325,6 +339,8 @@ cp "$diagnostics/"{provenance.json,image-validation.json,curl-version.txt,openss
 cp "$diagnostics/"{source-worktree.patch,build-worktree.patch,source-host-tests.txt} "$dist/"
 if [ "$flavor" = "k2p-4.4" ]; then
   cp "$diagnostics/"{target-config-publish.json,target-upgrade.json,target-upgrade-probe.c,target-upgrade-probe,target-dynamic-dns.json,target-writer.json,target-writer-probe.c,target-writer-probe} "$dist/"
+  cp "$diagnostics/"{target-watchdog.json,target-watchdog-ss-on.c,target-watchdog-ss-on,target-watchdog-ss-off.c,target-watchdog-ss-off,target-snapshot.json} "$dist/"
+  cp "$diagnostics/"{target-hook.json,target-hook-probe.c,target-hook-probe} "$dist/"
 fi
 cp "$diagnostics/"{provenance.configured_input.json,provenance.validated_output.json,firmware-configured.config,source-worktree.configured_input.patch,build-worktree.configured_input.patch} "$dist/"
 cp .config "$dist/firmware.config"

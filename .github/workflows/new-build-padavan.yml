@@ -53,7 +53,7 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential clang-14 libclang-common-14-dev libssl-dev openssl bison flex gawk gettext texinfo git curl wget unzip bzip2 \
             libtool-bin automake autopoint pkg-config gperf cmake fakeroot \
-            kmod cpio python3 python3-docutils help2man xz-utils patch \
+            kmod cpio iproute2 python3 python3-docutils help2man xz-utils patch \
             zlib1g-dev libgmp-dev libmpc-dev libmpfr-dev libncurses5-dev \
             libltdl-dev libc6-i386 ca-certificates qemu-user squashfs-tools
           echo /usr/lib/llvm-14/bin >> "$GITHUB_PATH"
