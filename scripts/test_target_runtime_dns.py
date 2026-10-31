@@ -17,7 +17,7 @@ def records():
         result.append(dict(case=name, exit_code=17 if name == 'lease-init-exit7' else (3 if fatal else 0), rejected=name in gate.REJECT_CASES,
                            diagnostic_observed=True, first_answer=first,
                            after_answer=None if fatal else ('192.0.2.52' if name == 'atomic-servers-reload' else first),
-                           daemon_stopped=True, elapsed_ms=10))
+                           daemon_stopped=True, elapsed_ms=10000 if name == 'lease-init-timeout' else 10))
     return result
 
 
@@ -50,6 +50,8 @@ class RuntimeDNSControls(unittest.TestCase):
                                    ('fifo-addn-hosts', 'diagnostic_observed', False),
                                    ('fifo-live-resolv', 'daemon_stopped', False),
                                    ('regular-servers', 'elapsed_ms', True),
+                                   ('lease-init-timeout', 'elapsed_ms', 0),
+                                   ('lease-init-timeout', 'elapsed_ms', 15001),
                                    ('regular-servers', 'elapsed_ms', 20001)]:
             value = records(); value[gate.CASE_NAMES.index(name)][field] = wrong
             with self.subTest(name=name, field=field), self.assertRaises(RuntimeError): gate.validate_records(value)

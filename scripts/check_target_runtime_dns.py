@@ -45,7 +45,8 @@ REJECT_CASES = set(CASE_NAMES) - {'regular-servers', 'symlink-regular-servers',
                                'regular-lease-startup', 'lease-init-valid'}
 FILESYSTEM_LIMITS = base.FILESYSTEM_LIMITS.copy()
 LIMITS = {'worker_seconds': 180, 'command_seconds': 20, 'nonregular_seconds': 5,
-          'query_seconds': 4, 'report_bytes': 1048576, 'output_bytes': 131072}
+          'query_seconds': 4, 'report_bytes': 1048576, 'output_bytes': 131072,
+          'lease_init_min_ms': 9500, 'lease_init_max_ms': 15000}
 ROLE = 'Actual shipped MIPS DNS daemon/parser under QEMU; isolated synthetic files and loopback upstreams'
 KEYS = {'case', 'exit_code', 'rejected', 'diagnostic_observed', 'first_answer',
         'after_answer', 'daemon_stopped', 'elapsed_ms'}
@@ -80,6 +81,9 @@ def validate_records(records):
                 'Runtime DNS answer/cleanup mismatch')
         require(type(row['elapsed_ms']) is int and 0 <= row['elapsed_ms'] <= LIMITS['command_seconds'] * 1000,
                 'Runtime DNS case exceeded deadline')
+        if name == 'lease-init-timeout':
+            require(LIMITS['lease_init_min_ms'] <= row['elapsed_ms'] <= LIMITS['lease_init_max_ms'],
+                    'Lease-init production timeout did not actually run')
     return True
 
 
