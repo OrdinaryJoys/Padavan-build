@@ -32,6 +32,12 @@ SOURCE_PATHS = {
     'conf_snapshot.c': 'user/dnsmasq/dnsmasq-2.93/src/conf_snapshot.c',
     'conf_snapshot.h': 'user/dnsmasq/dnsmasq-2.93/src/conf_snapshot.h',
     'snapshot_sha256.h': 'user/dnsmasq/dnsmasq-2.93/src/snapshot_sha256.h',
+    'runtime_file.c': 'user/dnsmasq/dnsmasq-2.93/src/runtime_file.c',
+    'runtime_file.h': 'user/dnsmasq/dnsmasq-2.93/src/runtime_file.h',
+    'network.c': 'user/dnsmasq/dnsmasq-2.93/src/network.c',
+    'cache.c': 'user/dnsmasq/dnsmasq-2.93/src/cache.c',
+    'lease.c': 'user/dnsmasq/dnsmasq-2.93/src/lease.c',
+    'log.c': 'user/dnsmasq/dnsmasq-2.93/src/log.c',
     'dnsmasq.sh': 'user/dnsmasq/dnsmasq.sh',
     'services_ex.c': 'user/rc/services_ex.c',
 }
@@ -139,7 +145,7 @@ def preflight(args):
     report = {'schema_version': 1, 'status': 'FAIL', 'profile': 'k2p-4.4',
               'role': 'Static full production DNS source and target-libc parser-only preflight; not the shipped binary or a daemon startup proof',
               'source_sha256': source_proof(args.trunk), 'copts': copts,
-              'strict_new_modules': ['dynamic_conf.c', 'conf_snapshot.c'],
+              'strict_new_modules': ['dynamic_conf.c', 'conf_snapshot.c', 'runtime_file.c'],
               'upstream_flags': ['-std=gnu99', '-Os', '-Wall', '-Wextra'],
               'objects': [], 'checks': [], 'binary_sha256': None, 'failure': None}
     log = bytearray()
@@ -315,12 +321,13 @@ def namespace_guard(anchors):
     return observed
 
 
-def run_bounded(command, env=None):
+def run_bounded(command, env=None, limits=None):
+    limits = LIMITS if limits is None else limits
     process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, env=env, start_new_session=True)
     output = [bytearray(), bytearray()]
     selector = selectors.DefaultSelector()
-    deadline = time.monotonic() + LIMITS['command_seconds']
+    deadline = time.monotonic() + limits['command_seconds']
     for index, stream in enumerate((process.stdout, process.stderr)):
         os.set_blocking(stream.fileno(), False)
         selector.register(stream, selectors.EVENT_READ, index)
@@ -333,7 +340,7 @@ def run_bounded(command, env=None):
                     selector.unregister(key.fileobj)
                 else:
                     output[key.data].extend(chunk)
-                    require(sum(map(len, output)) <= LIMITS['output_bytes'],
+                    require(sum(map(len, output)) <= limits['output_bytes'],
                             'Snapshot command output cap exceeded')
         status = process.wait(timeout=max(0.01, deadline - time.monotonic()))
         return status, bytes(output[0]), bytes(output[1])
