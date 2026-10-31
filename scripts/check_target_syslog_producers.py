@@ -42,9 +42,14 @@ PACKAGE_PATHS={
  'openssh':('openssh-10.6p1-log.c','log.c'),
  'openvpn':('openvpn-2.6.23-error.c','src/openvpn/error.c'),
  'smartdns':('smartdns-ba282c8-dns_conf.c','src/dns_conf.c')}
+# Extra tuple: fixture key/path, patch key/path, single exact archive target.
+PACKAGE_EXTRA_PATHS={'openvpn':(('openvpn_ps_fixture','tests/fixtures/downloaded-log-sources/openvpn-2.6.23-ps.c','openvpn_ps_patch','trunk/user/openvpn/openvpn-bounded-port-share.patch','src/openvpn/ps.c'),)}
 SOURCE_PATHS=dict(CENTRAL_PATHS,**THIN_PATHS,
  central_generator='tests/bounded_log_harness.py',downloaded_generator='tests/downloaded_log_harness.py')
 SOURCE_PATHS.update({'inadyn_'+key:path for key,path in INADYN_PATHS.items()})
+for entries in PACKAGE_EXTRA_PATHS.values():
+ for key,path,patch_key,patch_path,_ in entries:
+  SOURCE_PATHS[key]=path;SOURCE_PATHS[patch_key]=patch_path
 SOURCE_PATHS.update({path:'trunk/'+path for path in ('user/inadyn/Makefile','user/poptop/Makefile','user/poptop/pptpd-1.4.0/pptpd.c','user/poptop/pptpd-1.4.0/pptpctrl.c','user/poptop/pptpd-1.4.0/bcrelay.c')})
 for package,(fixture,_) in PACKAGE_PATHS.items():
  SOURCE_PATHS[package+'_fixture']='tests/fixtures/downloaded-log-sources/'+fixture
@@ -106,16 +111,24 @@ def apply_patches(inputs):
  results={}
  with tempfile.TemporaryDirectory(prefix='k2p-log-patches-') as private:
   for package,(_,relative) in PACKAGE_PATHS.items():
-   patch=inputs[package+'_patch'];targets=[]
-   for line in patch.splitlines():
-    if line.startswith('+++ '):targets.append(line[4:].split('\t')[0].split(' ')[0])
-   require(targets==['b/'+relative],'Package patch has unexpected target paths')
-   root=Path(private)/package;target=root/relative;target.parent.mkdir(parents=True)
-   target.write_text(inputs[package+'_fixture'])
-   result=subprocess.run(['patch','--batch','--fuzz=0','-p1'],input=patch.encode(),cwd=root,capture_output=True,timeout=5)
-   require(result.returncode==0 and len(result.stdout)+len(result.stderr)<=32768,'Pinned package logging patch failed')
-   require(not list(root.rglob('*.rej')),'Rejected package logging patch')
-   results[package]=target.read_text()
+   root=Path(private)/package
+   jobs=[(package+'_fixture',package+'_patch',relative)]
+   jobs += [(key,patch_key,path)for key,_,patch_key,_,path in PACKAGE_EXTRA_PATHS.get(package,())]
+   # Each immutable upstream excerpt has exactly one independent patch. The
+   # old central error.c patch stays byte-identical; ps.c is an additive step.
+   for fixture_key,patch_key,target_path in jobs:
+    require(fixture_key in inputs and type(inputs[fixture_key])is str,'Missing exact package source fixture: '+fixture_key)
+    require(patch_key in inputs and type(inputs[patch_key])is str,'Missing exact package patch: '+patch_key)
+    patch=inputs[patch_key];targets=[]
+    for line in patch.splitlines():
+     if line.startswith('+++ '):targets.append(line[4:].split('\t')[0].split(' ')[0])
+    require(targets==['b/'+target_path],'Package patch has unexpected target paths')
+    target=root/target_path;target.parent.mkdir(parents=True,exist_ok=True);target.write_text(inputs[fixture_key])
+    result=subprocess.run(['patch','--forward','--batch','--fuzz=0','-p1'],input=patch.encode(),cwd=root,capture_output=True,timeout=5)
+    require(result.returncode==0 and len(result.stdout)+len(result.stderr)<=32768,'Pinned package logging patch failed')
+    require(not list(root.rglob('*.rej')),'Rejected package logging patch')
+   results[package]=(root/relative).read_text()
+
  return results
 
 

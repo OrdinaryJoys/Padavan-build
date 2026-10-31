@@ -64,6 +64,28 @@ class SyslogProducerControls(unittest.TestCase):
    values.update({key+'_fixture':'fixture'for key in gate.PACKAGE_PATHS})
    with self.assertRaises(RuntimeError):gate.apply_patches(values)
 
+ def test_sequential_single_target_package_patches_missing_and_drift_rejected(self):
+  def change(path,old,new):return '--- a/'+path+'\n+++ b/'+path+'\n@@ -1 +1 @@\n-'+old+'\n+'+new+'\n'
+  inputs={}
+  for package,(_,path)in gate.PACKAGE_PATHS.items():
+   inputs[package+'_fixture']='old-'+package+'\n'
+   inputs[package+'_patch']=change(path,'old-'+package,'new-'+package)
+  inputs['openvpn_ps_fixture']='old-ps\n'
+  inputs['openvpn_ps_patch']=change('src/openvpn/ps.c','old-ps','new-ps')
+  self.assertEqual(gate.apply_patches(inputs),{package:'new-'+package+'\n'for package in gate.PACKAGE_PATHS})
+  for role in ('missing-fixture','missing-patch','unknown-target','multi-target','drift','already-patched','swapped-patches'):
+   bad=copy.deepcopy(inputs)
+   if role=='missing-fixture':del bad['openvpn_ps_fixture']
+   elif role=='missing-patch':del bad['openvpn_ps_patch']
+   elif role=='unknown-target':bad['openvpn_ps_patch']=bad['openvpn_ps_patch'].replace('b/src/openvpn/ps.c','b/src/openvpn/unknown.c')
+   elif role=='multi-target':bad['openvpn_patch']+=bad['openvpn_ps_patch']
+   elif role=='drift':bad['openvpn_ps_fixture']='unrelated-drift\n'
+   elif role=='already-patched':bad['openvpn_ps_fixture']='new-ps\n'
+   else:bad['openvpn_patch'],bad['openvpn_ps_patch']=bad['openvpn_ps_patch'],bad['openvpn_patch']
+   with self.subTest(role=role),self.assertRaises(RuntimeError):gate.apply_patches(bad)
+  self.assertEqual(gate.SOURCE_PATHS['openvpn_ps_fixture'],'tests/fixtures/downloaded-log-sources/openvpn-2.6.23-ps.c')
+  self.assertEqual(gate.SOURCE_PATHS['openvpn_ps_patch'],'trunk/user/openvpn/openvpn-bounded-port-share.patch')
+
  def test_wrapper_preserves_central_main_and_checks_fd_balance(self):
   source='int main(int argc,char **argv) { (void)argc;(void)argv;return 0; }'
   actual=gate.wrap_descriptors(source)
