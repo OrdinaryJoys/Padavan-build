@@ -102,6 +102,8 @@ class SyslogProducerControls(unittest.TestCase):
   self.assertEqual(gate.PROGRAMS['rp-pppoe'],'usr/lib/pppd/rp-pppoe.so')
   self.assertEqual(gate.PROGRAMS['pptp'],'usr/lib/pppd/pptp.so')
   self.assertIn('central_generator',gate.SOURCE_PATHS);self.assertIn('downloaded_generator',gate.SOURCE_PATHS)
+  for path in ('user/pppd/pppd/options.c','user/pppd/pppd/plugins/rp-pppoe/pppoe.h'):
+   self.assertEqual(gate.SOURCE_PATHS[path],'trunk/'+path)
   for name in ('openssh','openvpn','smartdns'):
    self.assertIn(name+'_fixture',gate.SOURCE_PATHS);self.assertIn(name+'_patch',gate.SOURCE_PATHS)
 

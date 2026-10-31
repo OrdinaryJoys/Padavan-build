@@ -52,7 +52,8 @@ for package,(fixture,_) in PACKAGE_PATHS.items():
  SOURCE_PATHS[package+'_Makefile']='trunk/user/'+package+'/Makefile'
 for path in ('user/busybox/busybox-1.24.x/libbb/Kbuild.src','user/busybox/busybox-1.24.x/include/libbb.h',
  'user/busybox/busybox-1.24.x/sysklogd/logger.c','user/miniupnpd/miniupnpd-2.x/Makefile.linux',
- 'user/pppd/pppd/bounded_ppp_log.h','user/pppd/pppd/main.c','user/pppd/pppd/Makefile.linux',
+ 'user/pppd/pppd/bounded_ppp_log.h','user/pppd/pppd/main.c','user/pppd/pppd/options.c','user/pppd/pppd/Makefile.linux',
+ 'user/pppd/pppd/plugins/rp-pppoe/pppoe.h',
  'user/pppd/pppd/plugins/rp-pppoe/common.c','user/pppd/pppd/plugins/pptp/util.c',
  'user/udpxy/util.h','user/udpxy/udpxy.c','user/xl2tpd/misc.h','user/xl2tpd/xl2tpd.c',
  'user/ralinkiappd/rt_config.h'):
