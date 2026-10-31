@@ -203,6 +203,9 @@ if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/check_target_syslog_producers.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
     --sysroot "$qemu_root" --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --output "$diagnostics/target-syslog-producers.json"
+  python3 "$root/scripts/check_target_openssl_log.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
+    --sysroot "$qemu_root" --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --output "$diagnostics/target-openssl-log.json"
   python3 "$root/scripts/check_target_reload_latency.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
     --sysroot "$qemu_root" --output "$diagnostics/target-reload-latency.json"
   python3 "$root/scripts/check_target_ntp.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
@@ -393,6 +396,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
   cp "$diagnostics/"{target-runtime-dns.json,target-ntp.json,target-ntp-probe.c,target-ntp-probe,busybox-applets.txt} "$dist/"
   cp "$diagnostics/"{target-log-reload.json,target-log-reload-probe.c,target-log-reload-probe} "$dist/"
   cp "$diagnostics/"{target-syslog-producers.json,target-syslog-central-probe.c,target-syslog-central-probe,target-syslog-downloaded-probe.c,target-syslog-downloaded-probe,target-reload-latency.json} "$dist/"
+  cp "$diagnostics/"{target-openssl-log.json,target-openssl-log-probe.c,target-openssl-log-probe} "$dist/"
 fi
 cp "$diagnostics/"{provenance.configured_input.json,provenance.validated_output.json,firmware-configured.config,source-worktree.configured_input.patch,build-worktree.configured_input.patch} "$dist/"
 cp .config "$dist/firmware.config"

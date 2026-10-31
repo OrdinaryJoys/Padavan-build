@@ -126,6 +126,23 @@ class SyslogProducerControls(unittest.TestCase):
   iso['namespaces']['net']['worker_inode']=10
   with self.assertRaises(RuntimeError):gate.validate_isolation(iso)
 
+ def test_openssl_or_crypto_single_remaining_libc_log_import_fails_closed(self):
+  with tempfile.TemporaryDirectory(prefix='k2p-openssl-import-control-') as temporary:
+   root=Path(temporary)
+   for relative in gate.PROGRAMS.values():
+    path=root/relative;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(symbols([],[]))
+   self.assertEqual(set(gate.import_proof(root)['undefined']),set(gate.PROGRAMS))
+   for key in ('openssl','libcrypto'):
+    for api in gate.FORBIDDEN_LOG_IMPORTS:
+     path=root/gate.PROGRAMS[key];path.write_bytes(symbols([],[api]))
+     with self.subTest(program=key,api=api),self.assertRaises(RuntimeError):gate.import_proof(root)
+     path.write_bytes(symbols([],[]))
+
+ def test_openssl_and_crypto_are_mandatory_real_image_import_checks(self):
+  self.assertEqual(gate.PROGRAMS['openssl'],'usr/bin/openssl')
+  self.assertEqual(gate.PROGRAMS['libcrypto'],'lib/libcrypto.so.3')
+  self.assertEqual(len(gate.PROGRAMS),23)
+
  def test_shipped_metadata_paths_exact_and_source_closure(self):
   self.assertEqual(gate.PROGRAMS['rp-pppoe'],'usr/lib/pppd/rp-pppoe.so')
   self.assertEqual(gate.PROGRAMS['pptp'],'usr/lib/pppd/pptp.so')

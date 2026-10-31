@@ -69,7 +69,8 @@ PROGRAMS={'busybox':'bin/busybox','pppd':'usr/sbin/pppd','rp-pppoe':'usr/lib/ppp
  'smartdns':'usr/bin/smartdns','udpxy':'usr/sbin/udpxy','xl2tpd':'usr/sbin/xl2tpd',
  'iapp':'sbin/ralinkiappd','lanauth':'usr/sbin/lanauth',
  'libssh':'lib/libssh.so','scp':'usr/bin/scp','sftp-server':'usr/libexec/sftp-server','inadyn':'bin/inadyn',
- 'pptpd':'usr/sbin/pptpd','pptpctrl':'usr/sbin/pptpctrl','bcrelay':'usr/sbin/bcrelay'}
+ 'pptpd':'usr/sbin/pptpd','pptpctrl':'usr/sbin/pptpctrl','bcrelay':'usr/sbin/bcrelay',
+ 'openssl':'usr/bin/openssl','libcrypto':'lib/libcrypto.so.3'}
 CENTRAL_COMPONENTS=('header','busybox','busybox-info','miniupnpd','igmp','lldt','pppd','pptpd','inadyn')
 DOWNLOADED_MODES={'openssh':0,'openvpn':1,'udpxy':6,'xl2tpd':7,'iapp':8,'lanauth':9,'smartdns':10}
 CASE_NAMES=('busybox-logger-argv','busybox-logger-stdin')+tuple(x+'-central' for x in CENTRAL_COMPONENTS)+tuple(x+'-central' for x in DOWNLOADED_MODES)+('header-percent-m','pppd-plugin-symbol-closure',)

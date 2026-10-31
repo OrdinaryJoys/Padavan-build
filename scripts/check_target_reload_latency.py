@@ -28,12 +28,12 @@ import check_target_runtime_dns as runtime
 
 PHASES = ('baseline', 'reload', 'settled')
 MAX_SAMPLES = 16384
-RSS_KEYS = {'at_ns', 'phase', 'rss_kib', 'hwm_sum_kib', 'pss_kib', 'processes'}
+RSS_KEYS = {'at_ns', 'phase', 'rss_kib', 'hwm_sum_kib', 'pss_kib', 'processes', 'pid', 'starttime'}
 REQUEST_KEYS = {'query_id', 'phase', 'scheduled_ns', 'sent_ns', 'received_ns', 'addresses'}
 MEASUREMENT_ROLE = {
     'program': 'Actual shipped MIPS DNS daemon under user-mode QEMU',
     'clock': 'Native private-worker monotonic timestamps, not emulated CPU cycles',
-    'memory': 'Native QEMU process-tree RSS/HWM/PSS; RSS shared pages can be counted more than once',
+    'memory': 'Native single-QEMU RSS/reported HWM with raw PID/starttime; no PSS or guest/router heap claim',
     'latency': 'Private loopback UDP client RTT including QEMU, kernel and host scheduling',
     'dhcp': 'Actual shipped MIPS DHCP INFORM to fixed option15 policy; no lease allocation or client connectivity claim',
     'limit': 'Neither metric is a router memory/performance measurement or hardware acceptance',
@@ -90,12 +90,17 @@ def parse_pss_rollup(text):
 def summarize_memory(samples):
     require(type(samples) is list and 1 <= len(samples) <= MAX_SAMPLES, 'Missing/excessive memory trace')
     last = -1
+    identity = None
     for row in samples:
         require(type(row) is dict and set(row) == RSS_KEYS and row['phase'] in PHASES and
                 integer(row['at_ns']) and row['at_ns'] > last and integer(row['rss_kib'],1) and
                 integer(row['hwm_sum_kib'],1) and row['hwm_sum_kib'] >= row['rss_kib'] and
-                integer(row['processes'],1) and (row['pss_kib'] is None or integer(row['pss_kib'])),
+                integer(row['processes'],1) and (row['pss_kib'] is None or integer(row['pss_kib'])) and
+                integer(row['pid'],1) and integer(row['starttime'],1),
                 'Malformed/out-of-order native memory trace')
+        current = (row['pid'], row['starttime'])
+        require(identity is None or current == identity, 'Measured process PID/starttime changed')
+        identity = current
         last = row['at_ns']
     phases = {}
     for phase in PHASES:
@@ -106,6 +111,7 @@ def summarize_memory(samples):
             pss_max_kib=None if any(r['pss_kib'] is None for r in rows) else max(r['pss_kib'] for r in rows),
             max_processes=max(r['processes'] for r in rows))
     return dict(samples=len(samples),first_ns=samples[0]['at_ns'],last_ns=samples[-1]['at_ns'],
+                identity=dict(pid=identity[0],starttime=identity[1]),
                 sample_gap_max_ms=max([0]+[(b['at_ns']-a['at_ns'])/1e6 for a,b in zip(samples,samples[1:])]),
                 rss_max_kib=max(r['rss_kib'] for r in samples),
                 hwm_sum_max_kib=max(r['hwm_sum_kib'] for r in samples),
@@ -177,12 +183,15 @@ def parse_rrset(data, query_id, name):
 
 
 SOURCE_PATHS = dict(previous.SOURCE_PATHS)
-CASE_NAMES = ('cold-large-unique-accepted','hot-small-commit','hot-pathological-rejected','large-to-empty-commit')
+CASE_NAMES = ('cold-large-unique-accepted','hot-small-commit','hot-same-name-commit','large-to-empty-commit',
+              'overlimit-second-hosts-rejected','repeated-hot-commit')
 NAME = 'atomic.latency.fixture'
 OLD = ['192.0.2.51','192.0.2.61']
 NEW = ['192.0.2.52','192.0.2.62']
 FALLBACK = ['192.0.2.53','192.0.2.63']
 WORKLOAD = dict(cold_unique_per_file=20000,hot_unique_per_file=512,pathological_same_name=20000,
+                repeat_unique_per_file=2000,repeat_cycles=20,cycle_settle_ms=50,retention_window_cycles=5,
+                overlimit_bytes=16*1024*1024+1,
                 hosts_files=2,query_interval_ms=20,dhcp_interval_ms=100,memory_interval_ms=10,
                 baseline_ms=600,settled_ms=800)
 FILESYSTEM_LIMITS = dict(previous.FILESYSTEM_LIMITS,tmp=64*1024*1024)
@@ -191,21 +200,30 @@ LIMITS = dict(worker_seconds=180,command_seconds=20,output_bytes=131072,report_b
               rtt_max_ms=1000,rtt_p95_ms=500,send_lateness_max_ms=250,
               send_gap_max_ms=300,memory_sample_gap_max_ms=300,
               rss_max_kib=262144,rss_growth_max_kib=98304,query_timeout_ms=1500)
+LIMITS.update(same_name_rtt_max_ms=150,same_name_rtt_p95_ms=100,repeat_retention_max_kib=8192)
 CONTRACT = dict(policy='Every observed response is one whole OLD/NEW/FALLBACK two-A RRset; rejected candidate retains OLD',
                 hot='250ms cooperative production prepare budget; gate1000ms max observed loopback RTT includes cleanup/QEMU/host scheduling',
                 cold='40k unique synthetic hosts accepted at initial load; startup readiness and lifetime native HWM reported separately',
                 rss='Sampled main QEMU RSS and lifetime HWM both capped; HWM minus baseline RSS includes cold startup/JIT; no fork; not guest/router heap',
                 sampling='10ms requested samples are a lower bound on transient peaks; send/sample gaps checked independently',
                 pss='Not sampled: single daemon PID; no forked candidate worker or claimed PSS estimate',
+                same_name='20k distinct-address same-name candidate must commit; DNS and INFORM max150/p95100ms also apply within reload phase',
+                rejection='Second hosts file exceeds original16MiB limit after a small first candidate; entire OLD model must remain; not a time-budget proof',
+                repeated='20 alternating commits of4k unique hosts plus markers; last5 completion RSS max minus first5 max at most8MiB',
+                identity='Each raw sample exports actual PID/starttime checked before and after native proc status; one process, no children',
+                ptr='After timed clients stop, actual PTR wire samples at first/middle/last of20k must identify crowded.latency.fixture; three samples are not exhaustive enumeration',
                 scope='Private loopback only. Not a universal latency SLA, kernel I/O deadline or router performance benchmark')
 ROW_KEYS={'case','outcome','startup_ready_ms','fixture','final_rrset','rejection_observed','requests','memory',
-          'request_summary','memory_summary','dhcp_requests','dhcp_summary','lease_bytes','daemon_stopped'}
+          'request_summary','memory_summary','dhcp_requests','dhcp_summary','lease_bytes','daemon_stopped',
+          'rejection_reason','partial_preparation_observed','cycles','ptr_samples'}
+CYCLE_KEYS={'cycle','expected_rrset','observed_rrset','started_ns','completed_ns','settled_memory'}
+PTR_KEYS={'index','address','query_id','query_name','expected','observed','reply_hex'}
 
 
 def fixture_counts(name):
     require(name in CASE_NAMES,'Unknown latency workload')
-    initial=WORKLOAD['cold_unique_per_file'] if name in (CASE_NAMES[0],CASE_NAMES[3]) else 1
-    candidate=WORKLOAD['hot_unique_per_file'] if name==CASE_NAMES[1] else WORKLOAD['pathological_same_name'] if name==CASE_NAMES[2] else 0
+    initial=WORKLOAD['cold_unique_per_file'] if name in (CASE_NAMES[0],CASE_NAMES[3]) else WORKLOAD['repeat_unique_per_file'] if name==CASE_NAMES[5] else 1
+    candidate=WORKLOAD['hot_unique_per_file'] if name==CASE_NAMES[1] else WORKLOAD['pathological_same_name'] if name==CASE_NAMES[2] else WORKLOAD['repeat_unique_per_file'] if name==CASE_NAMES[5] else 0
     return initial,candidate
 
 
@@ -237,13 +255,92 @@ def summarize_dhcp(records):
     return summarize_requests(normalized,[OLD])
 
 
+def ptr_fixture(index):
+    require(index in (0,WORKLOAD['pathological_same_name']//2,WORKLOAD['pathological_same_name']-1),'Unexpected PTR sample index')
+    address=str(ipaddress.IPv4Address(int(ipaddress.IPv4Address('198.18.0.1'))+index))
+    return address,ipaddress.IPv4Address(address).reverse_pointer
+
+
+def decode_name(data,start):
+    labels=[];position=start;end=None;seen=set()
+    for _ in range(128):
+        require(0<=position<len(data) and position not in seen,'Invalid/cyclic DNS name')
+        seen.add(position);length=data[position]
+        if length&0xc0==0xc0:
+            require(position+1<len(data),'Truncated DNS name pointer')
+            pointer=((length&63)<<8)|data[position+1]
+            require(pointer<position,'Forward DNS name pointer')
+            if end is None:end=position+2
+            position=pointer;continue
+        require(length<=63 and position+1+length<=len(data),'Invalid DNS label extent')
+        position+=1
+        if not length:
+            return '.'.join(labels).lower(),position if end is None else end
+        label=data[position:position+length].decode('ascii')
+        require(re.fullmatch('[A-Za-z0-9-]+',label)is not None,'Invalid fixed PTR label')
+        labels.append(label);position+=length
+        require(sum(map(len,labels))+len(labels)<=255,'DNS name too long')
+    raise ValueError('Excessive DNS name indirection')
+
+
+def parse_ptr(data,query_id,name):
+    require(type(data)is bytes and 12<=len(data)<=4096 and integer(query_id) and query_id<=65535,'Invalid PTR packet')
+    ident,flags,qd,answers,authority,additional=struct.unpack_from('!6H',data)
+    require(ident==query_id and flags&0x8000 and flags&0x7a0f==0 and qd==answers==1 and authority==additional==0,'PTR header/answer count differs')
+    question=encode_question(name)[:-4]+struct.pack('!HH',12,1)
+    require(data[12:12+len(question)]==question,'PTR question differs')
+    cursor=12+len(question);owner,cursor=decode_name(data,cursor)
+    require(owner==name and cursor+10<=len(data),'PTR owner/truncation differs')
+    kind,cls,_,length=struct.unpack_from('!HHIH',data,cursor);cursor+=10
+    require(kind==12 and cls==1 and length>0 and cursor+length==len(data),'PTR type/extent differs')
+    value,end=decode_name(data,cursor);require(end==cursor+length,'PTR RDATA extent differs')
+    return value
+
+
+def validate_ptr_samples(rows,required):
+    indices=(0,WORKLOAD['pathological_same_name']//2,WORKLOAD['pathological_same_name']-1)
+    require(type(rows)is list and len(rows)==(3 if required else 0),'Missing/excess PTR samples')
+    for index,row in zip(indices,rows):
+        address,name=ptr_fixture(index);ident=65100+indices.index(index)
+        require(type(row)is dict and set(row)==PTR_KEYS and row['index']==index and type(row['index'])is int and
+                row['address']==address and row['query_name']==name and row['query_id']==ident and type(row['query_id'])is int and
+                row['expected']=='crowded.latency.fixture' and type(row['reply_hex'])is str and
+                re.fullmatch('(?:[0-9a-f]{2}){12,4096}',row['reply_hex'])is not None,'PTR sample identity/schema differs')
+        value=parse_ptr(bytes.fromhex(row['reply_hex']),ident,name)
+        require(row['observed']==value==row['expected'],'PTR sample did not load expected candidate address')
+
+
+def validate_cycles(rows,memory,required):
+    require(type(rows)is list and len(rows)==(WORKLOAD['repeat_cycles'] if required else 0),'Missing/excess commit cycles')
+    last=-1
+    for index,row in enumerate(rows,1):
+        expected=NEW if index&1 else OLD
+        require(type(row)is dict and set(row)==CYCLE_KEYS and type(row['cycle'])is int and row['cycle']==index and
+                row['expected_rrset']==row['observed_rrset']==expected and integer(row['started_ns']) and
+                integer(row['completed_ns']) and row['started_ns']>last and row['completed_ns']>=row['started_ns'],
+                'Commit cycle identity/policy/time differs')
+        sample=row['settled_memory']
+        require(sample in memory and sample['phase']=='reload' and
+                sample['at_ns']-row['completed_ns']>=WORKLOAD['cycle_settle_ms']*1000000,
+                'Cycle completion memory was not sampled from the measured process')
+        last=sample['at_ns']
+    if rows:
+        window=WORKLOAD['retention_window_cycles']
+        first=max(row['settled_memory']['rss_kib']for row in rows[:window])
+        final=max(row['settled_memory']['rss_kib']for row in rows[-window:])
+        require(final-first<=LIMITS['repeat_retention_max_kib'],'Repeated commit retained excessive native RSS')
+
+
 def validate_records(records):
     require(type(records)is list and len(records)==len(CASE_NAMES),'Missing reload latency cases')
     for name,row in zip(CASE_NAMES,records):
         require(type(row)is dict and set(row)==ROW_KEYS and row['case']==name and row['daemon_stopped']is True,'Latency case schema/order/cleanup differs')
-        final=NEW if name==CASE_NAMES[1] else FALLBACK if name==CASE_NAMES[3] else OLD
-        outcome='rejected-old-retained' if name==CASE_NAMES[2] else 'cold-accepted' if name==CASE_NAMES[0] else 'committed'
-        require(row['outcome']==outcome and row['final_rrset']==final and row['rejection_observed']is (name==CASE_NAMES[2]),'Reload state/policy differs')
+        rejected=name==CASE_NAMES[4]
+        final=NEW if name in (CASE_NAMES[1],CASE_NAMES[2]) else FALLBACK if name==CASE_NAMES[3] else OLD
+        outcome='rejected-old-retained' if rejected else 'cold-accepted' if name==CASE_NAMES[0] else 'committed'
+        require(row['outcome']==outcome and row['final_rrset']==final and row['rejection_observed']is rejected,'Reload state/policy differs')
+        require(row['rejection_reason']==('input-byte-limit' if rejected else None) and
+                row['partial_preparation_observed']is (True if rejected else None),'Rejection stage/reason differs')
         require(type(row['startup_ready_ms'])is int and 0<=row['startup_ready_ms']<=LIMITS['startup_ready_ms'],'Cold readiness exceeded bound')
         fixture=row['fixture'];initial,candidate=fixture_counts(name)
         require(type(fixture)is dict and set(fixture)=={'initial_unique_per_file','candidate_entries','initial','candidate'} and
@@ -252,8 +349,9 @@ def validate_records(records):
         for key in ('initial','candidate'):
             files=fixture[key]
             require(type(files)is list and len(files)==2,'Missing workload file fingerprints')
-            for item in files:
-                require(type(item)is dict and set(item)=={'bytes','sha256'} and integer(item['bytes']) and item['bytes']<=16*1024*1024 and
+            for index,item in enumerate(files):
+                limit=WORKLOAD['overlimit_bytes'] if rejected and key=='candidate' and index==1 else 16*1024*1024
+                require(type(item)is dict and set(item)=={'bytes','sha256'} and integer(item['bytes']) and item['bytes']<=limit and
                         type(item['sha256'])is str and re.fullmatch('[0-9a-f]{64}',item['sha256'])is not None,'Invalid workload bytes/SHA')
         old_payloads,new_payloads=fixture_payloads(name)
         require(fixture['initial']==fingerprints(old_payloads) and fixture['candidate']==fingerprints(new_payloads),'Public workload payload fingerprints differ')
@@ -266,15 +364,23 @@ def validate_records(records):
         require(dhcp['timeouts']==0 and dhcp['sent']>=14 and dhcp['rtt_max_ms']<=LIMITS['rtt_max_ms'] and dhcp['rtt_p95_ms']<=LIMITS['rtt_p95_ms'] and
                 dhcp['send_gap_max_ms']<=LIMITS['send_gap_max_ms'] and dhcp['send_lateness_max_ms']<=LIMITS['send_lateness_max_ms'],'Observed DHCP responsiveness failed')
         require(memory['samples']>=50 and memory['sample_gap_max_ms']<=LIMITS['memory_sample_gap_max_ms'] and
-                memory['rss_max_kib']<=LIMITS['rss_max_kib'] and memory['hwm_sum_max_kib']<=LIMITS['rss_max_kib'] and memory['max_processes']==1,'Native QEMU memory/sampling gate failed')
+                memory['rss_max_kib']<=LIMITS['rss_max_kib'] and memory['hwm_sum_max_kib']<=LIMITS['rss_max_kib'] and memory['max_processes']==1 and
+                all(sample['pss_kib']is None for sample in row['memory']),'Native QEMU memory/sampling gate failed')
         for phase in PHASES:
             require(requests['phases'][phase]['sent']>=10 and dhcp['phases'][phase]['sent']>=2 and memory['phases'][phase]is not None,'Missing measured reload phase')
         baseline=memory['phases']['baseline']['rss_median_kib']
         require(memory['rss_max_kib']-baseline<=LIMITS['rss_growth_max_kib'] and memory['hwm_sum_max_kib']-baseline<=LIMITS['rss_growth_max_kib'],'Observed candidate memory growth exceeded gate')
-        permitted=[tuple(OLD)] if name in (CASE_NAMES[0],CASE_NAMES[2]) else [tuple(OLD),tuple(final)]
+        if name==CASE_NAMES[2]:
+            for summary in (requests,dhcp):
+                for values in (summary,summary['phases']['reload']):
+                    require(values['rtt_max_ms']<=LIMITS['same_name_rtt_max_ms'] and
+                            values['rtt_p95_ms']<=LIMITS['same_name_rtt_p95_ms'],'Same-name candidate did not meet stricter latency gate')
+        permitted=[tuple(OLD)] if name in (CASE_NAMES[0],CASE_NAMES[4]) else [tuple(OLD),tuple(NEW)] if name==CASE_NAMES[5] else [tuple(OLD),tuple(final)]
         require(all(tuple(r['addresses'])in permitted for r in row['requests']),'Rejected/partial candidate leaked into queries')
         settled=[r for r in row['requests'] if r['phase']=='settled']
         require(all(r['addresses']==final for r in settled),'Settled policy not committed or old policy lost')
+        validate_cycles(row['cycles'],row['memory'],name==CASE_NAMES[5])
+        validate_ptr_samples(row['ptr_samples'],name==CASE_NAMES[2])
     return True
 
 
@@ -319,6 +425,7 @@ class PairUpstream:
 class Measurements:
     def __init__(self,pid):
         self.pid=pid;self.phase='baseline';self.requests=[];self.dhcp_requests=[];self.memory=[];self.failures=[];self.stop_event=threading.Event()
+        self.memory_lock=threading.Lock()
         self.identity=parse_proc_stat(Path('/proc/'+str(pid)+'/stat').read_text())
         self.threads=[threading.Thread(target=self.client,daemon=True),threading.Thread(target=self.dhcp_client,daemon=True),threading.Thread(target=self.sampler,daemon=True)]
     def start(self):
@@ -368,15 +475,21 @@ class Measurements:
                         xid=struct.unpack_from('!I',packet,4)[0];require(xid in pending,'Unknown/duplicate/late measured INFORM reply')
                         row=pending.pop(xid);row['policy']=parse_dhcp(packet,xid);row['received_ns']=received
         except Exception as error:self.failures.append('DHCP: '+str(error));self.stop_event.set()
+    def memory_observation(self):
+        with self.memory_lock:
+            now=time.monotonic_ns();root=Path('/proc/'+str(self.pid));before=parse_proc_stat((root/'stat').read_text())
+            counters=parse_proc_status((root/'status').read_text());after=parse_proc_stat((root/'stat').read_text())
+            require(before['pid']==after['pid']==self.identity['pid'] and before['starttime']==after['starttime']==self.identity['starttime'],'QEMU PID identity changed')
+            require(not (root/'task'/str(self.pid)/'children').read_text().strip(),'Reload introduced unmeasured child processes')
+            row=dict(at_ns=now,phase=self.phase,rss_kib=counters['rss_kib'],hwm_sum_kib=counters['hwm_kib'],pss_kib=None,processes=1,
+                     pid=after['pid'],starttime=after['starttime'])
+            require(len(self.memory)<MAX_SAMPLES,'Memory trace exceeded budget')
+            self.memory.append(row)
+            return dict(row)
     def sampler(self):
         try:
             while not self.stop_event.is_set():
-                now=time.monotonic_ns();root=Path('/proc/'+str(self.pid));before=parse_proc_stat((root/'stat').read_text())
-                counters=parse_proc_status((root/'status').read_text());after=parse_proc_stat((root/'stat').read_text())
-                require(before['pid']==after['pid']==self.identity['pid'] and before['starttime']==after['starttime']==self.identity['starttime'],'QEMU PID identity changed')
-                require(not (root/'task'/str(self.pid)/'children').read_text().strip(),'Reload introduced unmeasured child processes')
-                self.memory.append(dict(at_ns=now,phase=self.phase,rss_kib=counters['rss_kib'],hwm_sum_kib=counters['hwm_kib'],pss_kib=None,processes=1))
-                require(len(self.memory)<=MAX_SAMPLES,'Memory trace exceeded budget');self.stop_event.wait(WORKLOAD['memory_interval_ms']/1000)
+                self.memory_observation();self.stop_event.wait(WORKLOAD['memory_interval_ms']/1000)
         except Exception as error:self.failures.append('memory: '+str(error));self.stop_event.set()
     def finish(self):
         self.stop_event.set()
@@ -396,6 +509,9 @@ def fixture_payloads(name):
         crowded=''.join(str(ipaddress.IPv4Address(int(ipaddress.IPv4Address('198.18.0.1'))+i))+' crowded.latency.fixture\n'for i in range(candidate)).encode()
         new=[payload(0,1,NEW[0])+crowded,payload(1,1,NEW[1])]
     elif name==CASE_NAMES[3]:new=[b'',b'']
+    elif name==CASE_NAMES[4]:
+        new=[payload(0,1,NEW[0]),(b'#'+b' '*62+b'\n')*(16*1024*1024//64)+b'\n']
+    elif name==CASE_NAMES[5]:new=[payload(i,candidate,NEW[i])for i in range(2)]
     else:new=old
     return old,new
 
@@ -412,8 +528,26 @@ def ready_pair(expected,timeout=6):
             try:packet,peer=sock.recvfrom(4097)
             except (socket.timeout,ConnectionRefusedError):continue
             require(peer==('127.0.0.1',10530),'Unexpected readiness DNS peer')
-            if parse_rrset(packet,65000,NAME)==expected:return True
+            observed=parse_rrset(packet,65000,NAME)
+            if observed==expected:return dict(rrset=observed,received_ns=time.monotonic_ns())
     raise RuntimeError('Measured DNS expected RRset not ready: '+repr(expected))
+
+
+def sample_ptrs():
+    rows=[]
+    indices=(0,WORKLOAD['pathological_same_name']//2,WORKLOAD['pathological_same_name']-1)
+    with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as sock:
+        sock.settimeout(LIMITS['query_seconds'])
+        for sample,index in enumerate(indices):
+            address,name=ptr_fixture(index);ident=65100+sample
+            question=encode_question(name)[:-4]+struct.pack('!HH',12,1)
+            sock.sendto(struct.pack('!6H',ident,0x100,1,0,0,0)+question,('127.0.0.1',10530))
+            packet,peer=sock.recvfrom(4097)
+            require(peer==('127.0.0.1',10530),'Unexpected PTR sample peer')
+            rows.append(dict(index=index,address=address,query_id=ident,query_name=name,expected='crowded.latency.fixture',
+                             observed=parse_ptr(packet,ident,name),reply_hex=packet.hex()))
+    validate_ptr_samples(rows,True)
+    return rows
 
 
 def exercise(args,name):
@@ -421,7 +555,9 @@ def exercise(args,name):
     initial,candidate=fixture_counts(name);old,new=fixture_payloads(name)
     paths=[directory/('hosts'+str(i))for i in range(2)]
     for path,data in zip(paths,old):base.regular(path,data,0o644)
-    config=''.join('addn-hosts='+str(path)+'\n'for path in paths)
+    # The actual option parser prepends each addn-hosts node. Emit in reverse
+    # so the small hosts0 candidate is prepared before the overlimit hosts1.
+    config=''.join('addn-hosts='+str(path)+'\n'for path in reversed(paths))
     config+='dhcp-range=127.0.0.10,127.0.0.20,255.0.0.0,1h\ndhcp-option=option:domain-name,'+DHCP_POLICY+'\ndhcp-leasefile='+str(directory/'leases')+'\n'
     begin=time.monotonic();pid=previous.launch(args,directory,config);measure=None
     try:
@@ -431,24 +567,36 @@ def exercise(args,name):
         startup_ms=int((time.monotonic()-begin)*1000)
         measure=Measurements(pid);measure.start();time.sleep(WORKLOAD['baseline_ms']/1000)
         measure.phase='reload';offset=(directory/'daemon.log').stat().st_size
-        if name!=CASE_NAMES[0]:
+        cycles=[];rejected=False;reason=None;partial=None
+        if name==CASE_NAMES[5]:
+            for cycle in range(1,WORKLOAD['repeat_cycles']+1):
+                desired=NEW if cycle&1 else OLD;payloads=new if cycle&1 else old
+                for path,data in zip(paths,payloads):previous.replace(path,data)
+                started=time.monotonic_ns();os.kill(pid,signal.SIGHUP)
+                observation=ready_pair(desired)
+                time.sleep(WORKLOAD['cycle_settle_ms']/1000)
+                cycles.append(dict(cycle=cycle,expected_rrset=desired.copy(),observed_rrset=observation['rrset'],
+                    started_ns=started,completed_ns=observation['received_ns'],settled_memory=measure.memory_observation()))
+        elif name!=CASE_NAMES[0]:
             for path,data in zip(paths,new):previous.replace(path,data)
             os.kill(pid,signal.SIGHUP)
-        final=NEW if name==CASE_NAMES[1] else FALLBACK if name==CASE_NAMES[3] else OLD
-        rejected=False
-        if name==CASE_NAMES[2]:
+        final=NEW if name in (CASE_NAMES[1],CASE_NAMES[2]) else FALLBACK if name==CASE_NAMES[3] else OLD
+        if name==CASE_NAMES[4]:
             deadline=time.monotonic()+LIMITS['reload_seconds']
             while time.monotonic()<deadline:
                 text=(directory/'daemon.log').read_bytes()[offset:]
                 if b'reload transaction rejected; previous hosts/DHCP configuration retained' in text:
-                    require(b'hot reload cooperative time budget exceeded'in text,'Pathological candidate rejected for unexpected reason')
-                    rejected=True;break
+                    require(b'runtime DNS input exceeds its byte limit'in text,'Overlimit candidate rejected for unexpected reason')
+                    first=b'read '+str(paths[0]).encode()+b' - '
+                    require(first in text and text.index(first)<text.index(b'reload transaction rejected;'),'First file was not prepared before second-file rejection')
+                    rejected=True;reason='input-byte-limit';partial=True;break
                 time.sleep(.01)
-            require(rejected,'Pathological candidate was not rejected within deadline')
+            require(rejected,'Overlimit candidate was not rejected within deadline')
         else:ready_pair(final)
         # Retain enough reload-phase samples even for very fast legitimate commits.
         time.sleep(.25)
         measure.phase='settled';time.sleep(WORKLOAD['settled_ms']/1000);measure.finish()
+        ptr_samples=sample_ptrs() if name==CASE_NAMES[2] else []
         lease_bytes=(directory/'leases').stat().st_size;require(lease_bytes==0,'INFORM allocated a lease')
         previous.stop(args)
         row=dict(case=name,outcome='rejected-old-retained' if rejected else 'cold-accepted' if name==CASE_NAMES[0] else 'committed',
@@ -456,6 +604,7 @@ def exercise(args,name):
                  final_rrset=final,rejection_observed=rejected,requests=measure.requests,memory=measure.memory,
                  request_summary=summarize_requests(measure.requests,[OLD,NEW,FALLBACK]),memory_summary=summarize_memory(measure.memory),
                  dhcp_requests=measure.dhcp_requests,dhcp_summary=summarize_dhcp(measure.dhcp_requests),lease_bytes=lease_bytes,daemon_stopped=True)
+        row.update(rejection_reason=reason,partial_preparation_observed=partial,cycles=cycles,ptr_samples=ptr_samples)
         return row
     finally:
         if measure is not None and any(t.is_alive()for t in measure.threads):measure.finish()
