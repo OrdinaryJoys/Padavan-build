@@ -43,6 +43,7 @@ def report():
 
 def ack(value=b'old.fixture', extra=b''):
     data = bytearray(gate.inform_packet()[:240]); data[0] = 2
+    data[20:24] = socket.inet_aton('127.0.0.1')
     return bytes(data) + bytes((53, 1, 5, 15, len(value))) + value + extra + b'\xff'
 
 
@@ -90,6 +91,20 @@ class TargetLogReloadControls(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(RuntimeError):gate.validate_records(value)
         value = rows(); value[index]['probe_results'].pop()
         with self.assertRaises(RuntimeError):gate.validate_records(value)
+        # A failed later case must retain completed rows in the caller's
+        # report list, but never print PASS for the failed case or accept it.
+        partial = []; first = rows()[0]
+        cases = ('syslog-full-responsive-recovery', 'dhcp-hosts-fifo-preserved')
+        with mock.patch.object(gate, 'CASE_NAMES', cases), mock.patch.object(gate.runtime, 'Upstream'), \
+             mock.patch.object(gate.runtime, 'quiescent', return_value=True), \
+             mock.patch.object(gate.Path, 'mkdir'), mock.patch.object(gate.shutil, 'rmtree'), \
+             mock.patch.object(gate, 'exercise_log', return_value=first), \
+             mock.patch.object(gate, 'exercise_dhcp', side_effect=RuntimeError('inert later failure')), \
+             mock.patch('builtins.print') as output:
+            with self.assertRaisesRegex(RuntimeError, 'inert later failure'):gate.worker_cases(None, partial)
+        self.assertEqual(partial, [first])
+        self.assertIn(mock.call('Target log/reload PASS ' + cases[0], flush=True), output.call_args_list)
+        self.assertNotIn(mock.call('Target log/reload PASS ' + cases[1], flush=True), output.call_args_list)
 
     def test_contract_sources_profile_and_shipped_library_bound(self):
         original = report()
@@ -165,9 +180,14 @@ class TargetLogReloadControls(unittest.TestCase):
         self.assertEqual(gate.parse_inform(ack()), 'old.fixture')
         bad = bytearray(ack());bad[4] ^= 1
         wrong_flags = bytearray(ack());wrong_flags[10] = 0x80
-        for value in (bytes(bad), bytes(wrong_flags), ack()[:-1], ack() + b'x', ack()[:240], ack(extra=bytes((51, 4, 0, 0, 0, 60))),
+        zero_server = bytearray(ack());zero_server[20:24] = b'\0' * 4
+        wrong_server = bytearray(ack());wrong_server[20:24] = socket.inet_aton('127.0.0.9')
+        for value in (bytes(bad), bytes(wrong_flags), bytes(zero_server), bytes(wrong_server), ack()[:-1], ack() + b'x', ack()[:240], ack(extra=bytes((51, 4, 0, 0, 0, 60))),
                       ack(extra=bytes((15, 1, 65))), ack()[:244] + b'\xff'):
             with self.subTest(payload=value.hex()[:80]), self.assertRaises(RuntimeError):gate.parse_inform(value)
+        with self.assertRaisesRegex(RuntimeError, 'header\\[0:44\\]=') as observed:
+            gate.parse_inform(bytes(wrong_server) + b'x' * 4096)
+        self.assertLess(len(str(observed.exception)), 512)
 
     def test_queue_full_requires_positive_native_fill_then_actual_eagain(self):
         class Sender:

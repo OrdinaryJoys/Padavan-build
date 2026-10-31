@@ -33,6 +33,7 @@ SOURCE_PATHS = dict(runtime.SOURCE_PATHS, **{
     'shared-shutils.c': 'user/shared/shutils.c',
     'shared-Makefile': 'user/shared/Makefile',
     'dhcp.c': 'user/dnsmasq/dnsmasq-2.93/src/dhcp.c',
+    'rfc2131.c': 'user/dnsmasq/dnsmasq-2.93/src/rfc2131.c',
     'reload_file.c': 'user/dnsmasq/dnsmasq-2.93/src/reload_file.c',
     'reload_file.h': 'user/dnsmasq/dnsmasq-2.93/src/reload_file.h',
     'dns-config.h': 'user/dnsmasq/dnsmasq-2.93/src/config.h'})
@@ -308,10 +309,11 @@ def inform_packet(hardware=OLD_HARDWARE):
     return bytes(data) + bytes((53, 1, 8, 55, 1, 15, 255))
 
 
-def parse_inform(data, hardware=OLD_HARDWARE):
+def _parse_inform(data, hardware=OLD_HARDWARE):
     require(240 <= len(data) <= 4096 and data[0] == 2 and data[4:8] == bytes.fromhex('4b325531') and
             data[1:3] == bytes((1, 6)) and struct.unpack_from('!H', data, 10)[0] == 0 and
-            data[12:16] == socket.inet_aton('127.0.0.2') and data[16:28] == b'\0' * 12 and
+            data[12:16] == socket.inet_aton('127.0.0.2') and data[16:20] == b'\0' * 4 and
+            data[20:24] == socket.inet_aton('127.0.0.1') and data[24:28] == b'\0' * 4 and
             data[28:34] == hardware and data[236:240] == bytes.fromhex('63825363'), 'Invalid INFORM reply')
     options = {}; pos = 240; ended = False
     while pos < len(data):
@@ -328,6 +330,16 @@ def parse_inform(data, hardware=OLD_HARDWARE):
     require(ended and options.get(53) == b'\x05' and 15 in options and 51 not in options and 52 not in options,
             'INFORM was not an ACK or unexpectedly allocated a lease')
     return options[15].decode('ascii')
+
+
+def parse_inform(data, hardware=OLD_HARDWARE):
+    try:
+        return _parse_inform(data, hardware)
+    except (RuntimeError, UnicodeError) as error:
+        # Show only a bounded public fixture BOOTP header, not arbitrary
+        # options/output. This distinguishes header assumptions from policy.
+        raise RuntimeError(str(error)[:256] + '; bytes=' + str(len(data)) +
+                           ' header[0:44]=' + data[:44].hex()) from error
 
 
 def inform(expected, hardware=OLD_HARDWARE):
@@ -608,19 +620,22 @@ def exercise_log(args, name, directory):
         if receiver is not None:receiver.close()
 
 
-def worker_cases(args):
-    upstream = runtime.Upstream(11532, '192.0.2.53'); rows = []
+def worker_cases(args, rows=None):
+    if rows is None:rows = []
+    upstream = runtime.Upstream(11532, '192.0.2.53')
     try:
         for name in CASE_NAMES:
+            print('Target log/reload CASE ' + name, flush=True)
             directory = Path('/tmp/log-reload-case'); directory.mkdir(mode=0o755)
             if name.startswith('ethers-') or name == 'cross-ethers-reject-preserves-hosts':value = exercise_ethers(args, name, directory)
             elif name.startswith('cross-'):value = exercise_cross(args, name, directory)
             elif name.startswith('hosts-'):value = exercise_hosts(args, name, directory)
             elif name.startswith('dhcp-'):value = exercise_dhcp(args, name, directory)
             else:value = exercise_log(args, name, directory)
-            rows.append(value)
             require(runtime.quiescent(), 'Log/reload case left a process')
             shutil.rmtree(directory)
+            rows.append(value)
+            print('Target log/reload PASS ' + name, flush=True)
         validate_records(rows)
         return rows
     finally:upstream.close()
@@ -654,7 +669,7 @@ def worker(args):
                   limits=LIMITS, contract=CONTRACT, probe=json.loads(args.probe_metadata), failure=None,
                   isolation=dict(namespaces=namespaces, worker_pid=os.getpid(), loopback_only=True,
                     private_mount_propagation=True, anchors_cloexec=True, namespace_exit_confirmed=False, private_dev_log=True))
-    try:report['checks'] = worker_cases(args); report['status'] = 'PASS'
+    try:worker_cases(args, report['checks']); report['status'] = 'PASS'
     except Exception as error:report['failure'] = str(error)[:4096]; raise
     finally:base.write_output(args.output, json.loads(args.expected_output), report)
 
