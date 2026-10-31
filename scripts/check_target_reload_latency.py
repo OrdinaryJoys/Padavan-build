@@ -182,7 +182,13 @@ def parse_rrset(data, query_id, name):
     return sorted(addresses)
 
 
-SOURCE_PATHS = dict(previous.SOURCE_PATHS)
+SOURCE_PATHS = dict(previous.SOURCE_PATHS, **{'hosts-util.c': 'user/dnsmasq/dnsmasq-2.93/src/util.c'})
+
+def source_proof(trunk):
+    proof = dict(previous.source_proof(trunk))
+    proof['hosts-util.c'] = base.sha((trunk / SOURCE_PATHS['hosts-util.c']).read_bytes())
+    return proof
+
 CASE_NAMES = ('cold-large-unique-accepted','hot-small-commit','hot-same-name-commit','large-to-empty-commit',
               'overlimit-second-hosts-rejected','repeated-hot-commit')
 NAME = 'atomic.latency.fixture'
@@ -624,7 +630,7 @@ def worker(args):
     require({name for _,name in socket.if_nameindex()}=={'lo'},'Private network has another interface')
     base.regular(Path('/etc/passwd'),b'root:x:0:0:root:/:/bin/sh\nnobody:x:99:99:nobody:/:/bin/false\n',0o644)
     base.regular(Path('/etc/group'),b'root:x:0:\nnobody:x:99:\n',0o644);Path('/var/run').mkdir(mode=0o755)
-    report=dict(schema_version=1,status='FAIL',profile='k2p-4.4',execution_role=MEASUREMENT_ROLE,source_sha256=previous.source_proof(args.trunk),
+    report=dict(schema_version=1,status='FAIL',profile='k2p-4.4',execution_role=MEASUREMENT_ROLE,source_sha256=source_proof(args.trunk),
         shipped=base.shipped_proof(args.rootfs),required_cases=list(CASE_NAMES),checks=[],filesystem_limits=FILESYSTEM_LIMITS,limits=LIMITS,workload=WORKLOAD,contract=CONTRACT,failure=None,
         isolation=dict(namespaces=namespaces,worker_pid=os.getpid(),loopback_only=True,private_mount_propagation=True,anchors_cloexec=True,namespace_exit_confirmed=False,private_dev_log=True))
     upstream=PairUpstream()
@@ -665,7 +671,7 @@ def main():
     require(sys.platform.startswith('linux'),'Linux actual MIPS latency gate required; no fallback PASS')
     for path in (args.trunk,args.rootfs,args.sysroot,args.output,Path(__file__).resolve()):
         require(not any(path.is_relative_to('/'+name)for name in FILESYSTEM_LIMITS),'Latency input hidden by private mounts')
-    sources,shipped=previous.source_proof(args.trunk),base.shipped_proof(args.rootfs);expected=base.prepare_output(args.output)
+    sources,shipped=source_proof(args.trunk),base.shipped_proof(args.rootfs);expected=base.prepare_output(args.output)
     command=(['sudo','-n','env','PATH='+os.environ['PATH']]if os.geteuid()else[])+[sys.executable,str(Path(__file__).resolve()),'--root-parent','--trunk',str(args.trunk),'--rootfs',str(args.rootfs),'--sysroot',str(args.sysroot),'--output',str(args.output),'--expected-output',json.dumps(expected)]
     subprocess.run(command,check=True,timeout=LIMITS['worker_seconds']+30)
     require(base.output_identity(args.output)==expected,'Root worker changed latency output owner/inode')

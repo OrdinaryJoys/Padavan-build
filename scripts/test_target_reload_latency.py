@@ -18,6 +18,23 @@ def requests():
 
 
 class ReloadLatencyMetricsControls(unittest.TestCase):
+    def test_hosts_canonicalisation_implementation_is_required_and_hash_bound(self):
+        import hashlib,tempfile
+        key='hosts-util.c';relative='user/dnsmasq/dnsmasq-2.93/src/util.c'
+        self.assertEqual(gate.SOURCE_PATHS[key],relative)
+        with tempfile.TemporaryDirectory(prefix='k2p-hosts-source-')as temporary:
+            root=Path(temporary);path=root/relative;path.parent.mkdir(parents=True)
+            with patch.object(gate.previous,'source_proof',return_value={'existing':'a'*64})as original:
+                with self.assertRaises(FileNotFoundError):gate.source_proof(root)
+                path.write_bytes(b'public locked implementation A')
+                first=gate.source_proof(root)
+                path.write_bytes(b'public locked implementation B')
+                second=gate.source_proof(root)
+                self.assertEqual(first['existing'],second['existing'])
+                self.assertNotEqual(first[key],second[key])
+                self.assertEqual(second[key],hashlib.sha256(path.read_bytes()).hexdigest())
+                original.assert_called_with(root)
+
     def test_native_proc_memory_and_ambiguous_counters_rejected(self):
         text='Name:\tqemu-mipsel\nVmRSS:\t8192 kB\nVmHWM:\t12288 kB\nVmData:\t4096 kB\n'
         self.assertEqual(gate.parse_proc_status(text),dict(rss_kib=8192,hwm_kib=12288,data_kib=4096))
