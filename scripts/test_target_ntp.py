@@ -33,6 +33,24 @@ def elf():
     return body
 
 
+def dynamic_elf(needed=('libc.so.0',),interpreter='/lib/ld-uClibc.so.0',kind=2):
+    body=bytearray(1024);body[:7]=b'\x7fELF\x01\x01\x01'
+    struct.pack_into('<HH',body,16,kind,8);struct.pack_into('<II',body,24,0x400080,52)
+    struct.pack_into('<HH',body,42,32,3 if interpreter else 2)
+    struct.pack_into('<8I',body,52,1,0,0x400000,0x400000,len(body),len(body),5,4096)
+    strings=bytearray(b'\0');entries=[]
+    for name in needed:
+        entries.append((1,len(strings)));strings.extend(name.encode()+b'\0')
+    body[512:512+len(strings)]=strings
+    entries.extend(((5,0x400000+512),(10,len(strings)),(0,0)))
+    for index,pair in enumerate(entries):struct.pack_into('<II',body,256+index*8,*pair)
+    struct.pack_into('<8I',body,84,2,256,0x400100,0x400100,len(entries)*8,len(entries)*8,6,4)
+    if interpreter:
+        encoded=interpreter.encode()+b'\0';body[192:192+len(encoded)]=encoded
+        struct.pack_into('<8I',body,116,3,192,0x4000c0,0x4000c0,len(encoded),len(encoded),4,1)
+    return body
+
+
 def sources():
     header='#define NTP_STARTUP_TIMEOUT 10\nstatic int ntp_startup_budget_begin(void){return 0;}\nstatic void ntp_startup_budget_end(void){}'
     init='static void ntp_init(void){ntp_startup_budget_begin();add_peers();ntp_startup_budget_end();bb_daemonize_or_rexec();}'
@@ -129,10 +147,44 @@ class TargetNtpTests(unittest.TestCase):
             self.assertEqual(identity['bytes'],len(body))
             (root/'lib/libc.so.0').unlink();(root/'lib/libc.so.0').symlink_to('../../outside')
             with self.assertRaises(ValueError):ntp.runtime_library(root,'lib/libc.so.0')
+
             (root/'lib/libc.so.0').unlink();(root/'lib/libc.so.0').symlink_to('/lib/runtime.so')
             self.assertEqual(ntp.runtime_library(root,'lib/libc.so.0'),identity)
             (root/'lib/runtime.so').write_bytes(b'not-an-ELF'*12)
             with self.assertRaises(ValueError):ntp.runtime_library(root,'lib/libc.so.0')
+
+    def test_dynamic_needed_closure_is_complete_and_never_ignores_real_dependencies(self):
+        self.assertEqual(ntp.elf_dynamic(dynamic_elf()),dict(interpreter='/lib/ld-uClibc.so.0',needed=['libc.so.0']))
+        for variant in ('no-null','duplicate-strtab','bad-needed-offset','bad-name','rpath','runpath',
+                        'duplicate-needed','bad-interpreter','duplicate-interpreter','truncated-dynamic','truncated-strtab'):
+            body=dynamic_elf()
+            if variant=='no-null':struct.pack_into('<I',body,280,0x123)
+            if variant=='duplicate-strtab':struct.pack_into('<I',body,272,5)
+            if variant=='bad-needed-offset':struct.pack_into('<I',body,260,65535)
+            if variant=='bad-name':body=dynamic_elf(('../libc.so.0',))
+            if variant=='rpath':struct.pack_into('<I',body,264,15)
+            if variant=='runpath':struct.pack_into('<I',body,264,29)
+            if variant=='duplicate-needed':body=dynamic_elf(('libc.so.0','libc.so.0'))
+            if variant=='bad-interpreter':body=dynamic_elf(interpreter='/tmp/other-loader')
+            if variant=='duplicate-interpreter':
+                struct.pack_into('<H',body,44,4);body[148:180]=body[116:148]
+            if variant=='truncated-dynamic':struct.pack_into('<I',body,84+16,65535)
+            if variant=='truncated-strtab':struct.pack_into('<I',body,268,0x400000+1023)
+            with self.subTest(variant=variant),self.assertRaises(ValueError):ntp.elf_dynamic(body)
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);(root/'lib').mkdir()
+            (root/'lib/ld-uClibc.so.0').write_bytes(dynamic_elf((),None,3))
+            (root/'lib/ld-uClibc.so.1').write_bytes(dynamic_elf((),None,3))
+            libc=root/'lib/libc.so.0';libc.write_bytes(dynamic_elf(('ld-uClibc.so.1',),'/lib/ld-uClibc.so.1',3))
+            dynamic,libraries,closure=ntp.runtime_binding(root,dynamic_elf())
+            self.assertEqual(set(libraries),{'lib/ld-uClibc.so.0','lib/ld-uClibc.so.1','lib/libc.so.0'})
+            self.assertEqual(closure['lib/libc.so.0']['needed'],['ld-uClibc.so.1'])
+            self.assertFalse((root/'lib/librt.so.0').exists())
+            with self.assertRaises(ValueError):ntp.runtime_binding(root,dynamic_elf(('libc.so.0','librt.so.0')))
+            libc.write_bytes(dynamic_elf(('libm.so.0',),None,3))
+            with self.assertRaises(ValueError):ntp.runtime_binding(root,dynamic_elf())
+            libc.unlink()
+            with self.assertRaises(OSError):ntp.runtime_binding(root,dynamic_elf())
 
     def test_owned_hanging_and_flooding_children_are_killed_before_leader_reap(self):
         # Native Python only: no MIPS/QEMU, DNS, router or global process kill.

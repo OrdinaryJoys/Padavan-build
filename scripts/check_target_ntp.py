@@ -163,6 +163,58 @@ def elf(data,static=False):
     return dict(sha256=sha(data),bytes=len(data),elf_class=32,byte_order='little',e_machine=machine,e_type=kind,interpreter=interpreter)
 
 
+def elf_dynamic(data):
+    require(len(data)>=52 and data[:7]==b'\x7fELF\x01\x01\x01' and
+            struct.unpack_from('<H',data,18)[0]==8 and struct.unpack_from('<H',data,16)[0] in (2,3),
+            'NTP dynamic metadata requires MIPS ELF32LE')
+    offset=struct.unpack_from('<I',data,28)[0];size,count=struct.unpack_from('<HH',data,42)
+    require(size==32 and 0<count<=128 and offset+size*count<=len(data),'NTP dynamic program table invalid')
+    loads=[];dynamic=None;interpreter=None
+    for index in range(count):
+        kind,start,address,_,length,memory,_,_=struct.unpack_from('<8I',data,offset+index*size)
+        require(start+length<=len(data) and memory>=length and address+memory<=2**32,'NTP dynamic segment bounds invalid')
+        if kind==1:loads.append((address,start,length))
+        if kind==2:
+            require(dynamic is None and 8<=length<=65536 and length%8==0,'NTP duplicate/invalid dynamic segment')
+            dynamic=data[start:start+length]
+        if kind==3:
+            body=data[start:start+length]
+            require(interpreter is None and 1<len(body)<=256 and body.endswith(b'\0') and body.count(b'\0')==1,
+                    'NTP duplicate/invalid interpreter')
+            interpreter=body[:-1].decode('ascii')
+            require(re.fullmatch(r'/lib/[A-Za-z0-9_.+-]+',interpreter) is not None,'NTP unsafe interpreter path')
+    if dynamic is None:return dict(interpreter=interpreter,needed=[])
+    tags={};needed=[];ended=False
+    for index in range(0,len(dynamic),8):
+        tag,value=struct.unpack_from('<II',dynamic,index)
+        if ended:
+            require(tag==value==0,'NTP nonzero metadata after DT_NULL')
+            continue
+        if tag==0:ended=True;continue
+        require(tag not in (15,29),'NTP RPATH/RUNPATH is outside the fixed runtime contract')
+        if tag==1:
+            require(len(needed)<64,'NTP dependency count exceeds budget');needed.append(value)
+        if tag in (5,10):
+            require(tag not in tags,'NTP duplicate dynamic string table tag');tags[tag]=value
+    require(ended,'NTP dynamic table lacks DT_NULL')
+    require(set(tags)=={5,10} and 0<tags[10]<=1024*1024,'NTP dynamic string table missing/invalid')
+    address,length=tags[5],tags[10]
+    require(address+length<=2**32,'NTP dynamic string address wraps')
+    mapped={start+address-virtual for virtual,start,filesz in loads
+            if virtual<=address and address-virtual<=filesz and length<=filesz-(address-virtual)}
+    require(len(mapped)==1,'NTP dynamic string table is not uniquely file-backed')
+    start=mapped.pop();strings=data[start:start+length];names=[]
+    for value in needed:
+        require(value<len(strings),'NTP DT_NEEDED string offset exceeds table')
+        end=strings.find(b'\0',value)
+        require(value<end<=value+255,'NTP DT_NEEDED name is empty/truncated/overlong')
+        name=strings[value:end].decode('ascii')
+        require(re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.+-]*\.so(?:\.[0-9]+)*',name) is not None and name not in names,
+                'NTP DT_NEEDED name is unsafe or duplicated')
+        names.append(name)
+    return dict(interpreter=interpreter,needed=names)
+
+
 def write_report(path,value):
     path.parent.mkdir(parents=True,exist_ok=True)
     fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW,0o600)
@@ -174,7 +226,7 @@ def write_report(path,value):
     finally:os.close(fd)
 
 
-def runtime_library(root,name):
+def _runtime_library(root,name):
     current=name
     for _ in range(16):
         require(not current.startswith('/') and current not in ('','..') and not current.startswith('../'),
@@ -195,8 +247,40 @@ def runtime_library(root,name):
         finally:os.close(fd)
         require(len(data)==metadata.st_size and data[:7]==b'\x7fELF\x01\x01\x01' and
                 struct.unpack_from('<HH',data,16)==(3,8),'NTP runtime library is not MIPS ELF32LE ET_DYN')
-        return dict(resolved=current,sha256=sha(data),bytes=len(data),elf_class=32,byte_order='little',e_machine=8,e_type=3)
+        return dict(resolved=current,sha256=sha(data),bytes=len(data),elf_class=32,byte_order='little',e_machine=8,e_type=3),data
     raise ValueError('NTP runtime library symlink budget exceeded')
+
+
+def runtime_library(root,name):
+    return _runtime_library(root,name)[0]
+
+
+def runtime_binding(root,probe):
+    dynamic=elf_dynamic(probe)
+    require(dynamic==dict(interpreter='/lib/ld-uClibc.so.0',needed=['libc.so.0']),
+            'NTP probe interpreter/DT_NEEDED differs from the measured toolchain contract')
+    libraries={};metadata={};pending=['lib/ld-uClibc.so.0','lib/libc.so.0']
+    while pending:
+        name=pending.pop(0)
+        if name in libraries:continue
+        identity,data=_runtime_library(root,name)
+        item=elf_dynamic(data);libraries[name]=identity;metadata[name]=item
+        require(item['interpreter'] in (None,'/lib/ld-uClibc.so.0','/lib/ld-uClibc.so.1'),
+                'NTP runtime library has an unexpected interpreter')
+        if item['interpreter']:pending.append(item['interpreter'].lstrip('/'))
+        for dependency in item['needed']:
+            require(dependency in ('ld-uClibc.so.0','ld-uClibc.so.1','libc.so.0'),
+                    'NTP runtime library has an unbound DT_NEEDED dependency: '+dependency)
+            pending.append('lib/'+dependency)
+    expected={
+        'lib/ld-uClibc.so.0':dict(interpreter=None,needed=[]),
+        'lib/ld-uClibc.so.1':dict(interpreter=None,needed=[]),
+        'lib/libc.so.0':dict(interpreter='/lib/ld-uClibc.so.1',needed=['ld-uClibc.so.1']),
+    }
+    require(metadata==expected,'NTP measured runtime dependency closure differs')
+    require(all(libraries['lib/ld-uClibc.so.0'][key]==libraries['lib/ld-uClibc.so.1'][key]
+                for key in ('bytes','sha256')),'NTP loader compatibility aliases differ in bytes')
+    return dynamic,libraries,metadata
 
 
 def run_target(command,seconds=18,stdout_limit=8192,stderr_limit=16384):
@@ -267,6 +351,15 @@ def check(trunk,compiler,sysroot,output,static=False,rootfs=None):
     compiled=subprocess.run([str(compiler),*flags,str(source),'-o',str(probe),'-lrt'],capture_output=True,text=True,timeout=90)
     require(compiled.returncode==0,'NTP MIPS compile failed: '+compiled.stdout+compiled.stderr)
     binary=probe.read_bytes();probe_identity=elf(binary,static);probe.chmod(0o755)
+    probe_dynamic=elf_dynamic(binary);shipped={};libraries={};runtime_dynamic={}
+    if static:
+        require(probe_dynamic==dict(interpreter=None,needed=[]),'NTP static preflight has dynamic dependencies')
+    else:
+        probe_dynamic,libraries,runtime_dynamic=runtime_binding(sysroot,binary)
+        for name in ('bin/busybox','sbin/rc'):
+            path=rootfs/name;metadata=path.lstat()
+            require(stat.S_ISREG(metadata.st_mode) and metadata.st_mode&0o100,'NTP shipped executable unsafe: '+name)
+            shipped[name]=elf(path.read_bytes())
     rows=[]
     for name in CASE_NAMES:
         status,out,err=run_target([qemu,'-L',str(sysroot),str(probe),name])
@@ -274,19 +367,13 @@ def check(trunk,compiler,sysroot,output,static=False,rootfs=None):
         row=json.loads(out)
         rows.append(dict(case=name,role=role(name),backend=BACKEND,result=row))
     validate_records(rows)
-    shipped={};libraries={}
-    if not static:
-        libraries={name:runtime_library(sysroot,name) for name in ('lib/ld-uClibc.so.0','lib/libc.so.0','lib/librt.so.0')}
-        for name in ('bin/busybox','sbin/rc'):
-            path=rootfs/name;metadata=path.lstat()
-            require(stat.S_ISREG(metadata.st_mode) and metadata.st_mode&0o100,'NTP shipped executable unsafe: '+name)
-            shipped[name]=elf(path.read_bytes())
-    report=dict(schema_version=1,status='PASS',profile='k2p-4.4',mode='static-preflight' if static else 'dynamic-shipped-libc',
+    report=dict(schema_version=2,status='PASS',profile='k2p-4.4',mode='static-preflight' if static else 'dynamic-shipped-libc',
                 backend=BACKEND,required_cases=list(CASE_NAMES),contract=CONTRACT,checks=rows,
                 source_paths=SOURCE_PATHS,source_sha256={name:sha(text.encode()) for name,text in texts.items()},
                 function_sha256={key+':'+name:sha(function(texts[key],name).encode()) for key,names in FUNCTIONS.items() for name in names},
                 generated_source_sha256=sha(generated.encode()),mips_probe=probe_identity,
-                shipped_programs=shipped,runtime_libraries=libraries,compiler=str(compiler),sysroot=str(sysroot),
+                probe_dynamic=probe_dynamic,shipped_programs=shipped,runtime_libraries=libraries,
+                runtime_dynamic=runtime_dynamic,compiler=str(compiler),sysroot=str(sysroot),
                 rootfs=str(rootfs) if rootfs is not None else None,limits=LIMITS)
     write_report(output,report)
     print('Target NTP:'+str(len(rows))+' exact '+report['mode']+' cases PASS (inert DNS/time backends)')
