@@ -100,7 +100,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
       for source_file in cache.c option.c dnsmasq.c dhcp.c; do
         "$toolchain/bin/mipsel-linux-uclibc-gcc" -std=gnu99 -Wall -Wextra \
           -Werror=implicit-function-declaration -DHAVE_BROKEN_RTC -DNO_AUTH -DNO_LOOP \
-          -DNO_TFTP -DNO_IPSET "${optional_flags[@]}" -fsyntax-only \
+          -DNO_TFTP -DNO_IPSET '-DVERSION="2.93"' "${optional_flags[@]}" -fsyntax-only \
           "$trunk/user/dnsmasq/dnsmasq-2.93/src/$source_file"
         printf 'PASS inotify=%s source=%s\n' "$inotify_profile" "$source_file"
       done
