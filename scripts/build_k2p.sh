@@ -114,6 +114,9 @@ if [ "$flavor" = "k2p-4.4" ]; then
   mkdir -p "$diagnostics/syslog-preflight"
   python3 "$root/scripts/check_target_syslog_producers.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --output "$diagnostics/syslog-preflight/result.json"
+  python3 "$root/scripts/check_target_syslog_producers.py" --adapter-preflight --trunk "$trunk" \
+    --preflight-result "$diagnostics/syslog-preflight/result.json" \
+    --output "$diagnostics/target-syslog-adapter-preflight.json"
   mkdir -p "$diagnostics/ntp-preflight"
   python3 "$root/scripts/check_target_ntp.py" --static --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --sysroot "$toolchain" \

@@ -1,5 +1,11 @@
 """Pure source/schema/ELF corruption controls; no target, daemon or mount."""
 import copy
+import errno
+import json
+import os
+import subprocess
+import tempfile
+import types
 from pathlib import Path
 import struct
 import sys
@@ -12,8 +18,8 @@ import check_target_syslog_producers as gate
 def rows():
  result=[]
  for name in gate.CASE_NAMES:
-  symbol=name==gate.CASE_NAMES[-1];fatal=name=='lanauth-central';whole=name.startswith('busybox-logger')
-  result.append(dict(case=name,role='actual-image-dynsym' if symbol else 'actual-shipped-logger' if whole else 'actual-central-functions',queue_full=None if symbol else True,normal_marker=None if symbol else True,recovery_marker=None if symbol else True,calls=[] if symbol else [1,1 if whole or fatal else 128,1],exit_codes=[] if symbol else [1 if fatal else 0]*3,elapsed_ms=[] if symbol else [10]*3,fd_balanced=None if symbol or fatal or whole else True,errno_preserved=None if symbol or fatal or whole else True))
+  symbol=name==gate.CASE_NAMES[-1];fatal=name=='lanauth-central';whole=name.startswith('busybox-logger');info=name=='busybox-info-central'
+  result.append(dict(case=name,role='actual-image-dynsym' if symbol else 'actual-shipped-logger' if whole else 'actual-central-functions',queue_full=None if symbol else True,normal_marker=None if symbol else True,recovery_marker=None if symbol else True,calls=[] if symbol else [1,1 if whole or fatal else 128,1],exit_codes=[] if symbol else [1 if fatal else 0]*3,elapsed_ms=[] if symbol else [10]*3,fd_balanced=None if symbol or fatal or whole else True,errno_preserved=None if symbol or fatal or whole or info else True,errno_trace=[[dict(call=i,entry=13,transport_entry=0,transport_exit=0,final=0)for i in range(n)]for n in (1,128,1)]if info else None))
  return result
 
 
@@ -32,8 +38,8 @@ def symbols(provided,undefined):
 
 
 class SyslogProducerControls(unittest.TestCase):
- def test_exact_nineteen_cases_and_roles(self):
-  self.assertEqual(len(gate.CASE_NAMES),19);self.assertTrue(gate.validate_records(rows()))
+ def test_exact_twenty_cases_and_roles(self):
+  self.assertEqual(len(gate.CASE_NAMES),20);self.assertTrue(gate.validate_records(rows()))
   for bad in (rows()[:-1],rows()[::-1],rows()+[rows()[0]]):
    with self.assertRaises(RuntimeError):gate.validate_records(bad)
 
@@ -156,5 +162,101 @@ class SyslogProducerControls(unittest.TestCase):
   # Last entry binding becomes weak, still an unresolved libc logging path.
   data[-4]=0x22
   self.assertIn('syslog',gate.dynamic_symbols(bytes(data))['undefined'])
+
+ def test_info_formatter_errno_layers_do_not_waive_any_transport(self):
+  value=rows();index=gate.CASE_NAMES.index('busybox-info-central')
+  self.assertTrue(gate.validate_records(value));self.assertIsNone(value[index]['errno_preserved'])
+  for field,bad in [('transport_exit',1),('call',True),('entry',-1),('final',4096)]:
+   damaged=copy.deepcopy(value);damaged[index]['errno_trace'][1][3][field]=bad
+   with self.subTest(field=field),self.assertRaises(RuntimeError):gate.validate_records(damaged)
+  damaged=copy.deepcopy(value);damaged[index]['errno_trace'][1].pop()
+  with self.assertRaises(RuntimeError):gate.validate_records(damaged)
+  # A genuine formatter may clobber errno outside transport; unrelated old
+  # cases still require the whole transport API errno witness and no trace.
+  damaged=copy.deepcopy(value);damaged[gate.CASE_NAMES.index('busybox-central')]['errno_preserved']=None
+  with self.assertRaises(RuntimeError):gate.validate_records(damaged)
+  wire=b'ERRNO_TRACE call=0 entry=13 transport_entry=0 transport_exit=0 final=0\n'
+  self.assertEqual(gate.parse_errno_trace(wire,1),[dict(call=0,entry=13,transport_entry=0,transport_exit=0,final=0)])
+  for bad in (wire.replace(b'transport_exit=0',b'transport_exit=13'),wire+wire,wire.replace(b'final=0',b'final=-1'),b''):
+   with self.assertRaises(RuntimeError):gate.parse_errno_trace(bad,1)
+
+ def test_source_only_exact_seventeen_cannot_replace_image_twenty(self):
+  subset=[row for row in rows()if row['case']in gate.ADAPTER_CASE_NAMES]
+  self.assertEqual(len(subset),17);self.assertTrue(gate.validate_records(subset,source_only=True))
+  with self.assertRaises(RuntimeError):gate.validate_records(subset)
+  with self.assertRaises(RuntimeError):gate.validate_records(rows(),source_only=True)
+  with self.assertRaises(RuntimeError):gate.validate_records(subset,source_only='True')
+  iso=dict(namespaces={key:dict(parent_inode=10,worker_inode=20)for key in ('mnt','net','pid')},worker_pid=1,loopback_only=True,private_mount_propagation=True,anchors_cloexec=True,namespace_exit_confirmed=True,private_dev_log=True)
+  sources={'locked':'a'*64};probes={'central':'bound','downloaded':'bound'}
+  report=dict(schema_version=1,status='PASS',profile='k2p-4.4',execution_role=gate.ADAPTER_ROLE,source_sha256=sources,required_cases=list(gate.ADAPTER_CASE_NAMES),checks=subset,filesystem_limits=gate.FILESYSTEM_LIMITS,limits=gate.LIMITS,contract=gate.ADAPTER_CONTRACT,isolation=iso,probes=probes,failure=None)
+  self.assertTrue(gate.validate_adapter_report(report,sources,probes))
+  for field,bad in [('execution_role',gate.ROLE),('execution_role',gate.COMPILE_ROLE),('checks',rows()),('required_cases',list(gate.CASE_NAMES)),('source_sha256',{}),('probes',{}),('status','COMPILED')]:
+   value=copy.deepcopy(report);value[field]=bad
+   with self.subTest(field=field),self.assertRaises(RuntimeError):gate.validate_adapter_report(value,sources,probes)
+
+ def test_reuse_exact_compiled_c_and_static_elf_not_metadata_alone(self):
+  data=bytearray(100);data[:7]=b'\x7fELF\x01\x01\x01';struct.pack_into('<HH',data,16,2,8)
+  struct.pack_into('<II',data,24,0x400000,52);struct.pack_into('<HH',data,42,32,1)
+  struct.pack_into('<8I',data,52,1,0,0x400000,0,len(data),len(data),5,4096);binary=bytes(data)
+  code={'central':'public-C','downloaded':'public-D'};sources={'locked':'a'*64}
+  meta={key:dict(source_sha256=gate.sha(text.encode()),sha256=gate.sha(binary),bytes=len(binary),elf=gate.base.elf(binary))for key,text in code.items()}
+  original=dict(status='COMPILED',execution_role=gate.COMPILE_ROLE,source_sha256=sources,probes=meta)
+  with tempfile.TemporaryDirectory()as temporary:
+   root=Path(temporary);report=root/'result.json'
+   for key,text in code.items():
+    (root/('target-syslog-'+key+'-probe.c')).write_text(text);(root/('target-syslog-'+key+'-probe')).write_bytes(binary)
+   report.write_text(json.dumps(original))
+   with mock.patch.object(gate,'source_hashes',return_value=sources),mock.patch.object(gate,'generate_sources',return_value=code):
+    result,paths=gate.reuse_compiled_probes(report,{})
+    self.assertEqual(result,meta);self.assertEqual(set(paths),set(code))
+    for role in ('source','C','ELF','role'):
+     report.write_text(json.dumps(original));(root/'target-syslog-central-probe.c').write_text(code['central']);(root/'target-syslog-central-probe').write_bytes(binary)
+     if role=='source':v=copy.deepcopy(original);v['source_sha256']={};report.write_text(json.dumps(v))
+     elif role=='C':(root/'target-syslog-central-probe.c').write_text('wrong-C')
+     elif role=='ELF':(root/'target-syslog-central-probe').write_bytes(binary[:-1]+b'x')
+     else:v=copy.deepcopy(original);v['execution_role']=gate.ADAPTER_ROLE;report.write_text(json.dumps(v))
+     with self.subTest(role=role),self.assertRaises(RuntimeError):gate.reuse_compiled_probes(report,{})
+
+ def test_preflight_reader_refuses_link_fifo_empty_or_oversized(self):
+  with tempfile.TemporaryDirectory()as temporary:
+   root=Path(temporary);regular=root/'data';regular.write_bytes(b'public')
+   self.assertEqual(gate.read_preflight_file(regular,6),b'public')
+   with self.assertRaises(RuntimeError):gate.read_preflight_file(regular,5)
+   link=root/'link';link.symlink_to(regular)
+   with self.assertRaises(OSError):gate.read_preflight_file(link,100)
+   fifo=root/'fifo';os.mkfifo(fifo)
+   with self.assertRaises(RuntimeError):gate.read_preflight_file(fifo,100)
+   empty=root/'empty';empty.touch()
+   with self.assertRaises(RuntimeError):gate.read_preflight_file(empty,100)
+   alias=root/'alias';os.link(regular,alias)
+   with self.assertRaises(RuntimeError):gate.read_preflight_file(regular,100)
+
+ def test_runtime_failure_diagnostic_keeps_actual_rc_and_component(self):
+  command=['qemu-mipsel','probe','busybox-info','1','normal']
+  result=types.SimpleNamespace(returncode=92,stdout=b'FD_BALANCE before=4 after=4\n',stderr=b'')
+  with mock.patch.object(gate.subprocess,'run',return_value=result):
+   with self.assertRaisesRegex(RuntimeError,'rc=92 expected=0.*busybox-info'):gate.run_program(command)
+  with mock.patch.object(gate.subprocess,'run',side_effect=subprocess.TimeoutExpired(command,5)):
+   with self.assertRaisesRegex(RuntimeError,'timeout.*busybox-info'):gate.run_program(command)
+  result.returncode=0
+  with mock.patch.object(gate.subprocess,'run',return_value=result):
+   out,_,status=gate.run_program(command);self.assertEqual(status,0);self.assertIn(b'FD_BALANCE',out)
+
+ def test_explicit_cli_source_only_does_not_compile_or_claim_shipped(self):
+  argv=['checker','--adapter-preflight','--trunk','/tmp/trunk','--output','/tmp/out.json','--preflight-result','/tmp/compiled.json']
+  with mock.patch.object(gate.sys,'argv',argv),mock.patch.object(gate,'adapter_preflight')as runtime,mock.patch.object(gate,'compile_probes')as compiler,mock.patch.object(gate,'shipped_proof')as image:
+   gate.main();runtime.assert_called_once();compiler.assert_not_called();image.assert_not_called()
+  with mock.patch.object(gate.sys,'argv',argv+['--preflight']),mock.patch('sys.stderr'):
+   with self.assertRaises(SystemExit):gate.main()
+  # Exercise the real CLI normalization and reader together. Resolving the
+  # leaf first would turn this into a regular file and defeat O_NOFOLLOW.
+  with tempfile.TemporaryDirectory()as temporary:
+   root=Path(temporary);target=root/'compiled.json';target.write_text('{}')
+   alias=root/'compiled-alias.json';alias.symlink_to(target)
+   arguments=['checker','--adapter-preflight','--trunk',str(root),'--output',str(root/'result.json'),'--preflight-result',str(alias)]
+   with mock.patch.object(gate.sys,'platform','linux'),mock.patch.object(gate.sys,'argv',arguments),mock.patch.object(gate,'source_inputs',return_value={}),mock.patch.object(gate.subprocess,'run')as launcher,mock.patch.object(gate.base,'prepare_output')as output:
+    with self.assertRaises(OSError)as failure:gate.main()
+    self.assertEqual(failure.exception.errno,errno.ELOOP);launcher.assert_not_called();output.assert_not_called()
+
 
 if __name__=='__main__':unittest.main()

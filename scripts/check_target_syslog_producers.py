@@ -70,21 +70,27 @@ PROGRAMS={'busybox':'bin/busybox','pppd':'usr/sbin/pppd','rp-pppoe':'usr/lib/ppp
  'iapp':'sbin/ralinkiappd','lanauth':'usr/sbin/lanauth',
  'libssh':'lib/libssh.so','scp':'usr/bin/scp','sftp-server':'usr/libexec/sftp-server','inadyn':'bin/inadyn',
  'pptpd':'usr/sbin/pptpd','pptpctrl':'usr/sbin/pptpctrl','bcrelay':'usr/sbin/bcrelay'}
-CENTRAL_COMPONENTS=('header','busybox','miniupnpd','igmp','lldt','pppd','pptpd','inadyn')
+CENTRAL_COMPONENTS=('header','busybox','busybox-info','miniupnpd','igmp','lldt','pppd','pptpd','inadyn')
 DOWNLOADED_MODES={'openssh':0,'openvpn':1,'udpxy':6,'xl2tpd':7,'iapp':8,'lanauth':9,'smartdns':10}
 CASE_NAMES=('busybox-logger-argv','busybox-logger-stdin')+tuple(x+'-central' for x in CENTRAL_COMPONENTS)+tuple(x+'-central' for x in DOWNLOADED_MODES)+('header-percent-m','pppd-plugin-symbol-closure',)
+ADAPTER_CASE_NAMES=tuple(name for name in CASE_NAMES if not name.startswith('busybox-logger-') and name!='pppd-plugin-symbol-closure')
+COMPILE_ROLE='Cross-compile only: static actual-source logger probes; no target/daemon/hardware execution'
+ADAPTER_ROLE='Source-only compiled static MIPS central logger adapters under QEMU before firmware make; no shipped-image, whole-application, plugin-linkage or router claim'
 ROLE={'whole_application':'Actual shipped MIPS BusyBox logger argv/stdin under QEMU',
  'components':'Locked actual central logger functions under MIPS QEMU, inert surrounding service callbacks; not whole daemons',
  'downloaded':'Pinned upstream excerpts plus exact firmware patches; SSH visual escaping and surrounding VPN/config callbacks inert',
  'isolation':'Private anchored PID/mount/network namespaces, scratch /dev/log, no router or host socket',
- 'symbols':'Actual shipped pppd exported dynsym and two plugin undefined logger imports; not tunnel negotiation'}
+ 'symbols':'Actual shipped pppd exported dynsym and two plugin undefined logger imports; not tunnel negotiation',
+ 'errno':'Strict transport API errno preservation; BusyBox info formatter separately reports entry, transport and final errno without claiming whole-formatter preservation'}
 FILESYSTEM_LIMITS=dict(previous.FILESYSTEM_LIMITS)
 LIMITS=dict(worker_seconds=180,command_seconds=5,output_bytes=131072,report_bytes=1048576,
             pressure_calls=128,command_ms=5000,syslog_fill_datagrams=1024)
 CONTRACT={'transport':'One nonblocking Unix datagram attempt; EAGAIN witnessed before pressure invocations',
- 'preserved':'Normal marker, errno and descriptor balance for component adapters; recovery after draining queue',
- 'exclusions':'No LOG_PERROR/LOG_CONS console latency guarantee; not async-signal-safe or whole-system syslog proof'}
-ROW_KEYS={'case','role','queue_full','normal_marker','recovery_marker','calls','exit_codes','elapsed_ms','fd_balanced','errno_preserved'}
+ 'preserved':'Normal/recovery markers and descriptor balance; strict transport API errno, separately observed BusyBox info formatter state',
+ 'exclusions':'No LOG_PERROR/LOG_CONS console latency guarantee; not async-signal-safe or whole-system syslog proof',
+ 'busybox_info_observer':'Actual bb_info_msg body with local transparent transport-call bridge to actual bb_vsyslog; one transport per call, transport entry==exit; formatter final may differ from entry'}
+ADAPTER_CONTRACT=dict(CONTRACT,scope='Only the fixed17 static adapter cases; private scratch namespaces and sockets; no image metadata or dynamic-import acceptance')
+ROW_KEYS={'case','role','queue_full','normal_marker','recovery_marker','calls','exit_codes','elapsed_ms','fd_balanced','errno_preserved','errno_trace'}
 PPP_EXPORTS=('ppp_log_open','ppp_log_close','ppp_log_mask','ppp_syslog')
 FORBIDDEN_LOG_IMPORTS=('closelog','openlog','setlogmask','syslog','vsyslog')
 
@@ -249,17 +255,43 @@ def compile_probes(args,inputs):
  return metadata,paths
 
 
-def validate_records(records):
- require(type(records)is list and len(records)==len(CASE_NAMES),'Missing producer cases')
- for name,row in zip(CASE_NAMES,records):
+ERRNO_KEYS={'call','entry','transport_entry','transport_exit','final'}
+
+
+def validate_errno_trace(trace,calls):
+ require(type(trace)is list and len(trace)==3,'Missing BusyBox info per-invocation errno trace')
+ for count,records in zip(calls,trace):
+  require(type(records)is list and len(records)==count,'BusyBox info transport call count differs')
+  for index,row in enumerate(records):
+   require(type(row)is dict and set(row)==ERRNO_KEYS and type(row['call'])is int and row['call']==index and
+           all(type(row[key])is int and 0<=row[key]<=4095 for key in ERRNO_KEYS-{'call'}),'Malformed BusyBox info errno observation')
+   require(row['transport_entry']==row['transport_exit'],'Actual BusyBox transport changed errno')
+ return True
+
+
+def parse_errno_trace(output,count):
+ pattern=rb'^ERRNO_TRACE call=([0-9]+) entry=([0-9]+) transport_entry=([0-9]+) transport_exit=([0-9]+) final=([0-9]+)$'
+ matches=re.findall(pattern,output,re.M)
+ require(len(matches)==count and output.count(b'ERRNO_TRACE')==count,'Missing/malformed actual BusyBox info trace')
+ records=[dict(zip(('call','entry','transport_entry','transport_exit','final'),map(int,row)))for row in matches]
+ validate_errno_trace([records,records,records],[count,count,count]);return records
+
+
+def validate_records(records,source_only=False):
+ require(type(source_only)is bool,'Source-only selector must be explicit boolean')
+ names=ADAPTER_CASE_NAMES if source_only else CASE_NAMES
+ require(type(records)is list and len(records)==len(names),'Missing producer cases')
+ for name,row in zip(names,records):
   require(type(row)is dict and set(row)==ROW_KEYS and row['case']==name,'Producer exact case schema/order')
-  symbol=name==CASE_NAMES[-1];fatal=name=='lanauth-central'
+  symbol=name==CASE_NAMES[-1];fatal=name=='lanauth-central';info=name=='busybox-info-central'
   require(row['role']==('actual-image-dynsym' if symbol else 'actual-shipped-logger' if name.startswith('busybox-logger') else 'actual-central-functions'), 'Producer role differs')
   require(row['queue_full'] is (None if symbol else True) and row['normal_marker'] is (None if symbol else True) and row['recovery_marker'] is (None if symbol else True),'Producer pressure/recovery missing')
   require(type(row['calls'])is list and all(type(x)is int for x in row['calls']) and type(row['exit_codes'])is list and all(type(x)is int for x in row['exit_codes']) and row['calls']==([] if symbol else [1,1 if fatal or name.startswith('busybox-logger') else 128,1]) and
           row['exit_codes']==([] if symbol else [1 if fatal else 0]*3),'Producer actual invocations differ')
   require(row['fd_balanced'] is (None if symbol or fatal or name.startswith('busybox-logger') else True) and
-          row['errno_preserved'] is (None if symbol or fatal or name.startswith('busybox-logger') else True),'Producer errno/FD proof missing')
+          row['errno_preserved'] is (None if symbol or fatal or info or name.startswith('busybox-logger') else True),'Producer errno/FD proof missing')
+  if info:validate_errno_trace(row['errno_trace'],row['calls'])
+  else:require(row['errno_trace']is None,'Unexpected formatter trace on another producer')
   require(type(row['elapsed_ms'])is list and len(row['elapsed_ms'])==(0 if symbol else 3) and
           all(type(x)is int and 0<=x<=LIMITS['command_ms'] for x in row['elapsed_ms']),'Producer blocked or missing timing')
  return True
@@ -294,7 +326,7 @@ def validate_report(report,sources,shipped,generated=None):
 
 
 PRIORITY={'header':156,'busybox':30,'miniupnpd':28,'igmp':12,'lldt':28,'pppd':148,
-          'openssh':38,'openvpn':29,'udpxy':131,'xl2tpd':28,'iapp':28,'lanauth':27,'smartdns':141,'percent-m':12,'pptpd':28,'inadyn':12}
+          'openssh':38,'openvpn':29,'udpxy':131,'xl2tpd':28,'iapp':28,'lanauth':27,'smartdns':141,'percent-m':12,'pptpd':28,'inadyn':12,'busybox-info':30}
 
 
 def validate_frame(data,needle,priority):
@@ -315,21 +347,27 @@ class Receiver(previous.Receiver):
 
 
 def run_program(command,expected=0,input_data=None):
- begin=time.monotonic();result=subprocess.run(command,input=input_data if input_data is not None else b'',capture_output=True,timeout=LIMITS['command_seconds'])
- require(len(result.stdout)+len(result.stderr)<=LIMITS['output_bytes'] and result.returncode==expected,'Producer invocation failed: '+(result.stdout+result.stderr).decode(errors='replace')[:4096])
- return result.stdout,int((time.monotonic()-begin)*1000)
+ begin=time.monotonic()
+ try:result=subprocess.run(command,input=input_data if input_data is not None else b'',capture_output=True,timeout=LIMITS['command_seconds'])
+ except subprocess.TimeoutExpired as error:
+  raise RuntimeError('Producer timeout after '+str(LIMITS['command_seconds'])+'s: '+repr(command[-3:]))from error
+ require(len(result.stdout)+len(result.stderr)<=LIMITS['output_bytes'],'Producer output exceeded cap: '+repr(command[-3:]))
+ require(result.returncode==expected,'Producer invocation rc='+str(result.returncode)+' expected='+str(expected)+' args='+repr(command[-3:])+': '+(result.stdout+result.stderr).decode(errors='replace')[:4096])
+ return result.stdout,int((time.monotonic()-begin)*1000),result.returncode
 
 
-def worker_cases(args,rows):
+def worker_cases(args,rows,source_only=False):
  receiver=Receiver();paths=json.loads(args.probe_paths)
  try:
-  for name in CASE_NAMES:
+  require(type(source_only)is bool,'Explicit static-source selector required')
+  names=ADAPTER_CASE_NAMES if source_only else CASE_NAMES
+  for name in names:
    print('Target producer CASE '+name,flush=True)
    if name==CASE_NAMES[-1]:
-    row=dict(case=name,role='actual-image-dynsym',queue_full=None,normal_marker=None,recovery_marker=None,calls=[],exit_codes=[],elapsed_ms=[],fd_balanced=None,errno_preserved=None)
+    row=dict(case=name,role='actual-image-dynsym',queue_full=None,normal_marker=None,recovery_marker=None,calls=[],exit_codes=[],elapsed_ms=[],fd_balanced=None,errno_preserved=None,errno_trace=None)
    else:
     whole=name.startswith('busybox-logger');fatal=name=='lanauth-central';component='percent-m' if name=='header-percent-m' else name.removesuffix('-central')
-    expected_exit=1 if fatal else 0;calls=[1,1 if whole or fatal else 128,1];elapsed=[]
+    expected_exit=1 if fatal else 0;calls=[1,1 if whole or fatal else 128,1];elapsed=[];codes=[];traces=[]
     needle=b'literal %n %s %%' if whole or component in DOWNLOADED_MODES else b'PUBLIC seq=0 '
     if component=='percent-m':needle=b'literal %m | No such file or directory'
     if component=='smartdns':needle=b"smartdns: process config file 'literal %n %s %%' failed at line 13."
@@ -345,27 +383,33 @@ def worker_cases(args,rows):
       command=['qemu-mipsel',paths[key]]
       command+=([str(DOWNLOADED_MODES[component]),str(count),'literal %n %s %%'] if key=='downloaded' else [component,str(count),'normal'])
       data=None
-     out,ms=run_program(command,expected_exit,data);elapsed.append(ms)
+     out,ms,status=run_program(command,expected_exit,data);elapsed.append(ms);codes.append(status)
+     if component=='busybox-info':traces.append(parse_errno_trace(out,count))
      if not whole and not fatal:
       matches=re.findall(rb'FD_BALANCE before=([0-9]+) after=([0-9]+)\n',out)
       require(len(matches)==1 and int(matches[0][0])>=4 and matches[0][0]==matches[0][1],'Central adapter FD balance missing')
       if component not in DOWNLOADED_MODES:require(('PRODUCER component='+component+' count='+str(count)+' errno=').encode() in out,'Central producer call count missing')
      if index!=1:receiver.marker(needle,13 if whole else PRIORITY[component])
-    row=dict(case=name,role='actual-shipped-logger' if whole else 'actual-central-functions',queue_full=True,normal_marker=True,recovery_marker=True,calls=calls,exit_codes=[expected_exit]*3,elapsed_ms=elapsed,fd_balanced=None if whole or fatal else True,errno_preserved=None if whole or fatal else True)
+    row=dict(case=name,role='actual-shipped-logger' if whole else 'actual-central-functions',queue_full=True,normal_marker=True,recovery_marker=True,calls=calls,exit_codes=codes,elapsed_ms=elapsed,fd_balanced=None if whole or fatal else True,errno_preserved=None if whole or fatal or component=='busybox-info' else True,errno_trace=traces if component=='busybox-info' else None)
    rows.append(row);print('Target producer PASS '+name,flush=True)
-  validate_records(rows)
+  validate_records(rows,source_only=source_only)
  finally:receiver.close()
 
 
-def worker(args):
- namespaces=base.namespace_guard(json.loads(args.anchor_fds))
+def private_filesystems(sysroot=None):
+ # Call only after anchored namespace_guard has proven private root PID1.
  for name,size in FILESYSTEM_LIMITS.items():
   subprocess.run(['mount','-n','-t','tmpfs','-o','size='+str(size)+',mode=0755','tmpfs','/'+name],check=True,capture_output=True)
-  prefix=args.sysroot/name;require(not prefix.is_symlink(),'QEMU private mount alias');prefix.mkdir(exist_ok=True)
-  subprocess.run(['mount','-n','--bind','/'+name,str(prefix)],check=True,capture_output=True)
+  if sysroot is not None:
+   prefix=sysroot/name;require(not prefix.is_symlink(),'QEMU private mount alias');prefix.mkdir(exist_ok=True)
+   subprocess.run(['mount','-n','--bind','/'+name,str(prefix)],check=True,capture_output=True)
  for name,minor,mode in (('null',3,0o666),('urandom',9,0o444)):
   os.mknod('/dev/'+name,stat.S_IFCHR|mode,os.makedev(1,minor));os.chmod('/dev/'+name,mode)
  base.regular(Path('/etc/passwd'),b'root:x:0:0:root:/:/bin/sh\n',0o644)
+
+
+def worker(args):
+ namespaces=base.namespace_guard(json.loads(args.anchor_fds));private_filesystems(args.sysroot)
  inputs=source_inputs(args.trunk);sources=source_hashes(inputs)
  report=dict(schema_version=1,status='FAIL',profile='k2p-4.4',execution_role=ROLE,source_sha256=sources,shipped=shipped_proof(args.rootfs),required_cases=list(CASE_NAMES),checks=[],filesystem_limits=FILESYSTEM_LIMITS,limits=LIMITS,contract=CONTRACT,probes=json.loads(args.probe_metadata),plugin_closure=plugin_closure(args.rootfs),import_check=import_proof(args.rootfs),patched_sources={k:sha(v.encode())for k,v in apply_patches(inputs).items()},failure=None,
   isolation=dict(namespaces=namespaces,worker_pid=os.getpid(),loopback_only=True,private_mount_propagation=True,anchors_cloexec=True,namespace_exit_confirmed=False,private_dev_log=True))
@@ -374,12 +418,82 @@ def worker(args):
  finally:base.write_output(args.output,json.loads(args.expected_output),report)
 
 
+def adapter_worker(args):
+ require(args.rootfs is None and args.sysroot is None,'Source-only adapter mode must not bind an image')
+ namespaces=base.namespace_guard(json.loads(args.anchor_fds));private_filesystems()
+ report=dict(schema_version=1,status='FAIL',profile='k2p-4.4',execution_role=ADAPTER_ROLE,
+  source_sha256=source_hashes(source_inputs(args.trunk)),required_cases=list(ADAPTER_CASE_NAMES),checks=[],
+  filesystem_limits=FILESYSTEM_LIMITS,limits=LIMITS,contract=ADAPTER_CONTRACT,probes=json.loads(args.probe_metadata),failure=None,
+  isolation=dict(namespaces=namespaces,worker_pid=os.getpid(),loopback_only=True,private_mount_propagation=True,anchors_cloexec=True,namespace_exit_confirmed=False,private_dev_log=True))
+ try:worker_cases(args,report['checks'],source_only=True);report['status']='PASS'
+ except Exception as error:report['failure']=str(error)[:4096];raise
+ finally:base.write_output(args.output,json.loads(args.expected_output),report)
+
+
+def validate_adapter_report(report,sources,probes):
+ require(type(report)is dict and set(report)=={'schema_version','status','profile','execution_role','source_sha256','required_cases','checks','filesystem_limits','limits','contract','isolation','probes','failure'},'Source-only adapter report schema differs')
+ require(type(report['schema_version'])is int and report['schema_version']==1 and report['status']=='PASS' and report['profile']=='k2p-4.4' and report['failure']is None,'Source-only adapter preflight failed')
+ require(report['execution_role']==ADAPTER_ROLE and report['source_sha256']==sources and report['probes']==probes and
+         report['required_cases']==list(ADAPTER_CASE_NAMES) and report['filesystem_limits']==FILESYSTEM_LIMITS and report['limits']==LIMITS and report['contract']==ADAPTER_CONTRACT,'Source-only adapter role/inputs/contract differs')
+ validate_isolation(report['isolation']);return validate_records(report['checks'],source_only=True)
+
+
+def read_preflight_file(path,maximum):
+ fd=os.open(path,os.O_RDONLY|os.O_NONBLOCK|os.O_NOFOLLOW)
+ try:
+  before=os.fstat(fd)
+  require(stat.S_ISREG(before.st_mode) and before.st_nlink==1 and 0<before.st_size<=maximum,'Unsafe/empty/oversized preflight input')
+  with os.fdopen(fd,'rb',closefd=False)as stream:data=stream.read(maximum+1)
+  after=os.fstat(fd)
+  require((before.st_dev,before.st_ino,before.st_size,before.st_mode,before.st_mtime_ns,before.st_ctime_ns)==
+          (after.st_dev,after.st_ino,after.st_size,after.st_mode,after.st_mtime_ns,after.st_ctime_ns) and len(data)==before.st_size,'Preflight bytes changed while reading')
+  return data
+ finally:os.close(fd)
+
+
+def reuse_compiled_probes(path,inputs):
+ def unique(pairs):
+  value={}
+  for key,item in pairs:
+   require(key not in value,'Duplicate compile report JSON key');value[key]=item
+  return value
+ report=json.loads(read_preflight_file(path,LIMITS['report_bytes']),object_pairs_hook=unique)
+ require(type(report)is dict and set(report)=={'status','execution_role','source_sha256','probes'} and report['status']=='COMPILED' and
+         report['execution_role']==COMPILE_ROLE and report['source_sha256']==source_hashes(inputs),'Compile-only preflight report is not bound to this source')
+ generated=generate_sources(inputs);metadata={};paths={}
+ require(type(report['probes'])is dict and set(report['probes'])==set(generated),'Missing compiled source probes')
+ for key,code in generated.items():
+  cfile=path.with_name('target-syslog-'+key+'-probe.c');binary=cfile.with_suffix('')
+  require(read_preflight_file(cfile,1048576)==code.encode(),'Precompiled C is not exact regenerated source')
+  data=read_preflight_file(binary,4*1024*1024);hook.validate_static_mips(data)
+  actual=dict(source_sha256=sha(code.encode()),sha256=sha(data),bytes=len(data),elf=base.elf(data))
+  require(report['probes'][key]==actual,'Precompiled ELF bytes/hash differ from compile-only proof')
+  metadata[key]=actual;paths[key]=str(binary)
+ return metadata,paths
+
+
+def adapter_preflight(args):
+ require(sys.platform.startswith('linux') and args.preflight_result is not None and args.rootfs is None and args.sysroot is None,'Explicit source-only Linux adapter mode requires compile result and no image')
+ inputs=source_inputs(args.trunk);sources=source_hashes(inputs)
+ probes,paths=reuse_compiled_probes(args.preflight_result,inputs)
+ for path in (args.trunk,args.output,args.preflight_result,Path(__file__).resolve(),*(Path(p)for p in paths.values())):
+  require(not any(path.is_relative_to('/'+name)for name in FILESYSTEM_LIMITS),'Source preflight input hidden by private mounts')
+ expected=base.prepare_output(args.output)
+ command=(['sudo','-n','env','PATH='+os.environ['PATH']]if os.geteuid()else[])+[sys.executable,str(Path(__file__).resolve()),'--root-parent','--adapter-preflight','--trunk',str(args.trunk),'--output',str(args.output),'--expected-output',json.dumps(expected),'--probe-metadata',json.dumps(probes),'--probe-paths',json.dumps(paths)]
+ subprocess.run(command,check=True,timeout=LIMITS['worker_seconds']+30)
+ require(base.output_identity(args.output)==expected,'Root worker changed source-only report owner/inode')
+ validate_adapter_report(json.loads(args.output.read_text()),sources,probes)
+ print('Source-only MIPS syslog adapters: fixed'+str(len(ADAPTER_CASE_NAMES))+' private-namespace cases PASS; no shipped-image claim')
+
+
 def root_parent(args):
  require(sys.platform.startswith('linux') and os.geteuid()==0,'Linux root launcher required')
  expected=json.loads(args.expected_output);require(base.output_identity(args.output)==expected,'Parent-owned producer output changed')
  anchors={name:os.open('/proc/self/ns/'+name,os.O_RDONLY|os.O_CLOEXEC)for name in ('mnt','net','pid')}
  command=['unshare','--mount','--net','--pid','--fork','--mount-proc','--kill-child=KILL','--propagation','private',sys.executable,str(Path(__file__).resolve()),'--worker']
- for key in ('trunk','rootfs','sysroot','output'):command+=['--'+key,str(getattr(args,key))]
+ for key in ('trunk','rootfs','sysroot','output'):
+  if getattr(args,key)is not None:command+=['--'+key,str(getattr(args,key))]
+ if args.adapter_preflight:command+=['--adapter-preflight']
  command+=['--expected-output',args.expected_output,'--anchor-fds',json.dumps(anchors),'--probe-metadata',args.probe_metadata,'--probe-paths',args.probe_paths]
  try:subprocess.run(command,check=True,timeout=LIMITS['worker_seconds'],pass_fds=tuple(anchors.values()))
  finally:
@@ -392,7 +506,8 @@ def main():
  parser=argparse.ArgumentParser(description=__doc__)
  for key in ('trunk','output'):parser.add_argument('--'+key,type=Path,required=True)
  for key in ('rootfs','sysroot'):parser.add_argument('--'+key,type=Path)
- parser.add_argument('--preflight',action='store_true')
+ stages=parser.add_mutually_exclusive_group();stages.add_argument('--preflight',action='store_true');stages.add_argument('--adapter-preflight',action='store_true')
+ parser.add_argument('--preflight-result',type=Path)
  parser.add_argument('--compiler',type=Path)
  modes=parser.add_mutually_exclusive_group();modes.add_argument('--worker',action='store_true');modes.add_argument('--root-parent',action='store_true')
  for key in ('expected-output','anchor-fds','probe-metadata','probe-paths'):parser.add_argument('--'+key)
@@ -400,12 +515,15 @@ def main():
  for key in ('trunk','rootfs','sysroot'):
   if getattr(args,key)is not None:setattr(args,key,getattr(args,key).resolve())
  args.output=args.output.parent.resolve()/args.output.name
- if args.worker:return worker(args)
+ if args.worker:return adapter_worker(args) if args.adapter_preflight else worker(args)
  if args.root_parent:return root_parent(args)
+ if args.adapter_preflight:
+  if args.preflight_result is not None:args.preflight_result=args.preflight_result.parent.resolve()/args.preflight_result.name
+  return adapter_preflight(args)
  if args.preflight:
   require(sys.platform.startswith('linux') and args.compiler is not None,'Linux MIPS compile preflight required')
   inputs=source_inputs(args.trunk);metadata,_=compile_probes(args,inputs)
-  args.output.write_text(json.dumps(dict(status='COMPILED',execution_role='Cross-compile only: static actual-source logger probes; no target/daemon/hardware execution',source_sha256=source_hashes(inputs),probes=metadata),indent=2)+'\n')
+  args.output.write_text(json.dumps(dict(status='COMPILED',execution_role=COMPILE_ROLE,source_sha256=source_hashes(inputs),probes=metadata),indent=2)+'\n')
   print('Syslog producers: both actual-source MIPS probes strict compiled; no runtime claim');return
  require(args.rootfs is not None and args.sysroot is not None,'Final producer gate requires actual image and sysroot')
  require(sys.platform.startswith('linux') and args.compiler is not None,'Linux MIPS producer gate required; no fallback PASS')
