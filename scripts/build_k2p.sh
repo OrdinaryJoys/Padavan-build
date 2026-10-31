@@ -55,7 +55,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_dns_dynamic_config test_dns_snapshot test_hook_runner \
                        test_dns_runtime_files test_dns_runtime_consumers test_ntp_startup \
                        test_dns_log_backpressure test_dns_reload_transaction test_logmessage_backpressure \
-                       test_dns_ethers_reload \
+                       test_dns_ethers_reload test_bounded_syslog test_downloaded_log_adapters test_inadyn_log_patch \
                        test_watchdog_dns_recovery test_watchdog_scheduled_update \
                        test_notification_consumer test_firmware_writer_protocol test_upgrade_upload_no_public_writer; do
     test -f "$root/source/tests/$required_test.py"
@@ -109,6 +109,11 @@ if [ "$flavor" = "k2p-4.4" ]; then
   } > "$diagnostics/target-dns-optional-syntax.txt" 2>&1
   python3 "$root/scripts/check_target_watchdog.py" --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --output "$diagnostics/target-watchdog-preflight.json"
+  # Compile actual-source bounded logger probes with the real MIPS compiler
+  # before firmware make; this stage claims compilation, not target runtime.
+  mkdir -p "$diagnostics/syslog-preflight"
+  python3 "$root/scripts/check_target_syslog_producers.py" --preflight --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --output "$diagnostics/syslog-preflight/result.json"
   mkdir -p "$diagnostics/ntp-preflight"
   python3 "$root/scripts/check_target_ntp.py" --static --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --sysroot "$toolchain" \
@@ -192,6 +197,11 @@ if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/check_target_log_reload.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
     --sysroot "$qemu_root" --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --output "$diagnostics/target-log-reload.json"
+  python3 "$root/scripts/check_target_syslog_producers.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
+    --sysroot "$qemu_root" --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --output "$diagnostics/target-syslog-producers.json"
+  python3 "$root/scripts/check_target_reload_latency.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
+    --sysroot "$qemu_root" --output "$diagnostics/target-reload-latency.json"
   python3 "$root/scripts/check_target_ntp.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --sysroot "$qemu_root" \
     --output "$diagnostics/target-ntp.json"
@@ -379,6 +389,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
   cp "$diagnostics/"{target-hook.json,target-hook-probe.c,target-hook-probe} "$dist/"
   cp "$diagnostics/"{target-runtime-dns.json,target-ntp.json,target-ntp-probe.c,target-ntp-probe,busybox-applets.txt} "$dist/"
   cp "$diagnostics/"{target-log-reload.json,target-log-reload-probe.c,target-log-reload-probe} "$dist/"
+  cp "$diagnostics/"{target-syslog-producers.json,target-syslog-central-probe.c,target-syslog-central-probe,target-syslog-downloaded-probe.c,target-syslog-downloaded-probe,target-reload-latency.json} "$dist/"
 fi
 cp "$diagnostics/"{provenance.configured_input.json,provenance.validated_output.json,firmware-configured.config,source-worktree.configured_input.patch,build-worktree.configured_input.patch} "$dist/"
 cp .config "$dist/firmware.config"
