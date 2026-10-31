@@ -36,20 +36,23 @@ CASE_NAMES = ('regular-servers', 'symlink-regular-servers', 'hardlink-regular-se
               'fifo-addn-hosts', 'fifo-default-hosts', 'fifo-dhcp-hostsfile',
               'fifo-dhcp-optsfile', 'fifo-log-startup', 'fifo-lease-startup',
               'regular-lease-startup', 'lease-init-valid', 'lease-init-exit7',
-              'lease-init-timeout', 'lease-init-output-over2M')
+              'lease-init-timeout', 'lease-init-output-over2M', 'null-log-startup',
+              'null-lease-startup', 'symlink-null-log-refused', 'symlink-null-lease-refused')
 PARSER_CASES = {'fifo-resolv-domain-test', 'fifo-resolv-domain-capture'}
 FATAL_CASES = {'fifo-log-startup', 'fifo-lease-startup', 'lease-init-exit7',
-               'lease-init-timeout', 'lease-init-output-over2M'}
+               'lease-init-timeout', 'lease-init-output-over2M',
+               'symlink-null-log-refused', 'symlink-null-lease-refused'}
 REJECT_CASES = set(CASE_NAMES) - {'regular-servers', 'symlink-regular-servers',
                                'hardlink-regular-servers', 'atomic-servers-reload',
-                               'regular-lease-startup', 'lease-init-valid'}
+                               'regular-lease-startup', 'lease-init-valid',
+                               'null-log-startup', 'null-lease-startup'}
 FILESYSTEM_LIMITS = base.FILESYSTEM_LIMITS.copy()
 LIMITS = {'worker_seconds': 180, 'command_seconds': 20, 'nonregular_seconds': 5,
           'query_seconds': 4, 'report_bytes': 1048576, 'output_bytes': 131072,
           'lease_init_min_ms': 9500, 'lease_init_max_ms': 15000}
 ROLE = 'Actual shipped MIPS DNS daemon/parser under QEMU; isolated synthetic files and loopback upstreams'
 KEYS = {'case', 'exit_code', 'rejected', 'diagnostic_observed', 'first_answer',
-        'after_answer', 'daemon_stopped', 'elapsed_ms'}
+        'after_answer', 'daemon_stopped', 'elapsed_ms', 'null_identity_preserved'}
 
 
 def require(value, message):
@@ -79,6 +82,8 @@ def validate_records(records):
         after = None if fatal else ('192.0.2.52' if name == 'atomic-servers-reload' else first)
         require(row['first_answer'] == first and row['after_answer'] == after and row['daemon_stopped'] is True,
                 'Runtime DNS answer/cleanup mismatch')
+        require(row['null_identity_preserved'] is (True if 'null-' in name else None),
+                'Standard null device ownership/mode/identity was not preserved')
         require(type(row['elapsed_ms']) is int and 0 <= row['elapsed_ms'] <= LIMITS['command_seconds'] * 1000,
                 'Runtime DNS case exceeded deadline')
         if name == 'lease-init-timeout':
@@ -230,12 +235,15 @@ def worker_cases(args):
                       'no-hosts\nno-resolv\ncache-size=0\nserver=127.0.0.1#11530\n'
                       'pid-file=/var/run/snapshot-daemon.pid\nlog-facility=' + str(log) + '\n')
             payload = b'server=/snapshot.fixture/127.0.0.1#11530\n'
+            null_before = os.stat('/dev/null') if 'null-' in case else None
             if 'servers' in case and (case not in REJECT_CASES or case.endswith('reload')):
                 # A different fallback makes the positive/reload answers prove
                 # that the file's more specific policy was really installed.
                 common = common.replace('server=127.0.0.1#11530', 'server=127.0.0.1#11532')
             if case.startswith('fifo-') or case == 'symlink-fifo-servers-startup':
                 os.mkfifo(source, 0o644)
+            elif case.startswith('symlink-null-'):
+                source.symlink_to('/dev/null')
             elif case == 'directory-servers-startup':
                 source.mkdir()
             elif case.startswith('oversize-'):
@@ -246,7 +254,7 @@ def worker_cases(args):
                 base.regular(source, b'#\n' * 65537, 0o644)
             else:
                 base.regular(source, payload, 0o644)
-            if case.startswith('symlink-'):
+            if case in ('symlink-regular-servers', 'symlink-fifo-servers-startup'):
                 alias = directory / 'alias'; alias.symlink_to(source); source = alias
             elif case == 'hardlink-regular-servers':
                 alias = directory / 'alias'; os.link(source, alias); source = alias
@@ -265,6 +273,12 @@ def worker_cases(args):
                 common += ('dhcp-hostsfile=' if case == 'fifo-dhcp-hostsfile' else 'dhcp-optsfile=') + str(source) + '\n'
             elif case == 'fifo-log-startup':
                 common = common.replace('log-facility=' + str(log), 'log-facility=' + str(source))
+            elif case in ('null-log-startup', 'symlink-null-log-refused'):
+                if case == 'null-log-startup': source = Path('/dev/null')
+                common = common.replace('log-facility=' + str(log), 'log-facility=' + str(source))
+            elif case in ('null-lease-startup', 'symlink-null-lease-refused'):
+                if case == 'null-lease-startup': source = Path('/dev/null')
+                common += 'dhcp-range=127.0.0.10,127.0.0.20,255.0.0.0,1h\ndhcp-leasefile=' + str(source) + '\n'
             elif case in ('fifo-lease-startup', 'regular-lease-startup'):
                 if case == 'regular-lease-startup': base.regular(source, b'', 0o644)
                 common += 'dhcp-range=127.0.0.10,127.0.0.20,255.0.0.0,1h\ndhcp-leasefile=' + str(source) + '\n'
@@ -337,9 +351,16 @@ def worker_cases(args):
                 stopped = base.stop_daemon(args.rootfs)
                 Path('/var/run/snapshot-daemon.pid').unlink(missing_ok=True)
             require(quiescent(), 'Runtime DNS process-tree cleanup failed')
+            null_identity = None
+            if null_before is not None:
+                after_null = os.stat('/dev/null')
+                attributes = ('st_dev', 'st_ino', 'st_mode', 'st_uid', 'st_gid', 'st_rdev')
+                require(all(getattr(null_before, key) == getattr(after_null, key) for key in attributes),
+                        'DNS changed the standard null device owner, permissions or identity')
+                null_identity = True
             rows.append(dict(case=case, exit_code=status, rejected=rejected, diagnostic_observed=True,
                              first_answer=first, after_answer=after, daemon_stopped=stopped,
-                             elapsed_ms=int((time.monotonic() - start) * 1000)))
+                             elapsed_ms=int((time.monotonic() - start) * 1000), null_identity_preserved=null_identity))
             shutil.rmtree(directory)
             if case == 'fifo-default-hosts': source.unlink()
         validate_records(rows)
