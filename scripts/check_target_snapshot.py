@@ -145,7 +145,7 @@ def preflight(args):
     report = {'schema_version': 1, 'status': 'FAIL', 'profile': 'k2p-4.4',
               'role': 'Static full production DNS source and target-libc parser-only preflight; not the shipped binary or a daemon startup proof',
               'source_sha256': source_proof(args.trunk), 'copts': copts,
-              'strict_new_modules': ['dynamic_conf.c', 'conf_snapshot.c', 'runtime_file.c'],
+              'strict_new_modules': ['dynamic_conf.c', 'conf_snapshot.c', 'runtime_file.c', 'reload_file.c'],
               'upstream_flags': ['-std=gnu99', '-Os', '-Wall', '-Wextra'],
               'objects': [], 'checks': [], 'binary_sha256': None, 'failure': None}
     log = bytearray()

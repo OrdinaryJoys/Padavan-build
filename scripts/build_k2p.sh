@@ -54,6 +54,8 @@ if [ "$flavor" = "k2p-4.4" ]; then
   for required_test in test_config_publish test_upgrade_storage_gate test_startup_capacity_linux \
                        test_dns_dynamic_config test_dns_snapshot test_hook_runner \
                        test_dns_runtime_files test_dns_runtime_consumers test_ntp_startup \
+                       test_dns_log_backpressure test_dns_reload_transaction test_logmessage_backpressure \
+                       test_dns_ethers_reload \
                        test_watchdog_dns_recovery test_watchdog_scheduled_update \
                        test_notification_consumer test_firmware_writer_protocol test_upgrade_upload_no_public_writer; do
     test -f "$root/source/tests/$required_test.py"
@@ -89,6 +91,22 @@ if [ "$flavor" = "k2p-4.4" ]; then
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --output "$diagnostics/target-hook.json"
   python3 "$root/scripts/check_target_snapshot.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --output "$diagnostics/target-snapshot-preflight.json"
+  # Keep the shipped NO_INOTIFY profile unchanged. Syntax-check both sides of
+  # the optional legacy-directory guard against real Linux/MIPS headers too.
+  {
+    for inotify_profile in disabled enabled; do
+      optional_flags=()
+      if [ "$inotify_profile" = disabled ]; then optional_flags=(-DNO_INOTIFY); fi
+      for source_file in cache.c option.c dnsmasq.c dhcp.c; do
+        "$toolchain/bin/mipsel-linux-uclibc-gcc" -std=gnu99 -Wall -Wextra \
+          -Werror=implicit-function-declaration -DHAVE_BROKEN_RTC -DNO_AUTH -DNO_LOOP \
+          -DNO_TFTP -DNO_IPSET "${optional_flags[@]}" -fsyntax-only \
+          "$trunk/user/dnsmasq/dnsmasq-2.93/src/$source_file"
+        printf 'PASS inotify=%s source=%s\n' "$inotify_profile" "$source_file"
+      done
+    done
+    printf 'Optional inotify MIPS syntax: 8 checks PASS\n'
+  } > "$diagnostics/target-dns-optional-syntax.txt" 2>&1
   python3 "$root/scripts/check_target_watchdog.py" --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --output "$diagnostics/target-watchdog-preflight.json"
   mkdir -p "$diagnostics/ntp-preflight"
@@ -171,6 +189,9 @@ if [ "$flavor" = "k2p-4.4" ]; then
     --sysroot "$qemu_root" --output "$diagnostics/target-snapshot.json"
   python3 "$root/scripts/check_target_runtime_dns.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
     --sysroot "$qemu_root" --output "$diagnostics/target-runtime-dns.json"
+  python3 "$root/scripts/check_target_log_reload.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
+    --sysroot "$qemu_root" --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --output "$diagnostics/target-log-reload.json"
   python3 "$root/scripts/check_target_ntp.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --sysroot "$qemu_root" \
     --output "$diagnostics/target-ntp.json"
@@ -357,6 +378,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
   cp "$diagnostics/"{target-watchdog.json,target-watchdog-ss-on.c,target-watchdog-ss-on,target-watchdog-ss-off.c,target-watchdog-ss-off,target-snapshot.json} "$dist/"
   cp "$diagnostics/"{target-hook.json,target-hook-probe.c,target-hook-probe} "$dist/"
   cp "$diagnostics/"{target-runtime-dns.json,target-ntp.json,target-ntp-probe.c,target-ntp-probe,busybox-applets.txt} "$dist/"
+  cp "$diagnostics/"{target-log-reload.json,target-log-reload-probe.c,target-log-reload-probe} "$dist/"
 fi
 cp "$diagnostics/"{provenance.configured_input.json,provenance.validated_output.json,firmware-configured.config,source-worktree.configured_input.patch,build-worktree.configured_input.patch} "$dist/"
 cp .config "$dist/firmware.config"
