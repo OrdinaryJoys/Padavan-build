@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Validate the shipped writer's refusal and an inert MIPS protocol probe.
+"""Validate legacy protocol refusal and an inert MIPS writer-core probe.
 
-The probe uses the locked production header/dispatch and ordinary files. No
+The probe uses the locked production core header and ordinary files. No
 MTD, real erase/write IOCTL, real mlockall, daemon or reboot is executed.
 """
 import argparse
@@ -21,6 +21,7 @@ import zlib
 
 SOURCE_PATHS = {
     'mtd.c': 'user/mtd_write/mtd.c',
+    'legacy_guard.h': 'user/mtd_write/legacy_guard.h',
     'upgrade_write.h': 'user/mtd_write/upgrade_write.h',
     'crc32.h': 'user/mtd_write/crc32.h',
     'crc32.c': 'user/mtd_write/crc32.c',
@@ -51,7 +52,7 @@ CASES = (
     ('state-verified-sync-unknown', 'verified-dir-sync', 21, 'VERIFIED', True),
     ('global-lock-busy-unknown', 'global-lock', 21, 'PREWRITE', False),
 )
-CASE_NAMES = ('shipped-unsafe-image-prewrite',) + tuple(row[0] for row in CASES)
+CASE_NAMES = ('shipped-legacy-protocol-refused',) + tuple(row[0] for row in CASES)
 IMAGE_BYTES = 9064
 PADDED_BYTES = 12288
 FIELDS = {'case', 'backend', 'fault', 'exit_code', 'child_pid', 'record', 'events',
@@ -80,10 +81,11 @@ def generate_source(texts):
     harness = strings[0]
     branch = re.findall(r'\tif \(argc > 1 && !strcmp\(argv\[1\], "--upgrade-write"\)\) \{\n.*?\n\t\}',
                         texts['mtd.c'], re.S)
-    require(len(branch) == 1 and texts['mtd.c'].index(branch[0]) < texts['mtd.c'].index('while ((ch = getopt'),
-            'Production writer does not dispatch the dedicated protocol before legacy options')
+    require(len(branch) == 1 and texts['mtd.c'].index(branch[0]) < texts['mtd.c'].index('while ((ch = getopt') and
+            'return 21;' in branch[0] and 'firmware_upgrade_write(' not in branch[0],
+            'Legacy writer must reject the former protocol before legacy options')
     require('-Wl,-z,now' in texts['Makefile'], 'Writer must bind dynamic symbols before main')
-    old_main = 'int main(int argc,char**argv){if(argc!=4)return 99;return firmware_upgrade_write(argv[1],argv[2],argv[3]);}'
+    old_main = 'int main(int argc,char**argv){if(argc!=4)return 99;_exit(firmware_upgrade_write(argv[1],argv[2],argv[3]));}'
     require(harness.count(old_main) == 1, 'Inert fixture main changed')
     header = texts['upgrade_write.h'].replace('#include "crc32.h"', texts['crc32.h'])
     require(header != texts['upgrade_write.h'], 'CRC header inclusion missing')
@@ -93,7 +95,9 @@ def generate_source(texts):
     harness = harness.replace('#include "upgrade_write.h"',
                               'static char *probe_operation;\n#define FWUP_OPERATION_DIR probe_operation\n' + header)
     new_main = ('int main(int argc,char**argv){\nprobe_operation=getenv("WRITER_OPERATION");\n'
-                'if(!probe_operation)return 98;\n' + branch[0] + '\nreturn 99;\n}')
+                'if(!probe_operation)return 98;\n'
+                'if(argc!=5||strcmp(argv[1],"--upgrade-write"))return 99;\n'
+                '_exit(firmware_upgrade_write(argv[2],argv[3],argv[4]));\n}')
     harness = harness.replace(old_main, new_main)
     return ('/* Locked writer source probe; all device and memory-lock effects are inert. */\n'
             + harness + '\n' + texts['crc32.c'])
@@ -128,18 +132,22 @@ def expected_events(fault):
 
 def validate_records(records, expected_owner=0, include_shipped=True):
     require(type(include_shipped) is bool, 'Writer shipped-case selection must be boolean')
-    specs = [('shipped-unsafe-image-prewrite', None, 20, 'PREWRITE', None), *CASES] if include_shipped else list(CASES)
+    specs = [('shipped-legacy-protocol-refused', None, 21, None, None), *CASES] if include_shipped else list(CASES)
     require(type(records) is list and [row.get('case') if type(row) is dict else None for row in records] == [spec[0] for spec in specs],
             'Writer case order/set missing, duplicate or unexpected')
     for row, spec in zip(records, specs):
         name, fault, code, state, matches = spec
-        shipped = name == 'shipped-unsafe-image-prewrite'
+        shipped = name == 'shipped-legacy-protocol-refused'
         require(set(row) == FIELDS, 'Writer record keys changed: ' + name)
         require(row['backend'] == ('actual-shipped-writer' if shipped else 'inert-production-source-MIPS-probe'),
                 'Writer backend role changed: ' + name)
         require(row['fault'] == fault and type(row['exit_code']) is int and row['exit_code'] == code,
                 'Writer exit/fault mismatch: ' + name)
         require(type(row['child_pid']) is int and row['child_pid'] > 1, 'Invalid writer child PID')
+        if shipped:
+            require(row['record'] is None and row['record_metadata'] is None and row['events']==[] and
+                    row['payload_matches_snapshot'] is None, 'Legacy refusal created a writer status or used a device')
+            continue
         r = row['record']
         require(type(r) is dict and set(r) == {'state', 'pid', 'target', 'image_bytes', 'verified_bytes'},
                 'Writer status schema mismatch: ' + name)
@@ -209,8 +217,9 @@ def parse_record(path, child_pid):
             {'uid': st.st_uid, 'mode': st.st_mode & 0o7777, 'nlink': st.st_nlink})
 
 
-def execute(command, environment):
-    process = subprocess.Popen(command, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+def execute(command, environment, preexec=None):
+    process = subprocess.Popen(command, env=environment, stdin=subprocess.DEVNULL, close_fds=True,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, preexec_fn=preexec)
     try:
         stdout, stderr = process.communicate(timeout=30)
     except BaseException:
@@ -276,6 +285,13 @@ def worker(rootfs, sysroot, probe, output):
     subprocess.run(['mount', '-n', '--bind', '/tmp', str(sysroot / 'tmp')], check=True, capture_output=True)
     shipped = rootfs / 'bin/mtd_write'
     binding = validate_elf_binding(shipped.read_bytes())
+    # The single actual invocation must be a legacy-protocol refusal. The
+    # build host has no MTD and host reboot/IOCTL remain denied as defense.
+    import types
+    resident = types.ModuleType('_writer_refusal_sandbox')
+    resident_path = Path(__file__).with_name('check_target_resident_upgrade.py')
+    exec(compile(resident_path.read_text(), str(resident_path), 'exec'), resident.__dict__)
+    isolation = resident.refusal_environment()
     rows = []
     with tempfile.TemporaryDirectory(prefix='k2p-writer-target-', dir='/tmp') as temporary:
         base = Path(temporary)
@@ -283,17 +299,20 @@ def worker(rootfs, sysroot, probe, output):
         bad, status = attempt / 'bad-image', attempt / 'status'
         bad.write_bytes(b'not a valid image\n'); bad.chmod(0o600)
         pid, code, stdout, stderr = execute(['qemu-mipsel', '-L', str(sysroot), str(shipped), '--upgrade-write',
-                                           str(bad), 'firmware', str(status)], dict(os.environ))
-        require(code == 20 and not stdout and 'unsafe, empty or oversized image' in stderr,
-                'Shipped writer did not refuse before device discovery: ' + stderr)
-        record, metadata = parse_record(status, pid)
+                                           str(bad), 'firmware', str(status)], {}, resident.refusal_preexec())
+        require(code == 21 and not stdout and stderr ==
+                'mtd_write: firmware protocol moved to the controlled resident upgrade helper\n' and
+                not status.exists() and not status.is_symlink(),
+                'Shipped legacy writer did not refuse the removed protocol: ' + stderr)
+        record, metadata = None, None
         rows.append({'case': CASE_NAMES[0], 'backend': 'actual-shipped-writer', 'fault': None, 'exit_code': code,
                      'child_pid': pid, 'record': record, 'events': [], 'payload_matches_snapshot': None,
                      'record_metadata': metadata})
         for spec in CASES:
             rows.append(run_probe_case(['qemu-mipsel', '-L', str(sysroot), str(probe)], base, spec))
     validate_records(rows)
-    output.write_text(json.dumps({'checks': rows, 'shipped_binding': binding}, indent=2) + '\n')
+    output.write_text(json.dumps({'checks': rows, 'shipped_binding': binding,
+                                 'shipped_refusal_isolation': isolation}, indent=2) + '\n')
     os.chmod(output, 0o644)
 
 
@@ -322,19 +341,20 @@ def check(trunk, rootfs, compiler, sysroot, output):
             actual.st_dev == reserved.st_dev and actual.st_ino == reserved.st_ino,
             'Privileged worker replaced the controller-owned report inode')
     partial = json.loads(output.read_text()); validate_records(partial['checks'])
-    report = {'schema_version': 1, 'status': 'PASS', 'profile': 'k2p-4.4', 'required_cases': list(CASE_NAMES),
+    report = {'schema_version': 2, 'status': 'PASS', 'profile': 'k2p-4.4', 'required_cases': list(CASE_NAMES),
               'checks': partial['checks'], 'source_sha256': {name: hashlib.sha256(text.encode()).hexdigest() for name, text in texts.items()},
               'shipped_writer_sha256': hashlib.sha256((rootfs / 'bin/mtd_write').read_bytes()).hexdigest(),
               'generated_source_sha256': hashlib.sha256(generated.encode()).hexdigest(),
               'mips_probe_sha256': hashlib.sha256(probe.read_bytes()).hexdigest(),
               'binding': {'shipped': partial['shipped_binding'], 'probe': probe_binding},
+              'shipped_refusal_isolation': partial['shipped_refusal_isolation'],
               'filesystem_limits': {'tmp': 24 * 1024 * 1024},
-              'limits': ['One actual shipped writer case refuses a short invalid input before MTD discovery; no real MTD is opened.',
-                         'The20 protocol cases cross-compile the production header and exact dedicated main dispatch with inert ordinary-file device, IOCTL, memory-lock and reboot-free backends.',
+              'limits': ['One actual shipped legacy mtd_write case refuses its removed protocol with21 and no status; no real MTD is opened.',
+                         'The20 core protocol cases cross-compile the production header through an inert ABI shim, not the resident finalizer main; ordinary-file device, IOCTL, memory-lock and reboot effects are inert.',
                          'Neither this test nor checked mlockall proves every page is resident on Linux4.4; internal mlockall errors may be ignored by that kernel.',
                          'No hardware write, erase, memory locking, reboot, power-loss safety or router boot is established.']}
     output.write_text(json.dumps(report, indent=2) + '\n')
-    print('Target firmware writer:21 exact cases PASS (one shipped refusal,20 inert source MIPS cases)')
+    print('Target firmware writer:21 exact cases PASS (one legacy refusal,20 inert core MIPS cases; resident finalizer requires its separate gate)')
     return report
 
 

@@ -290,13 +290,13 @@ FLASH_EXPECTED = {'flash-safe-prewrite-return': {'case': 'flash-safe-prewrite-re
                                     'raw-shared-after:0',
                                     'prepare-checks:1',
                                     'prepare-admission-valid:1']},
- 'flash-verified-reboot-return': {'case': 'flash-verified-reboot-return',
+ 'flash-verified-worker-exit': {'case': 'flash-verified-worker-exit',
                                   'trace': ['phase:1',
                                             'active:1',
                                             'marker:1',
                                             'action-refused:1',
                                             'writer:1',
-                                            'reboot:1',
+                                            'reboot:0',
                                             'raw-shared-after:0',
                                             'prepare-checks:1',
                                             'prepare-admission-valid:1']},
@@ -382,7 +382,7 @@ CASES = (('query-idle', {'adapter': 'components', 'case': 'query-idle'}),
  ('init-signal-masks', {'adapter': 'components', 'case': 'init-signal-masks'}),
  ('flash-safe-prewrite-return', {'adapter': 'flash', 'case': 'flash-safe-prewrite-return'}),
  ('flash-unknown-return', {'adapter': 'flash', 'case': 'flash-unknown-return'}),
- ('flash-verified-reboot-return', {'adapter': 'flash', 'case': 'flash-verified-reboot-return'}),
+ ('flash-verified-worker-exit', {'adapter': 'flash', 'case': 'flash-verified-worker-exit'}),
  ('flash-save-abort', {'adapter': 'flash', 'case': 'flash-save-abort'}),
  ('flash-hook-abort', {'adapter': 'flash', 'case': 'flash-hook-abort'}),
  ('flash-action-already-admitted', {'adapter': 'flash', 'case': 'flash-action-already-admitted'}))
@@ -572,7 +572,7 @@ def generate_source(inputs, fixture_root, owner_uid=0, adapter='components'):
         if adapter == 'components' else
         ('#define ioctl fixture_ioctl', '#define reboot fake_reboot',
          '#define mlockall fixture_mlockall', '#define sync fake_sync',
-         'static int _eval(', 'static int doSystem('))
+         'static int firmware_upgrade_spawn(', 'static int doSystem('))
     for boundary in boundaries:
         require(boundary in generated, 'Missing explicit inert adapter boundary: ' + boundary)
     return generated, functions

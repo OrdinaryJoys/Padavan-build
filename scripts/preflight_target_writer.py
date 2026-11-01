@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Fail early on MIPS compiler/ABI defects in the inert writer protocol probe.
+"""Fail early on MIPS compiler/ABI defects in the inert writer core protocol probe.
 
 This uses static toolchain libc, not the later shipped dynamic runtime. It
-does not replace the final21-case gate and never executes the real writer.
+does not replace the final21-case gate and never executes the real writer or resident finalizer.
 """
 import argparse
 import hashlib

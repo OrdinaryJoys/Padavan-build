@@ -67,7 +67,7 @@ def synthetic_module(transform=lambda text:text):
     boundaries = ('#define kill fixture_kill\n#define reboot fixture_reboot\n'
                   '#define pause fixture_pause\n#define ioctl fixture_ioctl\n'
                   '#define reboot fake_reboot\n#define mlockall fixture_mlockall\n'
-                  '#define sync fake_sync\nstatic int _eval(\nstatic int doSystem(\n')
+                  '#define sync fake_sync\nstatic int firmware_upgrade_spawn(\nstatic int doSystem(\n')
     def generate(texts, fixture_root, owner_uid=0):
         if type(fixture_root) is not str or type(owner_uid) is not int:
             raise ValueError('Wrong pure fixture API')
@@ -158,7 +158,7 @@ class UpgradeTransactionDataControls(unittest.TestCase):
             'upgrade-request-handoff': lambda row: row['trace'].remove('handoff-exclusive:free'),
             'flash-safe-prewrite-return': lambda row: row['trace'].__setitem__(1, 'active:1'),
             'flash-unknown-return': lambda row: row['trace'].__setitem__(6, 'raw-shared-after:1'),
-            'flash-verified-reboot-return': lambda row: row['trace'].__setitem__(2, 'marker:0'),
+            'flash-verified-worker-exit': lambda row: row['trace'].__setitem__(2, 'marker:0'),
         }
         for name, mutate in corruptions.items():
             rows = records()

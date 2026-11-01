@@ -15,16 +15,16 @@ writer = importlib.util.module_from_spec(SPEC); SPEC.loader.exec_module(writer)
 def records():
     rows = []
     for index, (name, fault, code, state, matches) in enumerate([
-            ('shipped-unsafe-image-prewrite', None, 20, 'PREWRITE', None), *writer.CASES]):
+            ('shipped-legacy-protocol-refused', None, 21, None, None), *writer.CASES]):
         pid = 123 + index
-        shipped = name == 'shipped-unsafe-image-prewrite'
+        shipped = name == 'shipped-legacy-protocol-refused'
         rows.append({'case': name, 'backend': 'actual-shipped-writer' if shipped else 'inert-production-source-MIPS-probe',
                      'fault': fault, 'exit_code': code, 'child_pid': pid,
-                     'record': {'state': state, 'pid': pid, 'target': 'firmware',
+                     'record': None if shipped else {'state': state, 'pid': pid, 'target': 'firmware',
                                 'image_bytes': 0 if state == 'PREWRITE' else writer.IMAGE_BYTES,
                                 'verified_bytes': writer.IMAGE_BYTES if state == 'VERIFIED' else 0},
                      'events': [] if shipped else writer.expected_events(fault),
-                     'payload_matches_snapshot': matches, 'record_metadata': {'uid': 0, 'mode': 0o600, 'nlink': 1}})
+                     'payload_matches_snapshot': matches, 'record_metadata': None if shipped else {'uid': 0, 'mode': 0o600, 'nlink': 1}})
     return rows
 
 
@@ -40,12 +40,13 @@ def elf(tags=(), dynamic=True):
 
 
 def sources():
-    branch = '\tif (argc > 1 && !strcmp(argv[1], "--upgrade-write")) {\n\t\treturn firmware_upgrade_write(argv[2],argv[3],argv[4]);\n\t}'
+    branch = '\tif (argc > 1 && !strcmp(argv[1], "--upgrade-write")) {\n\t\treturn 21;\n\t}'
     body = ('#include "mtd-abi.h"\n#include "upgrade_write.h"\n'
-            'int main(int argc,char**argv){if(argc!=4)return 99;return firmware_upgrade_write(argv[1],argv[2],argv[3]);}')
+            'int main(int argc,char**argv){if(argc!=4)return 99;_exit(firmware_upgrade_write(argv[1],argv[2],argv[3]));}')
     fixture = ('class FirmwareWriterProtocolTests:\n @classmethod\n def setUpClass(cls):\n  harness.write_text('
                + repr(body) + ')\n')
     return {'mtd.c': 'int main(int argc,char**argv){\n' + branch + '\nwhile ((ch = getopt',
+            'legacy_guard.h': '/* locked guard */',
             'upgrade_write.h': '#include "crc32.h"\n/* production header */', 'crc32.h': '/* CRC declarations */',
             'crc32.c': '/* CRC table */', 'mtd-abi.h': '/* MTD ABI */', 'fixture': fixture,
             'Makefile': 'LDFLAGS += -Wl,-z,now\n'}
@@ -160,7 +161,7 @@ class TargetWriterTests(unittest.TestCase):
 
     def test_generator_inlines_locked_header_crc_abi_and_main_dispatch(self):
         text = writer.generate_source(sources())
-        for phrase in ('production header', 'CRC declarations', 'CRC table', 'MTD ABI', 'if (argc > 1', 'WRITER_OPERATION'):
+        for phrase in ('production header', 'CRC declarations', 'CRC table', 'MTD ABI', 'if(argc!=5', 'WRITER_OPERATION'):
             self.assertIn(phrase, text)
         self.assertNotIn('#include "upgrade_write.h"', text)
         self.assertEqual(text, writer.generate_source(sources()))

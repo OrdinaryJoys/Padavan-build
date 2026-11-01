@@ -320,6 +320,31 @@ class RootfsImageTests(unittest.TestCase):
         self.assertTrue(result['init_matches_rc'])
         self.assertEqual(result['regular_files_read'], len(validator.REQUIRED_EXECUTABLES) + 1)
 
+    def test_44_requires_resident_worker_but_34_keeps_legacy_profile(self):
+        data = self.squashfs()
+        with self.assertRaisesRegex(ValueError, 'missing SquashFS path: bin/fw_upgrade'):
+            validator.validate_rootfs(data, self.ca_sha256, kernel='4.4')
+        self.assertEqual(validator.validate_rootfs(data, self.ca_sha256, kernel='3.4')['required_executables'],
+                         len(validator.REQUIRED_EXECUTABLES)+1)
+
+    def test_44_resident_worker_mode_and_nonempty_payload_are_checked(self):
+        path = self.root/'bin/fw_upgrade'
+        path.write_bytes(b'resident worker fixture')
+        path.chmod(0o644)
+        with self.assertRaisesRegex(ValueError, 'non-executable'):
+            validator.validate_rootfs(self.squashfs(), self.ca_sha256, kernel='4.4')
+        path.chmod(0o755)
+        path.write_bytes(b'')
+        with self.assertRaisesRegex(ValueError, 'empty required file'):
+            validator.validate_rootfs(self.squashfs(), self.ca_sha256, kernel='4.4')
+        path.write_bytes(b'resident worker fixture')
+        result = validator.validate_rootfs(self.squashfs(), self.ca_sha256, kernel='4.4')
+        self.assertEqual(result['required_executables'], len(validator.REQUIRED_EXECUTABLES)+2)
+
+    def test_unknown_rootfs_profile_cannot_omit_resident_requirement(self):
+        with self.assertRaisesRegex(ValueError, 'unsupported rootfs kernel profile'):
+            validator.validate_rootfs(b'', self.ca_sha256, kernel='unknown')
+
     def test_non_executable_auth_helper_is_rejected(self):
         (self.root / 'usr/libexec/sshd-auth').chmod(0o644)
         with self.assertRaisesRegex(ValueError, 'non-executable'):

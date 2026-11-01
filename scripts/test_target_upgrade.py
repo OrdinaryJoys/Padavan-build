@@ -22,7 +22,7 @@ def inputs():
     functions['flash_firmware'] = 'int flash_firmware(void) { shutdown_hook_run(script_name, 0, HOOK_RUNNER_TIMEOUT_MS, HOOK_RUNNER_TERM_MS, HOOK_RUNNER_KILL_MS); return 0; }'
     markers = '\n'.join(('#define open fixture_open', '#define ioctl fixture_ioctl', '#define reboot fake_reboot',
                          '#define sync fake_sync', '#define mlockall fixture_mlockall', '#define munlockall fixture_munlockall',
-                         '#define daemon fixture_daemon', 'static int _eval(', 'static int doSystem('))
+                         '#define daemon fixture_daemon', 'static int firmware_upgrade_spawn(', 'static int doSystem('))
     adapter = 'FUNCTIONS = ' + repr(upgrade.RC_HELPERS) + '\n'
     adapter += 'def generate(root):\n    return ' + repr(markers + '\n') + " + '\\n'.join(function(source('trunk/user/rc/rc.c'), n) for n in FUNCTIONS) + '\\n' + '\\n'.join(function(source('trunk/user/rc/watchdog.c'), n) for n in " + repr(upgrade.WD_HELPERS) + ')\n'
     return {'rc.c': '#include "hook_runner.h"\n' + '\n'.join(functions[n] for n in upgrade.RC_HELPERS),
@@ -36,13 +36,12 @@ def inputs():
 
 
 RUN = r'''
-static int firmware_upgrade_run(const char *writer,const char *record,pid_t *child)
+static int firmware_upgrade_run(const char *writer,const char *record,int lease,pid_t *child)
 {
- char *args[]={(char*)writer,"--upgrade-write",FW_IMG_NAME,FW_MTD_NAME,(char*)record,NULL};
  sigset_t block,previous;pid_t waited;int status=-1;*child=-1;
  sigemptyset(&block);sigaddset(&block,SIGCHLD);
  if(sigprocmask(SIG_BLOCK,&block,&previous)!=0)return -1;
- if(_eval(args,NULL,0,child)==0){do waited=waitpid(*child,&status,0);while(waited<0&&errno==EINTR);if(waited!=*child)status=-1;}
+ if(firmware_upgrade_spawn(writer,record,lease,child)==0){do waited=waitpid(*child,&status,0);while(waited<0&&errno==EINTR);if(waited!=*child)status=-1;}
  if(sigprocmask(SIG_SETMASK,&previous,NULL)!=0)status=-1;
  return status;
 }
@@ -66,15 +65,15 @@ class TargetUpgradeProofTests(unittest.TestCase):
 #define FW_IMG_NAME "/synthetic/image"
 #define FW_MTD_NAME "firmware"
 static int mode;
-static int _eval(char *const args[],char *path,int timeout,int *child){
- pid_t pid;assert(!path&&!timeout&&!strcmp(args[1],"--upgrade-write"));
+static int firmware_upgrade_spawn(const char *writer,const char *record,int lease,pid_t *child){
+ pid_t pid;(void)writer;(void)record;assert(lease==3);
  if(mode<0){errno=EAGAIN;return EAGAIN;}pid=fork();assert(pid>=0);
  if(pid){*child=pid;return 0;}if(mode==999){kill(getpid(),SIGKILL);_exit(99);}_exit(mode);
 }
 '''
         code = code.replace('#include <stdlib.h>', '#include <stdlib.h>\n#include <string.h>')
         code += upgrade.extract_function(RUN, 'firmware_upgrade_run')
-        code += '\nint main(int argc,char**argv){pid_t child;sigset_t current;assert(argc==2);mode=atoi(argv[1]);int raw=firmware_upgrade_run("/synthetic/writer","/synthetic/status",&child);sigprocmask(SIG_SETMASK,NULL,&current);printf("%d %d\\n",raw,sigismember(&current,SIGCHLD));return 0;}\n'
+        code += '\nint main(int argc,char**argv){pid_t child;sigset_t current;assert(argc==2);mode=atoi(argv[1]);int raw=firmware_upgrade_run("/synthetic/writer","/synthetic/status",3,&child);sigprocmask(SIG_SETMASK,NULL,&current);printf("%d %d\\n",raw,sigismember(&current,SIGCHLD));return 0;}\n'
         path = cls.root / 'wait.c'; path.write_text(code)
         cls.binary = cls.root / 'wait'
         subprocess.run(['clang', '-Wall', '-Wextra', '-Werror', '-fsanitize=address,undefined',
@@ -89,7 +88,7 @@ static int _eval(char *const args[],char *path,int timeout,int *child){
     def test_required_cases_and_helpers_have_independent_fixed_identity(self):
         self.assertEqual(len(upgrade.CASE_NAMES), 59)
         self.assertEqual(hashlib.sha256('\n'.join(upgrade.CASE_NAMES).encode()).hexdigest(),
-                         '73188c31c0156327af07b8071bcf6819263ec1341f4301b29f46b5dedb13d388')
+                         '2785092c7c172858e171e7891d00ca939586fb64be4c0e79ea573e32ae6e6cd4')
         self.assertEqual(len(upgrade.REQUIRED_HELPERS), 18)
         self.assertIn('firmware_upgrade_disable_watchdog', upgrade.REQUIRED_HELPERS)
         self.assertIn('watchdog_main', upgrade.REQUIRED_HELPERS)
@@ -102,7 +101,7 @@ static int _eval(char *const args[],char *path,int timeout,int *child){
 
     def test_wrong_safe_unknown_reboot_phase_trace_and_types_are_rejected(self):
         for name, key, value in [('unknown-signal-with-prewrite', 'phase', 0),
-                                 ('verified-direct-reboot-return', 'reboots', 0),
+                                 ('verified-worker-exit-holds-parent', 'reboots', 1),
                                  ('resident-request-failure', 'stops', [1] * 7),
                                  ('no-hook-safe-prewrite', 'trace', ['writer', 'reboot']),
                                  ('no-hook-safe-prewrite', 'phase', False),

@@ -248,13 +248,16 @@ def resolve_rootfs_path(entries, name):
     return '/'.join(resolved)
 
 
-def validate_rootfs(data, ca_sha256=CA_SHA256):
+def validate_rootfs(data, ca_sha256=CA_SHA256, kernel=None):
     """Read every regular file, then check shipped boot/auth/TLS helpers.
 
     Legal hard links share inodes. Do not reject them as "duplicate inodes";
     duplicate paths, unreadable data and invalid required links are failures.
     No files, symlinks or device nodes from the image are created on the host.
     """
+    if kernel not in (None, '3.4', '4.4'):
+        raise ValueError('unsupported rootfs kernel profile')
+    required_executables = REQUIRED_EXECUTABLES + (('bin/fw_upgrade',) if kernel == '4.4' else ())
     with tempfile.TemporaryDirectory(prefix='k2p-rootfs-') as directory:
         image = pathlib.Path(directory) / 'rootfs.squashfs'
         image.write_bytes(data)
@@ -276,7 +279,7 @@ def validate_rootfs(data, ca_sha256=CA_SHA256):
         # One unsquashfs process reads all file data, including helpers not in
         # the required set. Listing metadata alone does not detect bad blocks.
         run('-no-wildcards', '-cat', str(image), *files, discard=True)
-        for name in (*REQUIRED_EXECUTABLES, 'init'):
+        for name in (*required_executables, 'init'):
             resolved = resolve_rootfs_path(entries, name)
             node = entries[resolved]
             if node['mode'][0] != '-' or node['mode'][3] not in ('x', 's') or int(node['size']) == 0:
@@ -294,7 +297,7 @@ def validate_rootfs(data, ca_sha256=CA_SHA256):
         if actual_ca != ca_sha256:
             raise ValueError('shipped CA certificate SHA256 mismatch')
         return {'entries': len(entries), 'regular_files_read': len(files),
-                'required_executables': len(REQUIRED_EXECUTABLES) + 1,
+                'required_executables': len(required_executables) + 1,
                 'ca_sha256': actual_ca, 'init_matches_rc': True}
 
 
@@ -352,7 +355,7 @@ def main():
         data = args.image.read_bytes()
         result = validate(data, kernel=args.kernel)
         if args.rootfs_check:
-            result['rootfs'] = validate_rootfs(data[result['kernel_bytes']:])
+            result['rootfs'] = validate_rootfs(data[result['kernel_bytes']:], kernel=args.kernel)
     except (OSError, ValueError, UnicodeError) as error:
         parser.exit(1, f'Firmware validation failed: {error}\n')
     result['file'] = args.image.name

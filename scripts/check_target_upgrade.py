@@ -29,7 +29,8 @@ LIMITS = ('Synthetic files use test-user-to-root metadata mapping; no claim of r
           'All daemon, hook, Storage, hardware ioctl, mlock, sync, sleep and reboot effects are inert; fork/wait, private action flock and synthetic file I/O are real target syscalls.',
           'Lock failure is a modeled save wait256; real target Storage locking is a separate proof.',
           'This proves target control flow/ABI, not physical flash/disarm/boot, memory residency under pressure, management survival, or rollback.',
-          'Shutdown-hook outcomes are injected here; the actual bounded supervisor requires the separate mandatory target-hook proof.')
+          'Shutdown-hook outcomes are injected here; the actual bounded supervisor requires the separate mandatory target-hook proof.',
+          'Worker spawn is inert here; real FD admission/static worker finalizer and postwrite parent quietness require the separate resident-upgrade proof.')
 NAMES = ('watchdog', 'rstats', 'detect_internet', 'networkmap', 'lld2d', 'infosvr', 'crond')
 
 
@@ -69,7 +70,7 @@ CASES = (
        ('zero-verified-size', 13), ('wrong-target-case', 14), ('oversize', 15),
        ('zero-pid', 16), ('truncated', 17), ('embedded-nul', 18), ('signed-pid', 19),
        ('prewrite-exit0', 20), ('readback-size-mismatch', 21), ('prewrite-nonzero-size', 22))),
-    case('verified-direct-reboot-return', kind=0), case('existing-inhibit-holds-before-save', marker=True),
+    case('verified-worker-exit-holds-parent', kind=0), case('existing-inhibit-holds-before-save', marker=True),
     case('watchdog-start-wan-notify-inhibited', mode='guard', marker=True, mask=0),
     case('watchdog-start-wan-notify-normal', mode='guard', mask=0),
     case('watchdog-main-inhibited', mode='mainguard', marker=True),
@@ -130,7 +131,7 @@ def generate_source(inputs, fixture_root):
         'if', 'for', 'while', 'sizeof', 'defined', 'doSystem', 'logmessage', 'open', 'openat',
         'fstat', 'fstatat', 'close', 'read', 'write', 'fsync', 'fchmod', 'lseek', 'unlink', 'unlinkat',
         'rmdir', 'mkdtemp', 'strncmp', 'strcmp', 'strlen', 'memcmp', 'memchr', 'memset', 'strerror', 'snprintf',
-        'sigemptyset', 'sigaddset', 'sigprocmask', 'waitpid', '_eval', 'S_ISREG', 'S_ISCHR',
+        'sigemptyset', 'sigaddset', 'sigprocmask', 'waitpid', 'firmware_upgrade_spawn', 'S_ISREG', 'S_ISCHR',
         'WIFEXITED', 'WEXITSTATUS', 'pids', 'start_networkmap', 'start_detect_internet', 'kill_services',
         'ioctl', '_IOR', 'usleep', 'start_rstats', 'stop_rstats', 'stop_detect_internet',
         'stop_networkmap', 'start_lltd', 'stop_lltd', 'start_infosvr', 'stop_infosvr', 'start_crond',
@@ -160,7 +161,7 @@ def generate_source(inputs, fixture_root):
     for marker in ('#define open fixture_open', '#define ioctl fixture_ioctl', '#define reboot fake_reboot',
                    '#define sync fake_sync', '#define mlockall fixture_mlockall',
                    '#define munlockall fixture_munlockall', '#define daemon fixture_daemon',
-                   'static int _eval(', 'static int doSystem('):
+                   'static int firmware_upgrade_spawn(', 'static int doSystem('):
         if marker not in generated:
             raise ValueError('Missing inert adapter boundary: ' + marker)
     return generated, functions
@@ -198,6 +199,7 @@ def expected_trace(o):
     r['mlocks'] = 1; r['trace'].append('pin')
     if o['pin_failure']:
         log(); return r
+    r['syncs'] = 1; r['trace'].append('sync')
     for i, active in enumerate(original):
         if active:
             r['stops'][i] = 1; r['trace'].append('stop:' + NAMES[i])
@@ -216,7 +218,7 @@ def expected_trace(o):
             r['hardware_keepalives'] = 1
         safe = bool(o['hardware'])
     if not safe:
-        r['syncs'] = 1; r['writes'] = 1; r['trace'] += ['sync', 'writer']
+        r['writes'] = 1; r['trace'].append('writer')
         safe = o['kind'] == 1
     if safe:
         log()
@@ -233,9 +235,6 @@ def expected_trace(o):
         r['munlocks'] = 1; r['trace'].append('unpin')
         return r
     r.update(phase=1, inhibited=1)
-    if o['kind'] == 0:
-        log(); r['syncs'] += 1; r['reboots'] = 1; r['trace'] += ['sync', 'reboot']
-    log(True)
     return r
 
 
