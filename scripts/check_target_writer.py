@@ -51,12 +51,16 @@ CASES = (
     ('state-verified-write-unknown', 'verified-write', 21, 'MAYBE_WRITTEN', True),
     ('state-verified-sync-unknown', 'verified-dir-sync', 21, 'VERIFIED', True),
     ('global-lock-busy-unknown', 'global-lock', 21, 'PREWRITE', False),
+    ('success-large-chunked', None, 0, 'VERIFIED', True),
+    ('second-block-error-unknown', 'second-block-error', 21, 'MAYBE_WRITTEN', False),
 )
 CASE_NAMES = ('shipped-legacy-protocol-refused',) + tuple(row[0] for row in CASES)
 IMAGE_BYTES = 9064
 PADDED_BYTES = 12288
+LARGE_IMAGE_BYTES = 150064
+LARGE_CASES = frozenset(('success-large-chunked', 'second-block-error-unknown'))
 FIELDS = {'case', 'backend', 'fault', 'exit_code', 'child_pid', 'record', 'events',
-          'payload_matches_snapshot', 'record_metadata'}
+          'payload_matches_snapshot', 'record_metadata', 'device_write_requests'}
 
 
 def require(condition, message):
@@ -103,7 +107,8 @@ def generate_source(texts):
             + harness + '\n' + texts['crc32.c'])
 
 
-def expected_events(fault):
+def expected_events(fault, image_bytes=IMAGE_BYTES):
+    padded = (image_bytes + 4095) // 4096 * 4096
     if fault == 'global-lock':
         return []
     events = ['open-device']
@@ -114,20 +119,39 @@ def expected_events(fault):
         return events + ['memory-free', 'memory-unlock']
     if fault in ('maybe-write', 'maybe-dir-sync'):
         return events
-    for _ in range(3):
+    for _ in range(padded // 4096):
         events.append('unlock')
         if fault == 'unlock': return events
         events.append('erase')
         if fault == 'erase': return events
-    events += ['write'] * ((PADDED_BYTES + 16) // 17 if fault == 'short' else 2 if fault in ('partial', 'write-eintr') else 1)
-    if fault == 'partial': return events
+    writes = ((padded + 16) // 17 if fault == 'short' else
+              2 if fault in ('partial', 'second-block-error') else
+              (padded + 65535) // 65536 + int(fault == 'write-eintr'))
+    events += ['write'] * writes
+    if fault in ('partial', 'second-block-error'): return events
     events.append('device-sync')
     if fault == 'sync': return events
     events.append('writer-close')
     if fault == 'close': return events
     events.append('readback')
     if fault == 'mismatch': return events
+    events += ['readback'] * ((padded + 16383) // 16384 - 1)
     return events + ['reader-close']
+
+
+def expected_requests(fault, image_bytes=IMAGE_BYTES):
+    padded = (image_bytes + 4095) // 4096 * 4096
+    if fault in ('global-lock','image-read','invalid-crc','pre-read','memory-lock',
+                 'maybe-write','maybe-dir-sync','unlock','erase'):
+        return []
+    if fault == 'short':
+        return [min(padded-offset,65536) for offset in range(0,padded,17)]
+    if fault == 'partial':
+        return [min(padded,65536),min(padded-7,65536)]
+    if fault == 'second-block-error':
+        return [65536,65536]
+    requests = [min(padded-offset,65536) for offset in range(0,padded,65536)]
+    return ([min(padded,65536)] if fault == 'write-eintr' else []) + requests
 
 
 def validate_records(records, expected_owner=0, include_shipped=True):
@@ -146,17 +170,23 @@ def validate_records(records, expected_owner=0, include_shipped=True):
         require(type(row['child_pid']) is int and row['child_pid'] > 1, 'Invalid writer child PID')
         if shipped:
             require(row['record'] is None and row['record_metadata'] is None and row['events']==[] and
-                    row['payload_matches_snapshot'] is None, 'Legacy refusal created a writer status or used a device')
+                    row['payload_matches_snapshot'] is None and row['device_write_requests'] is None,
+                    'Legacy refusal created a writer status or claimed a probe device')
             continue
         r = row['record']
         require(type(r) is dict and set(r) == {'state', 'pid', 'target', 'image_bytes', 'verified_bytes'},
                 'Writer status schema mismatch: ' + name)
         require(all(type(r[k]) is int for k in ('pid', 'image_bytes', 'verified_bytes')),
                 'Writer status numeric types changed: ' + name)
-        image_bytes = 0 if state == 'PREWRITE' else IMAGE_BYTES
-        require(r == {'state': state, 'pid': row['child_pid'], 'target': 'firmware', 'image_bytes': image_bytes,
-                      'verified_bytes': IMAGE_BYTES if state == 'VERIFIED' else 0}, 'Writer status mismatch: ' + name)
-        require(row['events'] == ([] if shipped else expected_events(fault)), 'Writer phase/event order mismatch: ' + name)
+        image_bytes = LARGE_IMAGE_BYTES if name in LARGE_CASES else IMAGE_BYTES
+        require(r == {'state': state, 'pid': row['child_pid'], 'target': 'firmware',
+                      'image_bytes': 0 if state == 'PREWRITE' else image_bytes,
+                      'verified_bytes': image_bytes if state == 'VERIFIED' else 0}, 'Writer status mismatch: ' + name)
+        require(row['events'] == expected_events(fault,image_bytes), 'Writer phase/event order mismatch: ' + name)
+        require(type(row['device_write_requests']) is list and
+                all(type(value) is int and 0 < value <= 65536 for value in row['device_write_requests']) and
+                row['device_write_requests'] == expected_requests(fault,image_bytes),
+                'Writer device request size/order mismatch: ' + name)
         require(row['payload_matches_snapshot'] is matches, 'Writer payload preservation mismatch: ' + name)
         require(type(row['record_metadata']) is dict and set(row['record_metadata']) == {'uid', 'mode', 'nlink'} and
                 all(type(value) is int for value in row['record_metadata'].values()) and
@@ -185,12 +215,13 @@ def validate_elf_binding(data):
     return 'static-no-dynamic-segment'
 
 
-def synthetic_image():
-    data = bytearray(IMAGE_BYTES)
+def synthetic_image(image_bytes=IMAGE_BYTES):
+    require(type(image_bytes) is int and image_bytes in (IMAGE_BYTES,LARGE_IMAGE_BYTES),'Unsupported synthetic image size')
+    data = bytearray(image_bytes)
     data[28:32] = bytes([5, 5, 2, 3]); data[32:36] = bytes([4, 4, 1, 1]); data[36:40] = b'K2P\0'
     struct.pack_into('>I', data, 60, 4096)
-    data[64:] = bytes(n % 251 for n in range(IMAGE_BYTES - 64)); data[4096:4100] = b'hsqs'
-    struct.pack_into('>7I', data, 0, 0x27051956, 0, 0, IMAGE_BYTES - 64,
+    data[64:] = bytes(n % 251 for n in range(image_bytes - 64)); data[4096:4100] = b'hsqs'
+    struct.pack_into('>7I', data, 0, 0x27051956, 0, 0, image_bytes - 64,
                      0x81001000, 0x81001000, zlib.crc32(data[64:]) & 0xffffffff)
     struct.pack_into('>I', data, 4, zlib.crc32(data[:64]) & 0xffffffff)
     return bytes(data)
@@ -248,13 +279,15 @@ def run_probe_case(command, base, spec):
     name, fault, _, _, _ = spec
     directory = base / name; directory.mkdir(mode=0o700)
     source, device, status, events = (directory / n for n in ('image', 'ordinary-file-device', 'status', 'events'))
-    expected = synthetic_image(); source.write_bytes(expected); source.chmod(0o600)
+    requests = directory / 'write-requests'
+    expected = synthetic_image(LARGE_IMAGE_BYTES if name in LARGE_CASES else IMAGE_BYTES)
+    source.write_bytes(expected); source.chmod(0o600)
     if fault == 'invalid-crc':
         data = bytearray(expected); data[80] ^= 1; source.write_bytes(data)
     with device.open('wb') as stream: stream.truncate(15925248)
     operation = directory / 'operation'
     env = dict(os.environ, WRITER_IMAGE=str(source), WRITER_DEVICE=str(device), WRITER_STATUS=str(status),
-               WRITER_LOG=str(events), WRITER_OPERATION=str(operation))
+               WRITER_LOG=str(events), WRITER_OPERATION=str(operation), WRITER_REQUESTS=str(requests))
     env.pop('WRITER_FAULT', None)
     if fault: env['WRITER_FAULT'] = fault
     lock = None
@@ -268,9 +301,14 @@ def run_probe_case(command, base, spec):
         if lock is not None: lock.close()
     require(not stdout and 'AddressSanitizer' not in stderr and 'runtime error:' not in stderr, 'Unexpected probe diagnostic')
     record, metadata = parse_record(status, pid)
+    request_data = requests.read_text() if requests.exists() else ''
+    require(len(request_data) <= 128*1024 and
+            all(re.fullmatch(r'[1-9][0-9]*',line) for line in request_data.splitlines()),
+            'Invalid observed writer request log')
     return {'case': name, 'backend': 'inert-production-source-MIPS-probe', 'fault': fault,
             'exit_code': code, 'child_pid': pid, 'record': record,
             'events': events.read_text().splitlines() if events.exists() else [],
+            'device_write_requests': [int(line) for line in request_data.splitlines()],
             'payload_matches_snapshot': device.read_bytes()[:len(expected)] == expected, 'record_metadata': metadata}
 
 
@@ -307,7 +345,7 @@ def worker(rootfs, sysroot, probe, output):
         record, metadata = None, None
         rows.append({'case': CASE_NAMES[0], 'backend': 'actual-shipped-writer', 'fault': None, 'exit_code': code,
                      'child_pid': pid, 'record': record, 'events': [], 'payload_matches_snapshot': None,
-                     'record_metadata': metadata})
+                     'record_metadata': metadata, 'device_write_requests': None})
         for spec in CASES:
             rows.append(run_probe_case(['qemu-mipsel', '-L', str(sysroot), str(probe)], base, spec))
     validate_records(rows)
@@ -341,7 +379,7 @@ def check(trunk, rootfs, compiler, sysroot, output):
             actual.st_dev == reserved.st_dev and actual.st_ino == reserved.st_ino,
             'Privileged worker replaced the controller-owned report inode')
     partial = json.loads(output.read_text()); validate_records(partial['checks'])
-    report = {'schema_version': 2, 'status': 'PASS', 'profile': 'k2p-4.4', 'required_cases': list(CASE_NAMES),
+    report = {'schema_version': 3, 'status': 'PASS', 'profile': 'k2p-4.4', 'required_cases': list(CASE_NAMES),
               'checks': partial['checks'], 'source_sha256': {name: hashlib.sha256(text.encode()).hexdigest() for name, text in texts.items()},
               'shipped_writer_sha256': hashlib.sha256((rootfs / 'bin/mtd_write').read_bytes()).hexdigest(),
               'generated_source_sha256': hashlib.sha256(generated.encode()).hexdigest(),
@@ -350,11 +388,12 @@ def check(trunk, rootfs, compiler, sysroot, output):
               'shipped_refusal_isolation': partial['shipped_refusal_isolation'],
               'filesystem_limits': {'tmp': 24 * 1024 * 1024},
               'limits': ['One actual shipped legacy mtd_write case refuses its removed protocol with21 and no status; no real MTD is opened.',
-                         'The20 core protocol cases cross-compile the production header through an inert ABI shim, not the resident finalizer main; ordinary-file device, IOCTL, memory-lock and reboot effects are inert.',
+                         'The22 core protocol cases cross-compile the production header through an inert ABI shim, not the resident finalizer main; ordinary-file device, IOCTL, memory-lock and reboot effects are inert.',
+                         'Two large-image cases observe complete64KiB request sequences and later-block failure; this bounds requested mtdchar bounce allocation, not all kernel memory use or write latency.',
                          'Neither this test nor checked mlockall proves every page is resident on Linux4.4; internal mlockall errors may be ignored by that kernel.',
                          'No hardware write, erase, memory locking, reboot, power-loss safety or router boot is established.']}
     output.write_text(json.dumps(report, indent=2) + '\n')
-    print('Target firmware writer:21 exact cases PASS (one legacy refusal,20 inert core MIPS cases; resident finalizer requires its separate gate)')
+    print('Target firmware writer:23 exact cases PASS (one legacy refusal,22 inert core MIPS cases; resident finalizer requires its separate gate)')
     return report
 
 

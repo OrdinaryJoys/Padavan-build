@@ -37,7 +37,16 @@ FIXED_EVENTS = {
     'state-verified-write-unknown': COMPLETE,
     'state-verified-sync-unknown': COMPLETE,
     'global-lock-busy-unknown': [],
+    'success-large-chunked': DEVICE_PREP + ['unlock','erase'] * 37 + ['write'] * 3 +
+        ['device-sync','writer-close'] + ['readback'] * 10 + ['reader-close'],
+    'second-block-error-unknown': DEVICE_PREP + ['unlock','erase'] * 37 + ['write','write'],
 }
+FIXED_REQUESTS = {name:([12288] if 'write' in events else []) for name,events in FIXED_EVENTS.items()}
+FIXED_REQUESTS.update({'success-short-writes':list(range(12288,0,-17)),
+                       'success-write-eintr':[12288,12288],
+                       'write-partial-unknown':[12288,12281],
+                       'success-large-chunked':[65536,65536,20480],
+                       'second-block-error-unknown':[65536,65536]})
 
 def records():
     rows = []
@@ -45,12 +54,14 @@ def records():
             ('shipped-legacy-protocol-refused', None, 21, None, None), *writer.CASES]):
         pid = 123 + index
         shipped = name == 'shipped-legacy-protocol-refused'
+        image_bytes = 150064 if name in ('success-large-chunked','second-block-error-unknown') else 9064
         rows.append({'case': name, 'backend': 'actual-shipped-writer' if shipped else 'inert-production-source-MIPS-probe',
                      'fault': fault, 'exit_code': code, 'child_pid': pid,
                      'record': None if shipped else {'state': state, 'pid': pid, 'target': 'firmware',
-                                'image_bytes': 0 if state == 'PREWRITE' else writer.IMAGE_BYTES,
-                                'verified_bytes': writer.IMAGE_BYTES if state == 'VERIFIED' else 0},
+                                'image_bytes': 0 if state == 'PREWRITE' else image_bytes,
+                                'verified_bytes': image_bytes if state == 'VERIFIED' else 0},
                      'events': [] if shipped else list(FIXED_EVENTS[name]),
+                     'device_write_requests':None if shipped else list(FIXED_REQUESTS[name]),
                      'payload_matches_snapshot': matches, 'record_metadata': None if shipped else {'uid': 0, 'mode': 0o600, 'nlink': 1}})
     return rows
 
@@ -109,14 +120,15 @@ class TargetWriterTests(unittest.TestCase):
             self.assertEqual(result.stdout, '0\n')
             after = path.stat(); self.assertEqual((before.st_uid, before.st_ino), (after.st_uid, after.st_ino))
             path.write_text('controller final report'); self.assertEqual(path.read_text(), 'controller final report')
-    def test_exact_twenty_one_records_are_accepted(self):
-        self.assertEqual(len(records()), 21)
+    def test_exact_twenty_three_records_are_accepted(self):
+        self.assertEqual(len(records()), 23)
         self.assertEqual(set(FIXED_EVENTS),{row[0] for row in writer.CASES})
+        self.assertEqual(set(FIXED_REQUESTS),set(FIXED_EVENTS))
         writer.validate_records(records())
 
-    def test_source_only_preflight_requires_exact_twenty_cases_and_preserves_roles(self):
+    def test_source_only_preflight_requires_exact_twenty_two_cases_and_preserves_roles(self):
         source = records()[1:]
-        self.assertEqual(len(source), 20)
+        self.assertEqual(len(source), 22)
         writer.validate_records(source, include_shipped=False)
         other_owner = copy.deepcopy(source)
         for row in other_owner: row['record_metadata']['uid'] = 99
@@ -135,6 +147,12 @@ class TargetWriterTests(unittest.TestCase):
     def test_missing_duplicate_and_reordered_cases_are_rejected(self):
         for rows in (records()[:-1], records() + records()[:1], list(reversed(records()))):
             with self.assertRaises(ValueError): writer.validate_records(rows)
+        for value in ([65537,65536,20480],[65536,20480],[65536,True,20480],
+                      [65536,65536,20480.0],None):
+            rows=records();rows[-2]['device_write_requests']=value
+            with self.subTest(requests=value),self.assertRaises(ValueError):writer.validate_records(rows)
+        rows=records();rows[-1]['events'].append('readback')
+        with self.assertRaises(ValueError):writer.validate_records(rows)
 
     def test_extra_keys_and_wrong_backend_roles_are_rejected(self):
         for change in ('extra', 'backend'):
