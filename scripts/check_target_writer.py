@@ -108,10 +108,10 @@ def expected_events(fault):
         return []
     events = ['open-device']
     if fault in ('image-read', 'invalid-crc', 'pre-read'):
-        return events
+        return events + ['memory-free']
     events += ['device-sync', 'memory-lock']
     if fault == 'memory-lock':
-        return events + ['memory-unlock']
+        return events + ['memory-free', 'memory-unlock']
     if fault in ('maybe-write', 'maybe-dir-sync'):
         return events
     for _ in range(3):

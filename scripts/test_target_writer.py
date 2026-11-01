@@ -11,6 +11,33 @@ import unittest
 SPEC = importlib.util.spec_from_file_location('writer', Path(__file__).with_name('check_target_writer.py'))
 writer = importlib.util.module_from_spec(SPEC); SPEC.loader.exec_module(writer)
 
+# Reviewed independently of expected_events: SAFE frees its snapshot; no
+# possible-write/verified result may enter allocator cleanup.
+DEVICE_PREP = ['open-device', 'device-sync', 'memory-lock']
+ERASE_THREE = ['unlock', 'erase', 'unlock', 'erase', 'unlock', 'erase']
+COMPLETE = DEVICE_PREP + ERASE_THREE + ['write', 'device-sync', 'writer-close', 'readback', 'reader-close']
+FIXED_EVENTS = {
+    'success-supported-sync': COMPLETE,
+    'success-mtdchar-unsupported-sync': COMPLETE,
+    'success-short-writes': DEVICE_PREP + ERASE_THREE + ['write'] * 723 + ['device-sync', 'writer-close', 'readback', 'reader-close'],
+    'success-write-eintr': DEVICE_PREP + ERASE_THREE + ['write', 'write', 'device-sync', 'writer-close', 'readback', 'reader-close'],
+    'memory-lock-prewrite': DEVICE_PREP + ['memory-free', 'memory-unlock'],
+    'image-read-prewrite': ['open-device', 'memory-free'],
+    'invalid-crc-prewrite': ['open-device', 'memory-free'],
+    'readback-interface-prewrite': ['open-device', 'memory-free'],
+    'state-maybe-write-unknown': DEVICE_PREP,
+    'state-maybe-sync-unknown': DEVICE_PREP,
+    'unlock-unknown': DEVICE_PREP + ['unlock'],
+    'erase-unknown': DEVICE_PREP + ['unlock', 'erase'],
+    'write-partial-unknown': DEVICE_PREP + ERASE_THREE + ['write', 'write'],
+    'sync-unknown': DEVICE_PREP + ERASE_THREE + ['write', 'device-sync'],
+    'writer-close-unknown': DEVICE_PREP + ERASE_THREE + ['write', 'device-sync', 'writer-close'],
+    'readback-mismatch-unknown': DEVICE_PREP + ERASE_THREE + ['write', 'device-sync', 'writer-close', 'readback'],
+    'reader-close-unknown': COMPLETE,
+    'state-verified-write-unknown': COMPLETE,
+    'state-verified-sync-unknown': COMPLETE,
+    'global-lock-busy-unknown': [],
+}
 
 def records():
     rows = []
@@ -23,7 +50,7 @@ def records():
                      'record': None if shipped else {'state': state, 'pid': pid, 'target': 'firmware',
                                 'image_bytes': 0 if state == 'PREWRITE' else writer.IMAGE_BYTES,
                                 'verified_bytes': writer.IMAGE_BYTES if state == 'VERIFIED' else 0},
-                     'events': [] if shipped else writer.expected_events(fault),
+                     'events': [] if shipped else list(FIXED_EVENTS[name]),
                      'payload_matches_snapshot': matches, 'record_metadata': None if shipped else {'uid': 0, 'mode': 0o600, 'nlink': 1}})
     return rows
 
@@ -83,7 +110,9 @@ class TargetWriterTests(unittest.TestCase):
             after = path.stat(); self.assertEqual((before.st_uid, before.st_ino), (after.st_uid, after.st_ino))
             path.write_text('controller final report'); self.assertEqual(path.read_text(), 'controller final report')
     def test_exact_twenty_one_records_are_accepted(self):
-        self.assertEqual(len(records()), 21); writer.validate_records(records())
+        self.assertEqual(len(records()), 21)
+        self.assertEqual(set(FIXED_EVENTS),{row[0] for row in writer.CASES})
+        writer.validate_records(records())
 
     def test_source_only_preflight_requires_exact_twenty_cases_and_preserves_roles(self):
         source = records()[1:]
@@ -140,6 +169,14 @@ class TargetWriterTests(unittest.TestCase):
             elif change == 'reorder': rows[1]['events'][2:4] = list(reversed(rows[1]['events'][2:4]))
             else: rows[11]['events'].append('memory-unlock')
             with self.assertRaises(ValueError): writer.validate_records(rows)
+        for name in ('memory-lock-prewrite','image-read-prewrite','invalid-crc-prewrite','readback-interface-prewrite'):
+            rows=records();row=next(row for row in rows if row['case']==name)
+            row['events'].remove('memory-free')
+            with self.subTest(case=name),self.assertRaises(ValueError):writer.validate_records(rows)
+        for name in ('success-supported-sync','state-maybe-write-unknown','readback-mismatch-unknown','global-lock-busy-unknown'):
+            rows=records();row=next(row for row in rows if row['case']==name)
+            row['events'].append('memory-free')
+            with self.subTest(case=name),self.assertRaises(ValueError):writer.validate_records(rows)
 
     def test_payload_and_state_preservation_are_not_only_exit_checks(self):
         rows = records(); rows[1]['payload_matches_snapshot'] = False
