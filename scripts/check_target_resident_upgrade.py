@@ -1240,13 +1240,14 @@ def exact(left, right, message):
     require(json.dumps(left, sort_keys=True) == json.dumps(right, sort_keys=True), message)
 
 
-def validate_static_helper(data, source_weak_symbols=False):
+def validate_static_helper(data, source_weak_symbols=False, source_mips_pseudo_symbols=False):
     """Independently inspect ELF32LE/MIPS load/entry and any symbol tables.
 
     Stripped binaries can omit SYMTAB. No dynamic segment/interpreter/dynsym
     imports are permitted; the report states which tables were observable.
     """
     require(type(source_weak_symbols) is bool,'Invalid source-only weak-symbol policy')
+    require(type(source_mips_pseudo_symbols) is bool,'Invalid source-only MIPS-pseudo policy')
     require(type(data) in (bytes, bytearray) and 52 <= len(data) <= MAX_ELF and
             data[:7] == b'\x7fELF\x01\x01\x01', 'Helper must be bounded ELF32 little-endian MIPS')
     fields = struct.unpack_from('<HHIIIIIHHHHHH', data, 16)
@@ -1266,7 +1267,7 @@ def validate_static_helper(data, source_weak_symbols=False):
     require(loads and any(row['flags'] & 1 and row['vaddr'] <= entry < row['vaddr']+row['file_bytes']
                           for row in loads), 'Helper entry is outside file-backed executable LOAD')
     tables=[]
-    undefined=[];weak_undefined=[]
+    undefined=[];weak_undefined=[];mips_pseudo=[]
     if shnum:
         require(shsize==40 and 0 < shnum <= 4096 and shoff >= 52 and shoff+shnum*40 <= len(data),
                 'Invalid helper section-header bounds')
@@ -1290,18 +1291,33 @@ def validate_static_helper(data, source_weak_symbols=False):
                 end=pool.find(b'\0',name)
                 require(end >= name, 'Unterminated helper symbol name')
                 label=pool[name:end]
-                if label and shndx==0 and info>>4 in (1,2):
-                    if source_weak_symbols and info>>4==2:
-                        weak_undefined.append(label.decode('ascii'))
-                    else:
-                        undefined.append(label.decode('ascii'))
+                if label and shndx==0:
+                    observed={'name':label.decode('ascii'),'table':'SYMTAB' if kind==2 else 'DYNSYM',
+                              'binding':info>>4,'type':info&15,'value':value,'size':symbol_size,
+                              'other':other,'shndx':shndx}
+                    if label in (b'__gnu_local_gp',b'_gp_disp'):
+                        # These two reserved MIPS linker symbols are not DSO
+                        # imports. OBJECT1 is observed in the pinned CRT/libc;
+                        # NOTYPE0 is permitted for link-output metadata. Only
+                        # the unstripped source-built provenance inputs opt in.
+                        if (source_mips_pseudo_symbols and kind==2 and info>>4==1 and info&15 in (0,1)
+                                and value==0 and symbol_size==0 and other==0):
+                            mips_pseudo.append(observed)
+                        else:
+                            undefined.append(observed)
+                    elif info>>4 in (1,2):
+                        if source_weak_symbols and kind==2 and info>>4==2:
+                            weak_undefined.append(observed['name'])
+                        else:
+                            undefined.append(observed)
     else:
         require(shoff==0 or shoff<=len(data), 'Invalid absent helper section table')
-    require(not undefined, 'Resident helper has named undefined imports: '+','.join(undefined))
+    require(not undefined, 'Resident helper has named undefined imports: '+json.dumps(undefined,sort_keys=True))
     return {'bytes':len(data),'sha256':sha(data),'ELF_class':32,'byte_order':'little','machine':8,
             'type':'ET_EXEC','entry':entry,'flags':flags,'LOAD':loads,'PT_INTERP':None,'PT_DYNAMIC':False,
             'symbol_tables':tables,'named_undefined_imports':undefined,
             'source_only_weak_undefined_symbols':weak_undefined,
+            'source_only_mips_linker_pseudo_symbols':mips_pseudo,
             'static_no_runtime_loader':True,'executed_as_router_PID1':False}
 
 
@@ -1428,12 +1444,12 @@ def compile_full_helper(inputs, compiler, base, qemu):
     sources={filename:inputs['helper_'+key].encode() for key,filename in filenames.items()}
     for filename,data in sources.items():(directory/filename).write_bytes(data)
     binary=base/'full-helper'
-    flags=['-std=gnu99','-Os','-static','-s','-D__BYTE_ORDER=__LITTLE_ENDIAN',
+    flags=['-std=gnu99','-Os','-static','-D__BYTE_ORDER=__LITTLE_ENDIAN',
            '-ffunction-sections','-fdata-sections','-Wl,--gc-sections','-Wl,-z,now']
     command=[str(compiler),*flags,'-o',str(binary),str(directory/'fw_upgrade.c'),str(directory/'crc32.c')]
     run=subprocess.run(command,text=True,capture_output=True,timeout=90)
     require(run.returncode==0,'Complete actual resident helper compile failed: '+run.stdout+run.stderr)
-    data=binary.read_bytes();elf=validate_static_helper(data)
+    data=binary.read_bytes();elf=validate_static_helper(data,source_weak_symbols=True,source_mips_pseudo_symbols=True)
     refusals=run_refusals({'bin/fw_upgrade':binary},qemu,SHIPPED_CASES[:2])
     return {'role':'Complete current-source helper, independent of shipped rootfs; refusal-only execution',
             'binary_file':'target-resident-upgrade-full-helper','source_directory':'target-resident-upgrade-full-helper-source',
@@ -1463,7 +1479,8 @@ def bind_shipped_helper(trunk, rootfs, compiler, inputs):
     built=trunk/'user/mtd_write/fw_upgrade';shipped=rootfs/'bin/fw_upgrade'
     require(built.is_file() and not built.is_symlink() and os.access(built,os.X_OK),
             'Missing source-built resident helper provenance input')
-    original=built.read_bytes();original_elf=validate_static_helper(original,source_weak_symbols=True)
+    original=built.read_bytes();original_elf=validate_static_helper(original,source_weak_symbols=True,
+                                                                source_mips_pseudo_symbols=True)
     config=(trunk/'.config').read_text()
     use_sstrip=re.search(r'^CONFIG_FIRMWARE_PERFORM_SSTRIP=y$',config,re.M) is not None
     sstrip=trunk/'tools/sstrip/sstrip'

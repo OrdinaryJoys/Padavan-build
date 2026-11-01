@@ -18,7 +18,7 @@ gate=importlib.util.module_from_spec(spec)
 exec(compile(PATH.read_text(),str(PATH),'exec'),gate.__dict__)
 
 
-def elf(symbol=None):
+def elf(symbol=None,label='external',info=16,value=0,size=0,other=0,table_kind=2):
     data=bytearray(1024)
     data[:7]=b'\x7fELF\x01\x01\x01'
     struct.pack_into('<HHIIIIIHHHHHH',data,16,2,8,1,0x400080,52,0,0,52,32,1,0,0,0)
@@ -26,10 +26,11 @@ def elf(symbol=None):
     if symbol is not None:
         struct.pack_into('<I',data,32,512)
         struct.pack_into('<HH',data,46,40,3)
-        struct.pack_into('<10I',data,552,0,3,0,0,800,10,0,0,1,0)
-        struct.pack_into('<10I',data,592,0,2,0,0,832,32,1,0,4,16)
-        data[800:810]=b'\0external\0'
-        struct.pack_into('<IIIBBH',data,848,1,0,0,16,0,symbol)
+        strings=b'\0'+label.encode()+b'\0'
+        struct.pack_into('<10I',data,552,0,3,0,0,800,len(strings),0,0,1,0)
+        struct.pack_into('<10I',data,592,0,table_kind,0,0,832,32,1,0,4,16)
+        data[800:800+len(strings)]=strings
+        struct.pack_into('<IIIBBH',data,848,1,value,size,info,other,symbol)
     return data
 
 
@@ -96,6 +97,7 @@ class ResidentTargetTests(unittest.TestCase):
         self.assertTrue(row['static_no_runtime_loader'])
         self.assertIsNone(row['PT_INTERP'])
         self.assertEqual(row['named_undefined_imports'],[])
+        self.assertEqual(row['source_only_mips_linker_pseudo_symbols'],[])
         with self.assertRaisesRegex(ValueError,'undefined'):gate.validate_static_helper(elf(0))
         with self.assertRaisesRegex(ValueError,'undefined'):gate.validate_static_helper(elf(0),source_weak_symbols=True)
         weak=elf(0);weak[848+12]=32
@@ -103,6 +105,24 @@ class ResidentTargetTests(unittest.TestCase):
         self.assertEqual(gate.validate_static_helper(weak,source_weak_symbols=True)
                          ['source_only_weak_undefined_symbols'],['external'])
         self.assertEqual(gate.validate_static_helper(elf(0xfff1))['symbol_tables'][0]['symbols'],2)
+        for name in ('__gnu_local_gp','_gp_disp'):
+            for symbol_type in (0,1):
+                data=elf(0,label=name,info=16|symbol_type)
+                for options in ({},{'source_weak_symbols':True}):
+                    with self.assertRaisesRegex(ValueError,'undefined'):
+                        gate.validate_static_helper(data,**options)
+                observed=gate.validate_static_helper(data,source_mips_pseudo_symbols=True)
+                self.assertEqual(observed['source_only_mips_linker_pseudo_symbols'],[
+                    {'name':name,'table':'SYMTAB','binding':1,'type':symbol_type,
+                     'value':0,'size':0,'other':0,'shndx':0}])
+            for changes in ({'label':'_gp_disp_extra'},{'label':'real_import'},{'info':18},
+                            {'info':32},{'info':0},{'value':1},{'size':1},{'other':2},{'table_kind':11}):
+                options={'label':name};options.update(changes)
+                data=elf(0,**options)
+                with self.subTest(name=name,changes=changes),self.assertRaisesRegex(ValueError,'undefined'):
+                    gate.validate_static_helper(data,source_weak_symbols=True,source_mips_pseudo_symbols=True)
+        with self.assertRaisesRegex(ValueError,'MIPS-pseudo'):
+            gate.validate_static_helper(elf(),source_mips_pseudo_symbols=1)
 
     def test_loader_dynamic_wrong_arch_bounds_and_nonexec_rejected(self):
         variants=[]
@@ -215,16 +235,18 @@ class ResidentTargetTests(unittest.TestCase):
         values['helper_main']='int main(int argc,char **argv,char **environment){_exit(fwup_resident_run(argc,argv,environment));}\n'
         values['helper_makefile']='fw_upgrade: fw_upgrade.c crc32.c\n\t$(CC) $(CFLAGS) -static -o $@ fw_upgrade.c crc32.c\n'
         def compile_fake(command,**options):
-            Path(command[command.index('-o')+1]).write_bytes(elf())
+            Path(command[command.index('-o')+1]).write_bytes(elf(0,label='_gp_disp',info=17))
             return subprocess.CompletedProcess(command,0,'','')
         with tempfile.TemporaryDirectory() as tmp,\
              patch.object(gate.subprocess,'run',side_effect=compile_fake) as compiler,\
              patch.object(gate,'run_refusals',return_value={'checks':[]}) as refusals:
             info,sources,binary=gate.compile_full_helper(values,'/mips-cc',Path(tmp),'/qemu')
             self.assertIn('-static',compiler.call_args.args[0])
+            self.assertNotIn('-s',compiler.call_args.args[0])
             self.assertEqual(sources['fw_upgrade.c'],values['helper_main'].encode())
             self.assertEqual(info['source_sha256']['fw_upgrade.c'],gate.sha(sources['fw_upgrade.c']))
             self.assertEqual(info['binary_sha256'],gate.sha(binary))
+            self.assertEqual(info['ELF']['source_only_mips_linker_pseudo_symbols'][0]['name'],'_gp_disp')
             self.assertEqual(refusals.call_args.args[2],gate.SHIPPED_CASES[:2])
 
     def test_complete_helper_rejects_crt_return_or_dynamic_link_rule(self):
