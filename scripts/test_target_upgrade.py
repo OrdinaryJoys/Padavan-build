@@ -15,8 +15,9 @@ spec.loader.exec_module(upgrade)
 
 
 def inputs():
-    functions = {name: ('void' if name in ('firmware_upgrade_stop_watchdog', 'notify_watchdog_time') else 'int') +
-                 ' ' + name + '(void) { ' + ('return;' if name in ('firmware_upgrade_stop_watchdog', 'notify_watchdog_time') else 'return 0;') + ' }'
+    void_helpers = ('firmware_upgrade_stop_watchdog', 'notify_watchdog_time', 'firmware_upgrade_signal_fault')
+    functions = {name: ('void' if name in void_helpers else 'int') +
+                 ' ' + name + '(void) { ' + ('return;' if name in void_helpers else 'return 0;') + ' }'
                  for name in upgrade.REQUIRED_HELPERS}
     functions['flash_firmware'] = 'int flash_firmware(void) { shutdown_hook_run(script_name, 0, HOOK_RUNNER_TIMEOUT_MS, HOOK_RUNNER_TERM_MS, HOOK_RUNNER_KILL_MS); return 0; }'
     markers = '\n'.join(('#define open fixture_open', '#define ioctl fixture_ioctl', '#define reboot fake_reboot',
@@ -28,6 +29,7 @@ def inputs():
             'rc.h': 'int write_storage_to_mtd(void);\nint firmware_upgrade_inhibited(void);\n',
             'watchdog.c': '\n'.join(functions[n] for n in upgrade.WD_HELPERS),
             'upgrade_gate_harness.py': adapter,
+            'upgrade_guard.h': '/* Synthetic generator-only input; actual shared header is bound by the transaction proof. */',
             'hook_runner.h': '\n'.join(('#define HOOK_RUNNER_TIMEOUT_MS 30000U', '#define HOOK_RUNNER_TERM_MS 2000U',
                                          '#define HOOK_RUNNER_KILL_MS 1000U', '#define HOOK_RUNNER_STREAM_LIMIT (128U * 1024U)',
                                          '#define HOOK_RUNNER_PROC_LIMIT 8192U'))}
@@ -88,7 +90,7 @@ static int _eval(char *const args[],char *path,int timeout,int *child){
         self.assertEqual(len(upgrade.CASE_NAMES), 59)
         self.assertEqual(hashlib.sha256('\n'.join(upgrade.CASE_NAMES).encode()).hexdigest(),
                          '73188c31c0156327af07b8071bcf6819263ec1341f4301b29f46b5dedb13d388')
-        self.assertEqual(len(upgrade.REQUIRED_HELPERS), 16)
+        self.assertEqual(len(upgrade.REQUIRED_HELPERS), 18)
         self.assertIn('firmware_upgrade_disable_watchdog', upgrade.REQUIRED_HELPERS)
         self.assertIn('watchdog_main', upgrade.REQUIRED_HELPERS)
         upgrade.validate_records(self.records)

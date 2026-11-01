@@ -11,7 +11,8 @@ import struct
 import subprocess
 import tempfile
 
-RC_HELPERS = ('write_storage_to_mtd', 'firmware_upgrade_inhibited', 'firmware_upgrade_inhibit',
+RC_HELPERS = ('write_storage_to_mtd', 'firmware_upgrade_signal_inhibited', 'firmware_upgrade_signal_fault',
+              'firmware_upgrade_inhibited', 'firmware_upgrade_inhibit',
               'firmware_upgrade_stage_writer', 'firmware_upgrade_number', 'firmware_upgrade_result',
               'firmware_upgrade_run', 'firmware_upgrade_start_networkmap', 'firmware_upgrade_start_detect',
               'firmware_upgrade_stop_watchdog', 'firmware_upgrade_disable_watchdog',
@@ -20,11 +21,12 @@ WD_HELPERS = ('start_watchdog', 'notify_watchdog_time', 'watchdog_main')
 REQUIRED_HELPERS = RC_HELPERS + WD_HELPERS
 SOURCE_PATHS = {'rc.c': 'trunk/user/rc/rc.c', 'rc.h': 'trunk/user/rc/rc.h',
                 'watchdog.c': 'trunk/user/rc/watchdog.c', 'upgrade_gate_harness.py': 'tests/upgrade_gate_harness.py',
-                'hook_runner.h': 'trunk/user/rc/hook_runner.h'}
+                'hook_runner.h': 'trunk/user/rc/hook_runner.h',
+                'upgrade_guard.h': 'trunk/user/shared/upgrade_guard.h'}
 HOOK_CONTRACT = dict(timeout_ms=30000, term_ms=2000, kill_ms=1000, stream_limit_bytes=131072, proc_entry_limit=8192)
-PROFILE = 'USE_STORAGE=1, USE_USB_SUPPORT=1 superset; synthetic file owner mapping; service/device/lock/reboot and hook-outcome backends inert'
+PROFILE = 'USE_STORAGE=1, USE_USB_SUPPORT=1 superset; synthetic file owner mapping; private action flock real; service/device/Storage-lock/reboot and hook-outcome backends inert'
 LIMITS = ('Synthetic files use test-user-to-root metadata mapping; no claim of real UID transitions.',
-          'All daemon, hook, Storage, hardware ioctl, mlock, sync, sleep and reboot effects are inert; fork/wait and synthetic file I/O are real target syscalls.',
+          'All daemon, hook, Storage, hardware ioctl, mlock, sync, sleep and reboot effects are inert; fork/wait, private action flock and synthetic file I/O are real target syscalls.',
           'Lock failure is a modeled save wait256; real target Storage locking is a separate proof.',
           'This proves target control flow/ABI, not physical flash/disarm/boot, memory residency under pressure, management survival, or rollback.',
           'Shutdown-hook outcomes are injected here; the actual bounded supervisor requires the separate mandatory target-hook proof.')
@@ -121,7 +123,7 @@ def generate_source(inputs, fixture_root):
     if not re.search(r'\bshutdown_hook_run\s*\(\s*script_name\s*,\s*0\s*,\s*HOOK_RUNNER_TIMEOUT_MS\s*,\s*HOOK_RUNNER_TERM_MS\s*,\s*HOOK_RUNNER_KILL_MS\s*\)', functions['flash_firmware']):
         raise ValueError('Upgrade hook must use the bounded supervisor production budget')
     for name, body in functions.items():
-        expected = 'void' if name in ('firmware_upgrade_stop_watchdog', 'notify_watchdog_time') else 'int'
+        expected = 'void' if name in ('firmware_upgrade_stop_watchdog', 'notify_watchdog_time', 'firmware_upgrade_signal_fault') else 'int'
         if not re.match(r'(?:static\s+)?' + expected + r'\s+', body):
             raise ValueError('Missing/old recovery return type: ' + name)
     allowed = set(REQUIRED_HELPERS) | set(NAMES) | {
@@ -135,7 +137,8 @@ def generate_source(inputs, fixture_root):
         'stop_crond', 'stop', 'start', 'storage_save_time', 'check_if_file_exist', 'sync', 'reboot',
         'mlockall', 'munlockall', 'kill_pidfile_s', 'eval', 'sigaction', 'daemon', 'perror', 'exit',
         'getpid', 'oom_score_adjust', 'fopen', 'fprintf', 'fclose', 'nvram_set_int_temp',
-        'hw_watchdog_init', 'wd_alarmtimer', 'remove', 'pause', 'shutdown_hook_run'}
+        'hw_watchdog_init', 'wd_alarmtimer', 'remove', 'pause', 'shutdown_hook_run',
+        'upgrade_actions_blocked', 'upgrade_transaction_enter', 'upgrade_action_leave'}
     for name, body in functions.items():
         calls = set(re.findall(r'\b([a-zA-Z_]\w*)\s*\(', mask_c(body)))
         if len(body) > 65536 or calls - allowed:
@@ -146,7 +149,8 @@ def generate_source(inputs, fixture_root):
     generators = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'generate']
     if len(declared) != 1 or ast.literal_eval(declared[0].value) != RC_HELPERS or len(generators) != 1:
         raise ValueError('Locked synthetic adapter missing exact recovery helper group')
-    sources = {'trunk/user/rc/rc.c': inputs['rc.c'], 'trunk/user/rc/watchdog.c': inputs['watchdog.c']}
+    sources = {'trunk/user/rc/rc.c': inputs['rc.c'], 'trunk/user/rc/watchdog.c': inputs['watchdog.c'],
+               'trunk/user/shared/upgrade_guard.h': inputs['upgrade_guard.h']}
     namespace = {'json': json, 'source': sources.__getitem__, 'function': extract_function, 'FUNCTIONS': RC_HELPERS}
     exec(compile(ast.Module(body=generators, type_ignores=[]), '<locked-upgrade-adapter>', 'exec'), namespace)
     generated = '#define USE_STORAGE 1\n#define USE_USB_SUPPORT 1\n' + namespace['generate'](fixture_root)

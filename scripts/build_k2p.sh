@@ -57,7 +57,8 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_dns_log_backpressure test_dns_reload_transaction test_logmessage_backpressure \
                        test_dns_ethers_reload test_bounded_syslog test_downloaded_log_adapters test_inadyn_log_patch \
                        test_watchdog_dns_recovery test_watchdog_scheduled_update \
-                       test_notification_consumer test_firmware_writer_protocol test_upgrade_upload_no_public_writer; do
+                       test_notification_consumer test_firmware_writer_protocol test_upgrade_upload_no_public_writer \
+                       test_upgrade_transaction; do
     test -f "$root/source/tests/$required_test.py"
   done
 fi
@@ -91,6 +92,9 @@ if [ "$flavor" = "k2p-4.4" ]; then
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --output "$diagnostics/target-hook.json"
   python3 "$root/scripts/check_target_snapshot.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --output "$diagnostics/target-snapshot-preflight.json"
+  python3 "$root/scripts/check_target_upgrade_transaction.py" --preflight --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --sysroot "$toolchain" \
+    --output "$diagnostics/transaction-preflight/target-upgrade-transaction.json"
   # Keep the shipped NO_INOTIFY profile unchanged. Syntax-check both sides of
   # the optional legacy-directory guard against real Linux/MIPS headers too.
   {
@@ -185,6 +189,9 @@ if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/check_target_upgrade.py" --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --sysroot "$qemu_root" \
     --output "$diagnostics/target-upgrade.json"
+  python3 "$root/scripts/check_target_upgrade_transaction.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --sysroot "$qemu_root" \
+    --output "$diagnostics/target-upgrade-transaction.json"
   python3 "$root/scripts/check_target_dynamic_dns.py" --rootfs "$trunk/romfs" \
     --trunk "$trunk" --sysroot "$qemu_root" --output "$diagnostics/target-dynamic-dns.json"
   python3 "$root/scripts/check_target_writer.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
@@ -395,6 +402,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
   cp "$diagnostics/"{target-config-publish.json,target-upgrade.json,target-upgrade-probe.c,target-upgrade-probe,target-dynamic-dns.json,target-writer.json,target-writer-probe.c,target-writer-probe} "$dist/"
   cp "$diagnostics/"{target-watchdog.json,target-watchdog-ss-on.c,target-watchdog-ss-on,target-watchdog-ss-off.c,target-watchdog-ss-off,target-snapshot.json} "$dist/"
   cp "$diagnostics/"{target-hook.json,target-hook-probe.c,target-hook-probe} "$dist/"
+  cp "$diagnostics/"{target-upgrade-transaction.json,target-upgrade-transaction-components.c,target-upgrade-transaction-components,target-upgrade-transaction-flash.c,target-upgrade-transaction-flash} "$dist/"
   cp "$diagnostics/"{target-runtime-dns.json,target-ntp.json,target-ntp-probe.c,target-ntp-probe,busybox-applets.txt} "$dist/"
   cp "$diagnostics/"{target-log-reload.json,target-log-reload-probe.c,target-log-reload-probe} "$dist/"
   cp "$diagnostics/"{target-syslog-producers.json,target-syslog-central-probe.c,target-syslog-central-probe,target-syslog-downloaded-probe.c,target-syslog-downloaded-probe,target-reload-latency.json} "$dist/"
