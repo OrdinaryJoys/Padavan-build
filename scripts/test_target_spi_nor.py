@@ -53,7 +53,14 @@ class SpiTargetTests(unittest.TestCase):
         self.assertEqual(len(gate.CASES),51)
         self.assertEqual(sum(not options['baseline'] for _,options in gate.CASES),42)
         self.assertEqual(sum(options['baseline'] for _,options in gate.CASES),9)
-        self.assertEqual(len(gate.SOURCE_PATHS),11)
+        self.assertEqual(len(gate.SOURCE_PATHS),14)
+        self.assertEqual({key:gate.SOURCE_PATHS[key] for key in
+            ('queue_core','queue_pm_header','queue_pm_core')}, {
+            'queue_core':'trunk/linux-4.4.x/drivers/spi/spi.c',
+            'queue_pm_header':'trunk/linux-4.4.x/include/linux/pm_runtime.h',
+            'queue_pm_core':'trunk/linux-4.4.x/drivers/base/power/runtime.c'})
+        self.assertEqual(gate.OBJECTS['spi-core'], ('drivers/spi/spi.o',
+            ('__spi_pump_messages','spi_finalize_current_message','__spi_sync','spi_queued_transfer')))
         self.assertEqual(len(gate.FUNCTION_SOURCES),10)
         self.assertEqual(len(gate.BASELINE_FUNCTION_HASHES),9)
         rows=[{'case':name,'inputs':copy.deepcopy(options),'observed':copy.deepcopy(gate.EXPECTED[name])}

@@ -27,7 +27,10 @@ SOURCE_PATHS = {'m25p': 'trunk/linux-4.4.x/drivers/mtd/devices/m25p80.c',
  'dtb': 'trunk/linux-4.4.x/arch/mips/boot/dts/ralink/k2p.dts',
  'dt_layout': 'trunk/linux-4.4.x/arch/mips/boot/dts/ralink/mt7621-spi-16m-layout.dtsi',
  'dt_soc': 'trunk/linux-4.4.x/arch/mips/boot/dts/ralink/mt7621.dtsi',
- 'controller': 'trunk/linux-4.4.x/drivers/spi/spi-mt7621.c'}
+ 'controller': 'trunk/linux-4.4.x/drivers/spi/spi-mt7621.c',
+ 'queue_core': 'trunk/linux-4.4.x/drivers/spi/spi.c',
+ 'queue_pm_header': 'trunk/linux-4.4.x/include/linux/pm_runtime.h',
+ 'queue_pm_core': 'trunk/linux-4.4.x/drivers/base/power/runtime.c'}
 HARNESS_SOURCE_PATHS = {'m25p': 'trunk/linux-4.4.x/drivers/mtd/devices/m25p80.c',
  'nor': 'trunk/linux-4.4.x/drivers/mtd/spi-nor/spi-nor.c',
  'core': 'trunk/linux-4.4.x/drivers/mtd/mtdcore.c',
@@ -936,6 +939,7 @@ OBJECTS = {
     'spi-nor': ('drivers/mtd/spi-nor/spi-nor.o',('spi_nor_write','spi_nor_scan')),
     'mtdchar': ('drivers/mtd/mtdchar.o',('mtdchar_read','mtdchar_write')),
     'mt7621': ('drivers/spi/spi-mt7621.o',('mt7621_spi_probe','mt7621_spi_remove','mt7621_spi_transfer_one_message')),
+    'spi-core': ('drivers/spi/spi.o',('__spi_pump_messages','spi_finalize_current_message','__spi_sync','spi_queued_transfer')),
 }
 
 

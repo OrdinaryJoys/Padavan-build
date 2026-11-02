@@ -59,7 +59,8 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_watchdog_dns_recovery test_watchdog_scheduled_update \
                        test_notification_consumer test_firmware_writer_protocol test_upgrade_upload_no_public_writer \
                        test_upgrade_transaction test_resident_upgrade test_legacy_firmware_gate \
-                       test_resident_parent test_resident_consumer test_spi_completion test_sr3_startup test_controller test_collector_cleanup; do
+                       test_resident_parent test_resident_consumer test_spi_completion test_sr3_startup test_controller test_collector_cleanup \
+                       test_spi_queue test_mtd_backup; do
     test -f "$root/source/tests/$required_test.py"
   done
 fi
@@ -91,6 +92,14 @@ if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/check_target_spi_nor.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --output "$diagnostics/spi-preflight/target-spi-nor.json"
+  test -f "$root/source/tests/spi_queue_harness.py"
+  python3 "$root/scripts/check_target_spi_queue.py" --preflight --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --output "$diagnostics/spi-queue-preflight/target-spi-queue.json"
+  test -f "$root/source/tests/mtd_backup_harness.py"
+  python3 "$root/scripts/check_target_mtd_backup.py" --preflight --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --output "$diagnostics/mtd-backup-preflight/target-mtd-backup.json"
   test -f "$root/source/tests/sr3_startup_harness.py"
   python3 "$root/scripts/check_target_sr3.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
@@ -416,6 +425,11 @@ if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/check_target_spi_nor.py" --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --image "${images[0]}" \
     --kernel-binary "$trunk/images/zImage" --output "$diagnostics/target-spi-nor.json"
+  python3 "$root/scripts/check_target_spi_queue.py" --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --spi-report "$diagnostics/target-spi-nor.json" --output "$diagnostics/target-spi-queue.json"
+  python3 "$root/scripts/check_target_mtd_backup.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --output "$diagnostics/target-mtd-backup.json"
   python3 "$root/scripts/check_target_sr3.py" --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --spi-report "$diagnostics/target-spi-nor.json" --output "$diagnostics/target-sr3.json"
@@ -443,6 +457,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
   cp "$diagnostics/target-spi-"* "$dist/"
   cp "$diagnostics/target-sr3"* "$dist/"
   cp "$diagnostics/target-controller"* "$dist/"
+  cp "$diagnostics/target-mtd-backup"* "$dist/"
   cp "$diagnostics/target-collector"* "$dist/"
   cp "$diagnostics/target-resident-upgrade.json" "$dist/"
   for resident_adapter in helper legacy legacy-disabled parent consumer; do
