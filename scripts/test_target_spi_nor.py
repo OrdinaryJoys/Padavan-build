@@ -147,6 +147,12 @@ class SpiTargetTests(unittest.TestCase):
                 self.assertTrue(result['whole_byte_equality'])
                 self.assertEqual((out/'target-spi-kernel-raw.bin').read_bytes(),raw)
                 self.assertEqual((out/'target-spi-kernel-vendor.bin').read_bytes(),raw)
+                # A required SR3 scan/probe caller must be an actual object
+                # and linked function, not merely a label in the report.
+                missing={'mtdchar':('drivers/mtd/mtdchar.o',('spi_nor_scan',))}
+                with patch.object(gate,'OBJECTS',missing):
+                    with self.assertRaisesRegex(ValueError,'implementation symbol absent'):
+                        gate.kernel_binding(trunk,compiler,firmware,vendor,out/'report.json')
                 vendor.write_bytes(raw[:-1]+bytes((raw[-1]^1,)))
                 with self.assertRaisesRegex(ValueError,'byte-for-byte'):
                     gate.kernel_binding(trunk,compiler,firmware,vendor,out/'report.json')

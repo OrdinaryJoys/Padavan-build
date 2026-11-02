@@ -931,8 +931,8 @@ LIMITS = (
 MAX_ELF = 64*1024*1024
 MAX_KERNEL = 48*1024*1024
 OBJECTS = {
-    'm25p80': ('drivers/mtd/devices/m25p80.o',('m25p80_read','m25p80_write','m25p80_erase')),
-    'spi-nor': ('drivers/mtd/spi-nor/spi-nor.o',('spi_nor_write',)),
+    'm25p80': ('drivers/mtd/devices/m25p80.o',('m25p80_read','m25p80_write','m25p80_erase','m25p_probe')),
+    'spi-nor': ('drivers/mtd/spi-nor/spi-nor.o',('spi_nor_write','spi_nor_scan')),
     'mtdchar': ('drivers/mtd/mtdchar.o',('mtdchar_read','mtdchar_write')),
 }
 

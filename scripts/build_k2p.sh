@@ -59,7 +59,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_watchdog_dns_recovery test_watchdog_scheduled_update \
                        test_notification_consumer test_firmware_writer_protocol test_upgrade_upload_no_public_writer \
                        test_upgrade_transaction test_resident_upgrade test_legacy_firmware_gate \
-                       test_resident_parent test_resident_consumer test_spi_completion; do
+                       test_resident_parent test_resident_consumer test_spi_completion test_sr3_startup; do
     test -f "$root/source/tests/$required_test.py"
   done
 fi
@@ -91,6 +91,10 @@ if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/check_target_spi_nor.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --output "$diagnostics/spi-preflight/target-spi-nor.json"
+  test -f "$root/source/tests/sr3_startup_harness.py"
+  python3 "$root/scripts/check_target_sr3.py" --preflight --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --output "$diagnostics/sr3-preflight/target-sr3.json"
   python3 "$root/scripts/check_target_resident_upgrade.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --output "$diagnostics/resident-preflight/target-resident-upgrade.json"
@@ -401,6 +405,9 @@ if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/check_target_spi_nor.py" --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --image "${images[0]}" \
     --kernel-binary "$trunk/images/zImage" --output "$diagnostics/target-spi-nor.json"
+  python3 "$root/scripts/check_target_sr3.py" --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --spi-report "$diagnostics/target-spi-nor.json" --output "$diagnostics/target-sr3.json"
 fi
 # Read every shipped regular file without extracting device nodes or following
 # image links on the host. Verify executable helpers, /init target and CA bytes
@@ -420,6 +427,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
   cp "$diagnostics/"{target-hook.json,target-hook-probe.c,target-hook-probe} "$dist/"
   cp "$diagnostics/"{target-upgrade-transaction.json,target-upgrade-transaction-components.c,target-upgrade-transaction-components,target-upgrade-transaction-flash.c,target-upgrade-transaction-flash} "$dist/"
   cp "$diagnostics/target-spi-"* "$dist/"
+  cp "$diagnostics/target-sr3"* "$dist/"
   cp "$diagnostics/target-resident-upgrade.json" "$dist/"
   for resident_adapter in helper legacy legacy-disabled parent consumer; do
     cp "$diagnostics/target-resident-upgrade-$resident_adapter"{,.c} "$dist/"
