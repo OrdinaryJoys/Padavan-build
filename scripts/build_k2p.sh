@@ -59,7 +59,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_watchdog_dns_recovery test_watchdog_scheduled_update \
                        test_notification_consumer test_firmware_writer_protocol test_upgrade_upload_no_public_writer \
                        test_upgrade_transaction test_resident_upgrade test_legacy_firmware_gate \
-                       test_resident_parent test_resident_consumer test_spi_completion test_sr3_startup test_controller; do
+                       test_resident_parent test_resident_consumer test_spi_completion test_sr3_startup test_controller test_collector_cleanup; do
     test -f "$root/source/tests/$required_test.py"
   done
 fi
@@ -99,6 +99,10 @@ if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/check_target_controller.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --output "$diagnostics/controller-preflight/target-controller.json"
+  test -f "$root/source/tests/collector_cleanup_harness.py"
+  python3 "$root/scripts/check_target_collector.py" --preflight --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --output "$diagnostics/collector-preflight/target-collector.json"
   python3 "$root/scripts/check_target_resident_upgrade.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --output "$diagnostics/resident-preflight/target-resident-upgrade.json"
@@ -210,6 +214,9 @@ if [ "$flavor" = "k2p-4.4" ]; then
     --output "$diagnostics/target-upgrade-transaction.json"
   python3 "$root/scripts/check_target_dynamic_dns.py" --rootfs "$trunk/romfs" \
     --trunk "$trunk" --sysroot "$qemu_root" --output "$diagnostics/target-dynamic-dns.json"
+  python3 "$root/scripts/check_target_collector.py" --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --rootfs "$trunk/romfs" \
+    --dns-report "$diagnostics/target-dynamic-dns.json" --output "$diagnostics/target-collector.json"
   python3 "$root/scripts/check_target_resident_upgrade.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --output "$diagnostics/target-resident-upgrade.json"
@@ -436,6 +443,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
   cp "$diagnostics/target-spi-"* "$dist/"
   cp "$diagnostics/target-sr3"* "$dist/"
   cp "$diagnostics/target-controller"* "$dist/"
+  cp "$diagnostics/target-collector"* "$dist/"
   cp "$diagnostics/target-resident-upgrade.json" "$dist/"
   for resident_adapter in helper legacy legacy-disabled parent consumer; do
     cp "$diagnostics/target-resident-upgrade-$resident_adapter"{,.c} "$dist/"
