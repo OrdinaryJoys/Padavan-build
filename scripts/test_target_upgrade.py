@@ -25,7 +25,7 @@ def inputs():
                          '#define daemon fixture_daemon', 'static int firmware_upgrade_spawn(', 'static int doSystem('))
     adapter = 'FUNCTIONS = ' + repr(upgrade.RC_HELPERS) + '\n'
     adapter += 'def generate(root):\n    return ' + repr(markers + '\n') + " + '\\n'.join(function(source('trunk/user/rc/rc.c'), n) for n in FUNCTIONS) + '\\n' + '\\n'.join(function(source('trunk/user/rc/watchdog.c'), n) for n in " + repr(upgrade.WD_HELPERS) + ')\n'
-    return {'rc.c': '#include "hook_runner.h"\n' + '\n'.join(functions[n] for n in upgrade.RC_HELPERS),
+    return {'rc.c': '#include "hook_runner.h"\n#define FW_UPGRADE_NOT_STARTED (-2)\n' + '\n'.join(functions[n] for n in upgrade.RC_HELPERS),
             'rc.h': 'int write_storage_to_mtd(void);\nint firmware_upgrade_inhibited(void);\n',
             'watchdog.c': '\n'.join(functions[n] for n in upgrade.WD_HELPERS),
             'upgrade_gate_harness.py': adapter,
@@ -42,6 +42,7 @@ static int firmware_upgrade_run(const char *writer,const char *record,int lease,
  sigemptyset(&block);sigaddset(&block,SIGCHLD);
  if(sigprocmask(SIG_BLOCK,&block,&previous)!=0)return -1;
  if(firmware_upgrade_spawn(writer,record,lease,child)==0){do waited=waitpid(*child,&status,0);while(waited<0&&errno==EINTR);if(waited!=*child)status=-1;}
+ else if(*child==-1)status=-2;
  if(sigprocmask(SIG_SETMASK,&previous,NULL)!=0)status=-1;
  return status;
 }
@@ -88,7 +89,7 @@ static int firmware_upgrade_spawn(const char *writer,const char *record,int leas
     def test_required_cases_and_helpers_have_independent_fixed_identity(self):
         self.assertEqual(len(upgrade.CASE_NAMES), 59)
         self.assertEqual(hashlib.sha256('\n'.join(upgrade.CASE_NAMES).encode()).hexdigest(),
-                         '2785092c7c172858e171e7891d00ca939586fb64be4c0e79ea573e32ae6e6cd4')
+                         'b16f01cbde8ed75e011c2cf2fc3652d40c30600a729a2e822c0b5309c2ae54ee')
         self.assertEqual(len(upgrade.REQUIRED_HELPERS), 18)
         self.assertIn('firmware_upgrade_disable_watchdog', upgrade.REQUIRED_HELPERS)
         self.assertIn('watchdog_main', upgrade.REQUIRED_HELPERS)
@@ -128,6 +129,18 @@ static int firmware_upgrade_spawn(const char *writer,const char *record,int leas
         for body in functions.values():
             self.assertEqual(generated.count(body), 1)
 
+    def test_no_child_sentinel_macro_and_safe_recovery_cannot_drift(self):
+        for value in ('(-1)', '(-3)', '20'):
+            data=inputs();data['rc.c']=data['rc.c'].replace('FW_UPGRADE_NOT_STARTED (-2)', 'FW_UPGRADE_NOT_STARTED '+value)
+            with self.subTest(value=value),self.assertRaisesRegex(ValueError,'sentinel'):
+                upgrade.generate_source(data,Path('/tmp/synthetic'))
+        rows=copy.deepcopy(self.records)
+        row=next(row for row in rows if row['case']=='safe-no-child-spawn-failure')
+        self.assertEqual(row['observed']['phase'],0)
+        self.assertEqual(row['observed']['running'],[1]*7)
+        row['observed']['phase']=1
+        with self.assertRaisesRegex(ValueError,'mismatch'):upgrade.validate_records(rows)
+
     def test_comments_strings_and_braces_do_not_forge_or_truncate_functions(self):
         function = 'static int flash_firmware(void) { const char *text="}"; /* { */ return 0; }'
         text = '/* int flash_firmware(void) { return 0; } */\n' + function
@@ -157,7 +170,7 @@ static int firmware_upgrade_spawn(const char *writer,const char *record,int leas
                 upgrade.generate_source(data, Path('/tmp/synthetic'))
 
     def test_native_wait_contract_retains_normal_exit_signal_and_launch_failure(self):
-        for argument, expected in [('20', 20 << 8), ('0', 0), ('999', 9), ('-1', -1)]:
+        for argument, expected in [('20', 20 << 8), ('0', 0), ('999', 9), ('-1', -2)]:
             result = subprocess.run([str(self.binary), argument], check=True, text=True, capture_output=True)
             self.assertEqual(result.stdout.strip(), f'{expected} 0')
 

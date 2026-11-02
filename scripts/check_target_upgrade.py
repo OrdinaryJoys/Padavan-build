@@ -63,10 +63,10 @@ CASES = (
       (('exclusive-open-failure', 1), ('wrong-owner', 2), ('not-character-device', 3),
        ('disable-failure', 4), ('close-failure', 5))),
     case('resident-request-failure', pin_failure=1),
-    *(case('unknown-' + name, kind=value) for name, value in
+    *(case(('safe-' if value == 10 else 'unknown-') + name, kind=value) for name, value in
       (('maybe-written', 2), ('signal-with-prewrite', 3), ('prewrite-exit21', 4),
        ('verified-exit21', 5), ('missing-record', 6), ('stale-pid', 7), ('extra-bytes', 8),
-       ('symlink', 9), ('exec-failure', 10), ('unsafe-mode', 11), ('hardlink', 12),
+       ('symlink', 9), ('no-child-spawn-failure', 10), ('unsafe-mode', 11), ('hardlink', 12),
        ('zero-verified-size', 13), ('wrong-target-case', 14), ('oversize', 15),
        ('zero-pid', 16), ('truncated', 17), ('embedded-nul', 18), ('signed-pid', 19),
        ('prewrite-exit0', 20), ('readback-size-mismatch', 21), ('prewrite-nonzero-size', 22))),
@@ -115,6 +115,8 @@ def generate_source(inputs, fixture_root):
             raise ValueError('Missing/changed bounded hook contract: ' + literal)
     if '#include "hook_runner.h"' not in inputs['rc.c']:
         raise ValueError('rc does not include the bounded hook supervisor')
+    if re.findall(r'^#define[ \t]+FW_UPGRADE_NOT_STARTED[ \t]+(.*)$',inputs['rc.c'],re.M) != ['(-2)']:
+        raise ValueError('No-child sentinel macro differs from the compiled recovery fixture')
     header = inputs['rc.h']
     for name in ('write_storage_to_mtd', 'firmware_upgrade_inhibited'):
         if not re.search(r'\bint\s+' + name + r'\s*\(\s*void\s*\)\s*;', header):
@@ -219,7 +221,7 @@ def expected_trace(o):
         safe = bool(o['hardware'])
     if not safe:
         r['writes'] = 1; r['trace'].append('writer')
-        safe = o['kind'] == 1
+        safe = o['kind'] in (1, 10)
     if safe:
         log()
         failed = False

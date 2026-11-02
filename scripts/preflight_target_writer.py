@@ -2,7 +2,7 @@
 """Fail early on MIPS compiler/ABI defects in the inert writer core protocol probe.
 
 This uses static toolchain libc, not the later shipped dynamic runtime. It
-does not replace the final23-case gate and never executes the real writer or resident finalizer.
+does not replace the final45-case gate and never executes the real writer or resident finalizer.
 """
 import argparse
 import hashlib
@@ -42,9 +42,9 @@ def check(trunk, compiler, output):
                   generated_source_sha256=hashlib.sha256(generated).hexdigest(),
                   mips_probe_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
                   limitations=['No shipped writer, daemon, MTD, hardware ioctl, real mlockall or reboot executed.',
-                               'Uses static toolchain libc; final23-case shipped-runtime writer check remains mandatory.'])
+                               'Uses static toolchain libc; final45-case shipped-runtime writer check remains mandatory.'])
     output.write_text(json.dumps(report, indent=2) + '\n')
-    print('Static MIPS writer preflight:22 inert source cases PASS; final shipped-runtime gate still required')
+    print('Static MIPS writer preflight:44 inert source cases PASS; final shipped-runtime gate still required')
 
 
 if __name__ == '__main__':

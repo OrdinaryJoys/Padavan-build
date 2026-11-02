@@ -43,6 +43,8 @@ def inputs_for(adapter):
     values={key:'/* '+key+' */\n' for key in gate.SOURCE_PATHS}
     for name,key in gate.ADAPTERS[adapter]['functions'].items():
         values[key]+=('int ' if name=='main' else 'static int ')+name+'(void){return 0;}\n'
+    if adapter in ('parent','consumer'):
+        values[gate.ADAPTERS[adapter]['source_keys']['rc']] += '#define FW_UPGRADE_NOT_STARTED (-2)\n'
     return values
 
 
@@ -62,11 +64,11 @@ def module_for(adapter):
 
 class ResidentTargetTests(unittest.TestCase):
     def test_independent_fixed_case_counts(self):
-        self.assertEqual(len(gate.CASES),107)
+        self.assertEqual(len(gate.CASES),111)
         self.assertEqual({name:sum(options['adapter']==name for _,options in gate.CASES)
                           for name in gate.ADAPTERS},
-                         {'helper':34,'legacy':44,'legacy-disabled':1,'parent':18,'consumer':10})
-        self.assertEqual(len(gate.SHIPPED_CASES),4)
+                         {'helper':35,'legacy':44,'legacy-disabled':1,'parent':20,'consumer':11})
+        self.assertEqual(len(gate.SHIPPED_CASES),5)
         gate.validate_records(records())
 
     def test_missing_extra_duplicate_and_reordered_records_fail(self):
@@ -173,6 +175,23 @@ class ResidentTargetTests(unittest.TestCase):
         with self.assertRaises(ValueError):gate.generate_source(invalid,'/tmp/inert-fixture',0,'parent')
         values['parent_rc']+=values['parent_rc']
         with self.assertRaises(ValueError):gate.generate_source(values,'/tmp/inert-fixture',0,'parent')
+
+    def test_no_child_sentinel_is_bound_to_actual_rc_macro(self):
+        for adapter in ('parent','consumer'):
+            values=inputs_for(adapter);values[gate.ADAPTERS[adapter]['harness']]=module_for(adapter)
+            key=gate.ADAPTERS[adapter]['source_keys']['rc']
+            for changed in ('#define FW_UPGRADE_NOT_STARTED (-1)',
+                            '#define FW_UPGRADE_NOT_STARTED (-2)\n#define FW_UPGRADE_NOT_STARTED (-1)', ''):
+                invalid=dict(values);invalid[key]=invalid[key].replace('#define FW_UPGRADE_NOT_STARTED (-2)',changed)
+                with self.subTest(adapter=adapter,changed=changed),self.assertRaisesRegex(ValueError,'sentinel'):
+                    gate.generate_source(invalid,'/tmp/inert-fixture',0,adapter)
+        for name,key,value in (('parent:fork-failure','status',-1),
+                               ('parent:fork-restore-failure','status',-2),
+                               ('parent:parent-mask-failure','status',-2),
+                               ('parent:parent-mask-copy-failure','status',-2),
+                               ('parent:exec-failure','status',-2)):
+            rows=records();next(row for row in rows if row['case']==name)['observed'][key]=value
+            with self.subTest(case=name),self.assertRaises(ValueError):gate.validate_records(rows)
 
     def test_source_module_never_uses_stale_cached_import(self):
         first=gate.checked_module('def generate_source(*a): return 1\n','fresh')

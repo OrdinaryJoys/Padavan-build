@@ -53,6 +53,15 @@ CASES = (
     ('global-lock-busy-unknown', 'global-lock', 21, 'PREWRITE', False),
     ('success-large-chunked', None, 0, 'VERIFIED', True),
     ('second-block-error-unknown', 'second-block-error', 21, 'MAYBE_WRITTEN', False),
+    ('allocation-prewrite', 'memory', 20, 'PREWRITE', False),
+    ('snapshot-lock-prewrite', 'snapshot-lock', 20, 'PREWRITE', False),
+    ('readback-lock-prewrite', 'readback-lock', 20, 'PREWRITE', False),
+    *(("oom-"+fault+"-prewrite", "oom-"+fault, 20, 'PREWRITE', False) for fault in
+      ('open','fstat','owner','statfs','not-proc','write','write-zero','write-over','write-short',
+       'mismatch','seek','read','read-over','read-eof','read-extra','close')),
+    ('success-oom-write-eintr', 'oom-write-eintr', 0, 'VERIFIED', True),
+    ('success-oom-read-eintr', 'oom-read-eintr', 0, 'VERIFIED', True),
+    ('success-oom-read-short', 'oom-read-short', 0, 'VERIFIED', True),
 )
 CASE_NAMES = ('shipped-legacy-protocol-refused',) + tuple(row[0] for row in CASES)
 IMAGE_BYTES = 9064
@@ -60,7 +69,7 @@ PADDED_BYTES = 12288
 LARGE_IMAGE_BYTES = 150064
 LARGE_CASES = frozenset(('success-large-chunked', 'second-block-error-unknown'))
 FIELDS = {'case', 'backend', 'fault', 'exit_code', 'child_pid', 'record', 'events',
-          'payload_matches_snapshot', 'record_metadata', 'device_write_requests'}
+          'payload_matches_snapshot', 'record_metadata', 'device_write_requests', 'oom_score_fixture'}
 
 
 def require(condition, message):
@@ -107,15 +116,48 @@ def generate_source(texts):
             + harness + '\n' + texts['crc32.c'])
 
 
+OOM_SUCCESS_FAULTS = frozenset(('oom-write-eintr','oom-read-eintr','oom-read-short'))
+OOM_UNWRITTEN_FAULTS = frozenset(('oom-open','oom-fstat','oom-owner','oom-statfs','oom-not-proc',
+                                 'oom-write','oom-write-zero','oom-write-over'))
+
+
+def expected_oom_events(fault):
+    events=['oom-open']
+    if fault=='oom-open':return events
+    if fault in ('oom-fstat','oom-owner','oom-statfs','oom-not-proc'):return events+['oom-close']
+    events += ['oom-write'] * (2 if fault=='oom-write-eintr' else 1)
+    if fault in ('oom-write','oom-write-zero','oom-write-over','oom-write-short','oom-seek'):
+        return events+['oom-close']
+    reads=(1 if fault in ('oom-read','oom-read-over','oom-read-eof','oom-read-extra') else
+           3 if fault=='oom-read-eintr' else 4 if fault=='oom-read-short' else 2)
+    return events+['oom-read']*reads+['oom-close']
+
+
+def expected_oom_record(fault):
+    if fault=='global-lock' or fault in OOM_UNWRITTEN_FAULTS:return '0\n'
+    if fault=='oom-write-short':return '-100'
+    if fault=='oom-mismatch':return '-0999\n'
+    return '-1000\n'
+
+
 def expected_events(fault, image_bytes=IMAGE_BYTES):
     padded = (image_bytes + 4095) // 4096 * 4096
     if fault == 'global-lock':
         return []
-    events = ['open-device']
-    if fault in ('image-read', 'invalid-crc', 'pre-read'):
+    events = expected_oom_events(fault)
+    if fault and fault.startswith('oom-') and fault not in OOM_SUCCESS_FAULTS:
+        return events+['memory-free']
+    events += ['open-device']
+    if fault in ('image-read', 'invalid-crc', 'pre-read', 'memory'):
         return events + ['memory-free']
     events += ['device-sync', 'memory-lock']
     if fault == 'memory-lock':
+        return events + ['memory-free', 'memory-unlock']
+    events.append('snapshot-lock')
+    if fault == 'snapshot-lock':
+        return events + ['memory-free', 'memory-unlock']
+    events.append('readback-lock')
+    if fault == 'readback-lock':
         return events + ['memory-free', 'memory-unlock']
     if fault in ('maybe-write', 'maybe-dir-sync'):
         return events
@@ -141,8 +183,10 @@ def expected_events(fault, image_bytes=IMAGE_BYTES):
 
 def expected_requests(fault, image_bytes=IMAGE_BYTES):
     padded = (image_bytes + 4095) // 4096 * 4096
+    if fault and fault.startswith('oom-') and fault not in OOM_SUCCESS_FAULTS:
+        return []
     if fault in ('global-lock','image-read','invalid-crc','pre-read','memory-lock',
-                 'maybe-write','maybe-dir-sync','unlock','erase'):
+                 'maybe-write','maybe-dir-sync','unlock','erase','memory','snapshot-lock','readback-lock'):
         return []
     if fault == 'short':
         return [min(padded-offset,65536) for offset in range(0,padded,17)]
@@ -170,7 +214,8 @@ def validate_records(records, expected_owner=0, include_shipped=True):
         require(type(row['child_pid']) is int and row['child_pid'] > 1, 'Invalid writer child PID')
         if shipped:
             require(row['record'] is None and row['record_metadata'] is None and row['events']==[] and
-                    row['payload_matches_snapshot'] is None and row['device_write_requests'] is None,
+                    row['payload_matches_snapshot'] is None and row['device_write_requests'] is None and
+                    row['oom_score_fixture'] is None,
                     'Legacy refusal created a writer status or claimed a probe device')
             continue
         r = row['record']
@@ -188,6 +233,8 @@ def validate_records(records, expected_owner=0, include_shipped=True):
                 row['device_write_requests'] == expected_requests(fault,image_bytes),
                 'Writer device request size/order mismatch: ' + name)
         require(row['payload_matches_snapshot'] is matches, 'Writer payload preservation mismatch: ' + name)
+        require(type(row['oom_score_fixture']) is str and row['oom_score_fixture']==expected_oom_record(fault),
+                'Writer OOM guard ordinary-file result mismatch: '+name)
         require(type(row['record_metadata']) is dict and set(row['record_metadata']) == {'uid', 'mode', 'nlink'} and
                 all(type(value) is int for value in row['record_metadata'].values()) and
                 row['record_metadata'] == {'uid': expected_owner, 'mode': 0o600, 'nlink': 1},
@@ -285,9 +332,11 @@ def run_probe_case(command, base, spec):
     if fault == 'invalid-crc':
         data = bytearray(expected); data[80] ^= 1; source.write_bytes(data)
     with device.open('wb') as stream: stream.truncate(15925248)
+    oom=directory/'ordinary-file-oom-score';oom.write_bytes(b'0\n');oom.chmod(0o644)
     operation = directory / 'operation'
     env = dict(os.environ, WRITER_IMAGE=str(source), WRITER_DEVICE=str(device), WRITER_STATUS=str(status),
-               WRITER_LOG=str(events), WRITER_OPERATION=str(operation), WRITER_REQUESTS=str(requests))
+               WRITER_LOG=str(events), WRITER_OPERATION=str(operation), WRITER_REQUESTS=str(requests),
+               WRITER_OOM=str(oom))
     env.pop('WRITER_FAULT', None)
     if fault: env['WRITER_FAULT'] = fault
     lock = None
@@ -309,6 +358,7 @@ def run_probe_case(command, base, spec):
             'exit_code': code, 'child_pid': pid, 'record': record,
             'events': events.read_text().splitlines() if events.exists() else [],
             'device_write_requests': [int(line) for line in request_data.splitlines()],
+            'oom_score_fixture':oom.read_text(),
             'payload_matches_snapshot': device.read_bytes()[:len(expected)] == expected, 'record_metadata': metadata}
 
 
@@ -345,7 +395,7 @@ def worker(rootfs, sysroot, probe, output):
         record, metadata = None, None
         rows.append({'case': CASE_NAMES[0], 'backend': 'actual-shipped-writer', 'fault': None, 'exit_code': code,
                      'child_pid': pid, 'record': record, 'events': [], 'payload_matches_snapshot': None,
-                     'record_metadata': metadata, 'device_write_requests': None})
+                     'record_metadata': metadata, 'device_write_requests': None, 'oom_score_fixture':None})
         for spec in CASES:
             rows.append(run_probe_case(['qemu-mipsel', '-L', str(sysroot), str(probe)], base, spec))
     validate_records(rows)
@@ -379,7 +429,7 @@ def check(trunk, rootfs, compiler, sysroot, output):
             actual.st_dev == reserved.st_dev and actual.st_ino == reserved.st_ino,
             'Privileged worker replaced the controller-owned report inode')
     partial = json.loads(output.read_text()); validate_records(partial['checks'])
-    report = {'schema_version': 3, 'status': 'PASS', 'profile': 'k2p-4.4', 'required_cases': list(CASE_NAMES),
+    report = {'schema_version': 4, 'status': 'PASS', 'profile': 'k2p-4.4', 'required_cases': list(CASE_NAMES),
               'checks': partial['checks'], 'source_sha256': {name: hashlib.sha256(text.encode()).hexdigest() for name, text in texts.items()},
               'shipped_writer_sha256': hashlib.sha256((rootfs / 'bin/mtd_write').read_bytes()).hexdigest(),
               'generated_source_sha256': hashlib.sha256(generated.encode()).hexdigest(),
@@ -388,12 +438,13 @@ def check(trunk, rootfs, compiler, sysroot, output):
               'shipped_refusal_isolation': partial['shipped_refusal_isolation'],
               'filesystem_limits': {'tmp': 24 * 1024 * 1024},
               'limits': ['One actual shipped legacy mtd_write case refuses its removed protocol with21 and no status; no real MTD is opened.',
-                         'The22 core protocol cases cross-compile the production header through an inert ABI shim, not the resident finalizer main; ordinary-file device, IOCTL, memory-lock and reboot effects are inert.',
+                         'The44 core protocol cases cross-compile the production header through an inert ABI shim, not the resident finalizer main; ordinary-file device, IOCTL, memory-lock and reboot effects are inert.',
                          'Two large-image cases observe complete64KiB request sequences and later-block failure; this bounds requested mtdchar bounce allocation, not all kernel memory use or write latency.',
-                         'Neither this test nor checked mlockall proves every page is resident on Linux4.4; internal mlockall errors may be ignored by that kernel.',
+                         'Explicit snapshot and readback range mlock errors must abort before MAYBE; memory-lock effects in this ABI shim are inert. Full executable/stack residency and system memory pressure are not established.',
+                         'The actual OOM guard body uses a private ordinary file and low-level syscall/fs substitutions; no real host or router OOM score is changed, and no kernel OOM survival is established.',
                          'No hardware write, erase, memory locking, reboot, power-loss safety or router boot is established.']}
     output.write_text(json.dumps(report, indent=2) + '\n')
-    print('Target firmware writer:23 exact cases PASS (one legacy refusal,22 inert core MIPS cases; resident finalizer requires its separate gate)')
+    print('Target firmware writer:45 exact cases PASS (one legacy refusal,44 inert core MIPS cases; resident finalizer requires its separate gate)')
     return report
 
 

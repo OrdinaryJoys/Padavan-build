@@ -13,7 +13,8 @@ writer = importlib.util.module_from_spec(SPEC); SPEC.loader.exec_module(writer)
 
 # Reviewed independently of expected_events: SAFE frees its snapshot; no
 # possible-write/verified result may enter allocator cleanup.
-DEVICE_PREP = ['open-device', 'device-sync', 'memory-lock']
+MLOCK_ALL = ['open-device', 'device-sync', 'memory-lock']
+DEVICE_PREP = MLOCK_ALL + ['snapshot-lock', 'readback-lock']
 ERASE_THREE = ['unlock', 'erase', 'unlock', 'erase', 'unlock', 'erase']
 COMPLETE = DEVICE_PREP + ERASE_THREE + ['write', 'device-sync', 'writer-close', 'readback', 'reader-close']
 FIXED_EVENTS = {
@@ -21,7 +22,7 @@ FIXED_EVENTS = {
     'success-mtdchar-unsupported-sync': COMPLETE,
     'success-short-writes': DEVICE_PREP + ERASE_THREE + ['write'] * 723 + ['device-sync', 'writer-close', 'readback', 'reader-close'],
     'success-write-eintr': DEVICE_PREP + ERASE_THREE + ['write', 'write', 'device-sync', 'writer-close', 'readback', 'reader-close'],
-    'memory-lock-prewrite': DEVICE_PREP + ['memory-free', 'memory-unlock'],
+    'memory-lock-prewrite': MLOCK_ALL + ['memory-free', 'memory-unlock'],
     'image-read-prewrite': ['open-device', 'memory-free'],
     'invalid-crc-prewrite': ['open-device', 'memory-free'],
     'readback-interface-prewrite': ['open-device', 'memory-free'],
@@ -40,7 +41,42 @@ FIXED_EVENTS = {
     'success-large-chunked': DEVICE_PREP + ['unlock','erase'] * 37 + ['write'] * 3 +
         ['device-sync','writer-close'] + ['readback'] * 10 + ['reader-close'],
     'second-block-error-unknown': DEVICE_PREP + ['unlock','erase'] * 37 + ['write','write'],
+    'allocation-prewrite': ['open-device','memory-free'],
+    'snapshot-lock-prewrite': MLOCK_ALL + ['snapshot-lock','memory-free','memory-unlock'],
+    'readback-lock-prewrite': MLOCK_ALL + ['snapshot-lock','readback-lock','memory-free','memory-unlock'],
 }
+# The actual OOM guard runs through low-level private-file seams, never host proc.
+OOM_GUARD = ['oom-open','oom-write','oom-read','oom-read','oom-close']
+FIXED_EVENTS = {name:OOM_GUARD+events if name!='global-lock-busy-unknown' else events
+                for name,events in FIXED_EVENTS.items()}
+FIXED_EVENTS.update({
+    'oom-open-prewrite':['oom-open','memory-free'],
+    'oom-fstat-prewrite':['oom-open','oom-close','memory-free'],
+    'oom-owner-prewrite':['oom-open','oom-close','memory-free'],
+    'oom-statfs-prewrite':['oom-open','oom-close','memory-free'],
+    'oom-not-proc-prewrite':['oom-open','oom-close','memory-free'],
+    'oom-write-prewrite':['oom-open','oom-write','oom-close','memory-free'],
+    'oom-write-zero-prewrite':['oom-open','oom-write','oom-close','memory-free'],
+    'oom-write-over-prewrite':['oom-open','oom-write','oom-close','memory-free'],
+    'oom-write-short-prewrite':['oom-open','oom-write','oom-close','memory-free'],
+    'oom-mismatch-prewrite':OOM_GUARD+['memory-free'],
+    'oom-seek-prewrite':['oom-open','oom-write','oom-close','memory-free'],
+    'oom-read-prewrite':['oom-open','oom-write','oom-read','oom-close','memory-free'],
+    'oom-read-over-prewrite':['oom-open','oom-write','oom-read','oom-close','memory-free'],
+    'oom-read-eof-prewrite':['oom-open','oom-write','oom-read','oom-close','memory-free'],
+    'oom-read-extra-prewrite':['oom-open','oom-write','oom-read','oom-close','memory-free'],
+    'oom-close-prewrite':OOM_GUARD+['memory-free'],
+    'success-oom-write-eintr':['oom-open','oom-write','oom-write','oom-read','oom-read','oom-close']+COMPLETE,
+    'success-oom-read-eintr':['oom-open','oom-write','oom-read','oom-read','oom-read','oom-close']+COMPLETE,
+    'success-oom-read-short':['oom-open','oom-write','oom-read','oom-read','oom-read','oom-read','oom-close']+COMPLETE,
+})
+OOM_FIXTURE = {name:'-1000\n' for name in FIXED_EVENTS}
+for name in ('global-lock-busy-unknown','oom-open-prewrite','oom-fstat-prewrite','oom-owner-prewrite',
+             'oom-statfs-prewrite','oom-not-proc-prewrite','oom-write-prewrite',
+             'oom-write-zero-prewrite','oom-write-over-prewrite'):
+    OOM_FIXTURE[name]='0\n'
+OOM_FIXTURE['oom-write-short-prewrite']='-100'
+OOM_FIXTURE['oom-mismatch-prewrite']='-0999\n'
 FIXED_REQUESTS = {name:([12288] if 'write' in events else []) for name,events in FIXED_EVENTS.items()}
 FIXED_REQUESTS.update({'success-short-writes':list(range(12288,0,-17)),
                        'success-write-eintr':[12288,12288],
@@ -62,6 +98,7 @@ def records():
                                 'verified_bytes': image_bytes if state == 'VERIFIED' else 0},
                      'events': [] if shipped else list(FIXED_EVENTS[name]),
                      'device_write_requests':None if shipped else list(FIXED_REQUESTS[name]),
+                     'oom_score_fixture':None if shipped else OOM_FIXTURE[name],
                      'payload_matches_snapshot': matches, 'record_metadata': None if shipped else {'uid': 0, 'mode': 0o600, 'nlink': 1}})
     return rows
 
@@ -120,15 +157,15 @@ class TargetWriterTests(unittest.TestCase):
             self.assertEqual(result.stdout, '0\n')
             after = path.stat(); self.assertEqual((before.st_uid, before.st_ino), (after.st_uid, after.st_ino))
             path.write_text('controller final report'); self.assertEqual(path.read_text(), 'controller final report')
-    def test_exact_twenty_three_records_are_accepted(self):
-        self.assertEqual(len(records()), 23)
+    def test_exact_forty_five_records_are_accepted(self):
+        self.assertEqual(len(records()), 45)
         self.assertEqual(set(FIXED_EVENTS),{row[0] for row in writer.CASES})
         self.assertEqual(set(FIXED_REQUESTS),set(FIXED_EVENTS))
         writer.validate_records(records())
 
-    def test_source_only_preflight_requires_exact_twenty_two_cases_and_preserves_roles(self):
+    def test_source_only_preflight_requires_exact_forty_four_cases_and_preserves_roles(self):
         source = records()[1:]
-        self.assertEqual(len(source), 22)
+        self.assertEqual(len(source), 44)
         writer.validate_records(source, include_shipped=False)
         other_owner = copy.deepcopy(source)
         for row in other_owner: row['record_metadata']['uid'] = 99
@@ -149,7 +186,7 @@ class TargetWriterTests(unittest.TestCase):
             with self.assertRaises(ValueError): writer.validate_records(rows)
         for value in ([65537,65536,20480],[65536,20480],[65536,True,20480],
                       [65536,65536,20480.0],None):
-            rows=records();rows[-2]['device_write_requests']=value
+            rows=records();next(row for row in rows if row['case']=='success-large-chunked')['device_write_requests']=value
             with self.subTest(requests=value),self.assertRaises(ValueError):writer.validate_records(rows)
         rows=records();rows[-1]['events'].append('readback')
         with self.assertRaises(ValueError):writer.validate_records(rows)
@@ -162,7 +199,7 @@ class TargetWriterTests(unittest.TestCase):
             with self.assertRaises(ValueError): writer.validate_records(rows)
 
     def test_unknown_exit_and_prewrite_pair_cannot_be_swapped(self):
-        rows = records(); rows[-1]['exit_code'] = 20
+        rows = records(); next(row for row in rows if row['case']=='second-block-error-unknown')['exit_code'] = 20
         with self.assertRaises(ValueError): writer.validate_records(rows)
         rows = records(); rows[4]['record']['state'] = 'PREWRITE'
         with self.assertRaises(ValueError): writer.validate_records(rows)
@@ -184,10 +221,13 @@ class TargetWriterTests(unittest.TestCase):
         for change in ('remove-lock', 'reorder', 'unlock'):
             rows = records()
             if change == 'remove-lock': rows[1]['events'].remove('memory-lock')
-            elif change == 'reorder': rows[1]['events'][2:4] = list(reversed(rows[1]['events'][2:4]))
+            elif change == 'reorder':
+                events=rows[1]['events'];a=events.index('memory-lock');b=events.index('snapshot-lock')
+                events[a],events[b]=events[b],events[a]
             else: rows[11]['events'].append('memory-unlock')
             with self.assertRaises(ValueError): writer.validate_records(rows)
-        for name in ('memory-lock-prewrite','image-read-prewrite','invalid-crc-prewrite','readback-interface-prewrite'):
+        for name in ('memory-lock-prewrite','image-read-prewrite','invalid-crc-prewrite','readback-interface-prewrite',
+                     'allocation-prewrite','snapshot-lock-prewrite','readback-lock-prewrite'):
             rows=records();row=next(row for row in rows if row['case']==name)
             row['events'].remove('memory-free')
             with self.subTest(case=name),self.assertRaises(ValueError):writer.validate_records(rows)
@@ -196,10 +236,44 @@ class TargetWriterTests(unittest.TestCase):
             row['events'].append('memory-free')
             with self.subTest(case=name),self.assertRaises(ValueError):writer.validate_records(rows)
 
+    def test_both_checked_ranges_precede_write_and_failure_stays_prewrite(self):
+        for name in ('success-supported-sync','success-large-chunked'):
+            for step in ('snapshot-lock','readback-lock'):
+                rows=records();row=next(row for row in rows if row['case']==name)
+                row['events'].remove(step)
+                with self.subTest(case=name,removed=step),self.assertRaises(ValueError):writer.validate_records(rows)
+        for name in ('allocation-prewrite','snapshot-lock-prewrite','readback-lock-prewrite'):
+            for key,value in (('exit_code',21),('device_write_requests',[12288])):
+                rows=records();next(row for row in rows if row['case']==name)[key]=value
+                with self.subTest(case=name,key=key),self.assertRaises(ValueError):writer.validate_records(rows)
+            rows=records();row=next(row for row in rows if row['case']==name)
+            row['record']['state']='MAYBE_WRITTEN'
+            with self.subTest(case=name),self.assertRaises(ValueError):writer.validate_records(rows)
+
+    def test_actual_oom_guard_outcome_and_syscall_trace_are_mandatory(self):
+        for name in ('oom-open-prewrite','oom-write-short-prewrite','oom-mismatch-prewrite',
+                     'oom-read-extra-prewrite','oom-close-prewrite'):
+            rows=records();row=next(row for row in rows if row['case']==name)
+            self.assertEqual(row['exit_code'],20)
+            self.assertNotIn('open-device',row['events'])
+            row['exit_code']=0
+            with self.subTest(case=name),self.assertRaises(ValueError):writer.validate_records(rows)
+        for value in ('0\n','-1000','-1000\nX',-1000,None,False):
+            rows=records();rows[1]['oom_score_fixture']=value
+            with self.subTest(value=value),self.assertRaises(ValueError):writer.validate_records(rows)
+        for name in ('success-supported-sync','success-oom-write-eintr','success-oom-read-eintr','success-oom-read-short'):
+            rows=records();row=next(row for row in rows if row['case']==name);row['events'].remove('oom-read')
+            with self.subTest(case=name),self.assertRaises(ValueError):writer.validate_records(rows)
+        rows=records();rows[0]['oom_score_fixture']='-1000\n'
+        with self.assertRaises(ValueError):writer.validate_records(rows)
+        rows=records();row=next(row for row in rows if row['case']=='oom-write-short-prewrite')
+        row['events'].insert(2,'oom-write')
+        with self.assertRaises(ValueError):writer.validate_records(rows)
+
     def test_payload_and_state_preservation_are_not_only_exit_checks(self):
         rows = records(); rows[1]['payload_matches_snapshot'] = False
         with self.assertRaises(ValueError): writer.validate_records(rows)
-        rows = records(); rows[-2]['record']['verified_bytes'] = 0
+        rows = records(); next(row for row in rows if row['case']=='success-large-chunked')['record']['verified_bytes'] = 0
         with self.assertRaises(ValueError): writer.validate_records(rows)
 
     def test_all_three_dynamic_now_forms_and_static_are_accepted(self):
