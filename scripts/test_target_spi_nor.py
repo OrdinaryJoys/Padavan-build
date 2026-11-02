@@ -53,7 +53,7 @@ class SpiTargetTests(unittest.TestCase):
         self.assertEqual(len(gate.CASES),51)
         self.assertEqual(sum(not options['baseline'] for _,options in gate.CASES),42)
         self.assertEqual(sum(options['baseline'] for _,options in gate.CASES),9)
-        self.assertEqual(len(gate.SOURCE_PATHS),10)
+        self.assertEqual(len(gate.SOURCE_PATHS),11)
         self.assertEqual(len(gate.FUNCTION_SOURCES),10)
         self.assertEqual(len(gate.BASELINE_FUNCTION_HASHES),9)
         rows=[{'case':name,'inputs':copy.deepcopy(options),'observed':copy.deepcopy(gate.EXPECTED[name])}

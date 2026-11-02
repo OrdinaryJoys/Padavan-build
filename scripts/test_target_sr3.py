@@ -166,7 +166,7 @@ def generate_source(texts,fixture_root,owner_uid=0,baseline=False):
             result = gate.kernel_reference(inputs, path)
             self.assertTrue(result['whole_kernel_image_equality'])
             self.assertEqual(set(result['required_symbols']), {'m25p_probe', 'spi_nor_scan'})
-            self.assertEqual(len(result['kernel_exports_sha256']), 10)
+            self.assertEqual(len(result['kernel_exports_sha256']), 4 + 2 * len(gate.spi.OBJECTS))
             self.assertEqual(result['report_sha256'], gate.sha(path.read_bytes()))
 
     def test_kernel_reference_rejects_incomplete_phase_source_and_export_splice(self):
