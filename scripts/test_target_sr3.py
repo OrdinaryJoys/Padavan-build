@@ -79,6 +79,15 @@ class SR3TargetTests(unittest.TestCase):
             bad[normal]['observed'][field] = value
             with self.subTest(field=field), self.assertRaises(ValueError):
                 gate.validate_records(bad)
+        for name, field, value in (('current:busy-prior-sr3-other-bits', 'sr3_after', 0x40),
+                                   ('current:busy-prior-sr3-other-bits', 'write_value', 0x40),
+                                   ('current:busy-prior-sr3-no-change', 'write_calls', 1),
+                                   ('current:fresh-sr3-read-error', 'write_calls', 1)):
+            bad = copy.deepcopy(rows)
+            row = next(row for row in bad if row['case'] == name)
+            row['observed'][field] = value
+            with self.subTest(case=name, field=field), self.assertRaises(ValueError):
+                gate.validate_records(bad)
 
     def test_public_baseline_and_actual_body_generation_cannot_drift(self):
         current = 'static int current_function(void){return 1;}'
