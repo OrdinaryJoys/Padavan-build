@@ -134,7 +134,7 @@ COMPONENTS = {'cmdq': {'paths': {'queue': 'trunk/linux-4.4.x/drivers/net/wireles
                         'mtd_pci_get_pkt_from_rx_resource': 'hif',
                         'mtd_pci_get_pkt_from_rx_resource_io': 'hif'},
           'harness_key': 'pool_harness',
-          'model_data_sha256': '55a1bd7ca79c8c7adc35513a56b04fac5ceb1217500f8eae90dc80c476b7e6ae',
+          'model_data_sha256': '2da466ec19f6de3c327adb70b1a6a3395bf0ec751fca6295ba7420eba7851099',
           'variants': ('build',)},
  'startup': {'paths': {'pool': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/common/cmm_mac_pci.c',
                        'sizes': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/include/rtmp_def.h',
