@@ -75,7 +75,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_spi_queue test_mtd_backup test_spi_dma test_spi_lifecycle \
                        test_mtd_mutation test_controller_clock test_nvram_mtd test_wifi_factory \
                        test_wifi_bin_io test_wifi_buffer_lifetime test_wifi_cal_io \
-                       test_wifi_cal_consumers test_meta_nvram; do
+                       test_wifi_cal_consumers test_meta_nvram test_ate_dispatch; do
     test -f "$root/source/tests/$required_test.py"
   done
 fi

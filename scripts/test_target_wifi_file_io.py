@@ -64,7 +64,7 @@ def model_fixture(component):
       'CASE_NAMES':tuple(o['selector']for _,o in gate.CASES if o['component']==component and o['profile']=='current'),
       'BASELINE_CASES':tuple(o['selector']for _,o in gate.CASES if o['component']==component and o['profile']=='baseline'),
       'DISABLED_CASES':tuple(o['selector']for _,o in gate.CASES if o['component']==component and o['profile']=='disabled'),
-      'PREFIX':'/* inert literal prefix */\n','MAIN':'\n/* CASE_ADMISSION */\nMODE_CALL\n',
+      'PREFIX':'/* inert literal prefix */\n'+('PRECAL_DECLARATIONS\n'if component=='bin'else''),'MAIN':'\n/* CASE_ADMISSION */\nMODE_CALL\n',
       'BODY_ORDER':tuple(functions),'CALL':'CHECKED_CALL',
       'HEADER_CURRENT':'int RtmpOSFileClose(RTMP_OS_FD osfd);\nint RtmpOSFileCloseChecked(RTMP_OS_FD osfd);',
       'HEADER_BASELINE':'int RtmpOSFileClose(RTMP_OS_FD osfd);',
@@ -74,6 +74,7 @@ def model_fixture(component):
     spec['model_data_sha256']=gate.model_data_hash(values)
     source='\n'.join(n+'='+repr(v)for n,v in values.items())+'\ndef generate_source(*a,**k):\n raise AssertionError("Source generator must never run")\n'
     inputs.update({flat:'\n'.join(bodies.values()),spec['harness_key']:source,'os_header':values['HEADER_CURRENT'],
+      'ate':'static UINT16 PreCalGroupList[] = {0xED,0x1FF};\nstatic UINT8 PreCalItemList[] = {0x1F};',
       'meta_header':'struct GNU_PACKED _META_CMD_HDR {int code;};\nstruct GNU_PACKED _PARAM_CUSTOM_EEPROM_RW {int word;};'})
     return inputs,spec,values,old
 
@@ -82,12 +83,15 @@ class WifiFileIOTargetTests(unittest.TestCase):
     def rows(self):
         return [{'case':n,'inputs':copy.deepcopy(o),'observed':copy.deepcopy(gate.EXPECTED[n])}for n,o in gate.CASES]
 
-    def test_fixed_three_components218_cases_honest_variant_and_object_scope(self):
+    def test_fixed_three_components246_cases_honest_variant_and_object_scope(self):
         gate.validate_contract()
-        self.assertEqual((len(gate.CASES),len(gate.SOURCE_PATHS),len(gate.COMPILED_OBJECTS),len(gate.EXTRA_OBJECTS)),(218,19,8,5))
-        self.assertEqual({c:sum(o['component']==c for _,o in gate.CASES)for c in gate.COMPONENTS},{'bin':125,'cal':69,'meta':24})
-        self.assertEqual((len(gate.parent_export_names()),len(gate.io_export_names())),(14,10))
+        self.assertEqual((len(gate.CASES),len(gate.SOURCE_PATHS),len(gate.COMPILED_OBJECTS),len(gate.EXTRA_OBJECTS)),(246,20,9,6))
+        self.assertEqual({c:sum(o['component']==c for _,o in gate.CASES)for c in gate.COMPONENTS},{'bin':153,'cal':69,'meta':24})
+        self.assertEqual((len(gate.parent_export_names()),len(gate.io_export_names())),(14,12))
         self.assertEqual(len(gate.COMPONENTS['cal']['functions']),9)
+        self.assertEqual(len(gate.COMPONENTS['bin']['functions']),15)
+        self.assertIn('MtATE_Pre_Cal_Proc',gate.COMPILED_OBJECTS['testmode'][2])
+        self.assertEqual(gate.COMPILED_OBJECTS['dispatcher'][1:3],('ate_agent',('SetATE',)))
         self.assertIn('rtmp_ee_bin_read_with_range',gate.CONDITIONAL_FUNCTIONS[0]['functions'])
         self.assertIs(gate.CONDITIONAL_FUNCTIONS[1]['configured_object_claimed'],False)
 
@@ -130,6 +134,9 @@ class WifiFileIOTargetTests(unittest.TestCase):
                     with self.assertRaises(ValueError):gate.generate_component({**inputs,spec['harness_key']:inputs[spec['harness_key']]+suffix},component,'current')
                 bad=copy.deepcopy(old);name=next(iter(bad));bad[name]+=' '
                 with self.assertRaises(ValueError):gate.generate_component(inputs,component,'baseline',bad)
+                if component=='bin':
+                    for tables in ('',inputs['ate']+'\n'+inputs['ate']):
+                        with self.assertRaises(ValueError):gate.generate_component({**inputs,'ate':tables},component,'current')
                 if component=='meta':
                     with self.assertRaises(ValueError):gate.generate_component({**inputs,'meta_header':''},component,'current')
                 if component=='cal':
@@ -140,7 +147,7 @@ class WifiFileIOTargetTests(unittest.TestCase):
         reference=gate.module_reference_from_bytes(inputs,json.dumps(report).encode(),parent)
         self.assertEqual(reference['image_sha256'],'a'*64)
         result=gate.compiled_binding_from_bytes(inputs,parent,extra,gate.spi.inspect_elf)
-        self.assertEqual((len(result['objects']),len(result['extra_exports'])),(8,10))
+        self.assertEqual((len(result['objects']),len(result['extra_exports'])),(9,12))
         self.assertEqual(set(result['reused_factory_objects']),{'eeprom','ee-flash','testmode'})
         self.assertIs(result['unconfigured_meta_object_claimed'],False)
         for fault in('missing','source','report-hash','module','meta-selected'):
@@ -154,7 +161,7 @@ class WifiFileIOTargetTests(unittest.TestCase):
 
     def test_resealed_object_source_command_and_module_symbol_corruption_fails(self):
         inputs,parent,extra,report=compiled_fixture()
-        for fault in('object','machine','command','suffix-token','aggregate','module-symbol','missing'):
+        for fault in('object','machine','command','suffix-token','aggregate','module-symbol','dispatcher-symbol','missing'):
             p=copy.deepcopy(parent);e=copy.deepcopy(extra)
             if fault=='object':e['target-wifi-io-os.o']=module_elf(('wrong_api',))
             elif fault=='machine':
@@ -163,6 +170,7 @@ class WifiFileIOTargetTests(unittest.TestCase):
                 e['target-wifi-io-os.cmd']=b'wrong.c'if fault=='command'else e['target-wifi-io-os.cmd'].replace(b'rt_linux.o',b'rt_linux.o.missing')
             elif fault=='aggregate':p['target-wifi-link.cmd']=p['target-wifi-link.cmd'].replace(b'rtmp_init_inf.o',b'absent.o')
             elif fault=='module-symbol':p['target-wifi-built.ko']=module_elf(('wrong_module',))
+            elif fault=='dispatcher-symbol':e['target-wifi-io-dispatcher.o']=module_elf(('wrong_dispatcher',))
             else:e.pop('target-wifi-io-teardown.o')
             with self.subTest(fault=fault),self.assertRaises(ValueError):gate.compiled_binding_from_bytes(inputs,p,e,gate.spi.inspect_elf)
 
