@@ -148,7 +148,12 @@ raise SystemExit('Unexpected Git call')
         entry=tools/'python3'
         entry.write_text('#!'+sys.executable+'''\n
 import json,os,sys
+from pathlib import Path
 with open(os.environ['GATE_LOG'],'a') as log:log.write(json.dumps(sys.argv[1:])+'\\n')
+if 'check_target_wifi_file_io.py'in sys.argv[1]and '--preflight'not in sys.argv:
+    if '--wifi-report'not in sys.argv or not Path(sys.argv[sys.argv.index('--wifi-report')+1]).is_file():sys.exit(97)
+if '--output'in sys.argv:
+    output=Path(sys.argv[sys.argv.index('--output')+1]);output.parent.mkdir(parents=True,exist_ok=True);output.write_text('inert-gate-output')
 sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv[1] else 0)
 ''')
         entry.chmod(0o755)
@@ -164,7 +169,7 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
         return result,calls,finished.exists()
 
     def test_new_preflight_gates_are_mandatory_before_expensive_build(self):
-        names=['controller_clock','spi_dma','spi_lifecycle','nvram_mtd','mtd_mutation','wifi_factory']
+        names=['controller_clock','spi_dma','spi_lifecycle','nvram_mtd','mtd_mutation','wifi_factory','wifi_file_io']
         result,calls,done=self.new_target_gate_block()
         self.assertEqual(result.returncode,0,result.stderr);self.assertTrue(done)
         self.assertEqual([Path(call[0]).stem for call in calls],['check_target_'+name for name in names])
@@ -175,13 +180,15 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
                 self.assertEqual(result.returncode,23);self.assertEqual(len(calls),i+1);self.assertFalse(done)
 
     def test_late_gates_require_image_or_rootfs_binding_and_stop_publication_on_failure(self):
-        names=['controller_clock','spi_dma','spi_lifecycle','nvram_mtd','mtd_mutation','wifi_factory']
+        names=['controller_clock','spi_dma','spi_lifecycle','nvram_mtd','mtd_mutation','wifi_factory','wifi_file_io']
         result,calls,done=self.new_target_gate_block(late=True)
         self.assertEqual(result.returncode,0,result.stderr);self.assertTrue(done)
         self.assertEqual([Path(call[0]).stem for call in calls],['check_target_'+name for name in names])
         self.assertTrue(all('--preflight'not in call for call in calls))
-        self.assertTrue(all('--spi-report'in call for call in calls[:4]+calls[5:]))
-        self.assertTrue(all('--rootfs'in call for call in calls[4:]))
+        self.assertTrue(all('--spi-report'in call for call in calls[:4]+calls[5:6]))
+        self.assertTrue(all('--rootfs'in call for call in calls[4:6]))
+        self.assertIn('--wifi-report',calls[6])
+        self.assertEqual(calls[6][calls[6].index('--wifi-report')+1],str(self.root/'diagnostics/target-wifi-factory.json'))
         for i,name in enumerate(names):
             with self.subTest(gate=name):
                 result,calls,done=self.new_target_gate_block(late=True,fault=name)

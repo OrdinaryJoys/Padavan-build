@@ -71,7 +71,9 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_upgrade_transaction test_resident_upgrade test_legacy_firmware_gate \
                        test_resident_parent test_resident_consumer test_spi_completion test_sr3_startup test_controller test_collector_cleanup \
                        test_spi_queue test_mtd_backup test_spi_dma test_spi_lifecycle \
-                       test_mtd_mutation test_controller_clock test_nvram_mtd test_wifi_factory; do
+                       test_mtd_mutation test_controller_clock test_nvram_mtd test_wifi_factory \
+                       test_wifi_bin_io test_wifi_buffer_lifetime test_wifi_cal_io \
+                       test_wifi_cal_consumers test_meta_nvram; do
     test -f "$root/source/tests/$required_test.py"
   done
 fi
@@ -119,6 +121,9 @@ if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/check_target_wifi_factory.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --output "$diagnostics/wifi-factory-preflight/target-wifi-factory.json"
+  python3 "$root/scripts/check_target_wifi_file_io.py" --preflight --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --output "$diagnostics/wifi-file-io-preflight/target-wifi-file-io.json"
   test -f "$root/source/tests/mtd_backup_harness.py"
   python3 "$root/scripts/check_target_mtd_backup.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
@@ -462,6 +467,9 @@ if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/check_target_wifi_factory.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --spi-report "$diagnostics/target-spi-nor.json" --output "$diagnostics/target-wifi-factory.json"
+  python3 "$root/scripts/check_target_wifi_file_io.py" --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --wifi-report "$diagnostics/target-wifi-factory.json" --output "$diagnostics/target-wifi-file-io.json"
   python3 "$root/scripts/check_target_mtd_backup.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --output "$diagnostics/target-mtd-backup.json"
   python3 "$root/scripts/check_target_sr3.py" --trunk "$trunk" \
