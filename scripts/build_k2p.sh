@@ -39,6 +39,16 @@ test "$source_commit" = "$ref"
 # Configuration/build generation may dirty the source later. The initial
 # checkout must still be exactly the published, locked commit.
 test -z "$(git -C "$root/source" status --porcelain --untracked-files=all)"
+# The full SPI queue suite independently compares its literal negative control
+# with this public historical revision. A depth-one candidate checkout does not
+# contain that commit; fetch it without changing the locked candidate HEAD.
+if [ "$flavor" = "k2p-4.4" ]; then
+  regression_baseline=3af01e18af99e4329a65636f6e854fedf94a9fc3
+  git -C "$root/source" fetch --no-tags --depth=1 origin "$regression_baseline"
+  test "$(git -C "$root/source" rev-parse --verify 'FETCH_HEAD^{commit}')" = "$regression_baseline"
+  git -C "$root/source" cat-file -e "$regression_baseline^{commit}"
+  test "$(git -C "$root/source" rev-parse HEAD)" = "$source_commit"
+fi
 build_commit=$(git -C "$root" rev-parse HEAD)
 trunk="$root/source/trunk"
 python3 "$root/scripts/configure_k2p.py" "$trunk"
