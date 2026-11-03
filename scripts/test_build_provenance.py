@@ -84,19 +84,26 @@ class ProvenanceTests(unittest.TestCase):
         end = script.index('build_commit=$(git -C "$root" rev-parse HEAD)', start)
         self.assertLess(end, script.index('TMPDIR=/tmp python3 -m unittest discover'))
         block = script[start:end]
-        self.assertEqual(block.count('regression_baseline=3af01e18af99e4329a65636f6e854fedf94a9fc3'), 1)
+        self.assertIn('for regression_baseline in 3af01e18af99e4329a65636f6e854fedf94a9fc3', block)
+        self.assertEqual(block.count('3a404e1675467cab79af0ffac454061c1e9150ae'), 1)
         tools = self.root / 'inert-tools'
         tools.mkdir(exist_ok=True)
         git = tools / 'git'
         git.write_text('''#!/usr/bin/env python3
 import json,os,sys
+from pathlib import Path
 args=sys.argv[1:]
 with open(os.environ['FETCH_LOG'],'a') as log:log.write(json.dumps(args)+'\\n')
+state=Path(os.environ['FETCH_LOG']+'.state')
 fault=os.environ['FETCH_FAULT']
+if args[2]=='fetch':
+    state.write_text(args[-1])
+active=not fault.startswith('second-') or state.read_text()=='3a404e1675467cab79af0ffac454061c1e9150ae'
+fault=fault.removeprefix('second-') if active else ''
 if args[2]=='fetch':sys.exit(1 if fault=='fetch' else 0)
 if args[2]=='cat-file':sys.exit(1 if fault=='missing' else 0)
 if args[2]=='rev-parse':
-    value=('0'*40 if fault=='wrong-fetch' else '3af01e18af99e4329a65636f6e854fedf94a9fc3') if args[3]=='--verify' else ('0'*40 if fault=='changed-head' else '6e91276a33d1bd83d416fc8253feb01f30677743')
+    value=('0'*40 if fault=='wrong-fetch' else state.read_text()) if args[3]=='--verify' else ('0'*40 if fault=='changed-head' else '6e91276a33d1bd83d416fc8253feb01f30677743')
     print(value);sys.exit(0)
 raise SystemExit('Unexpected Git call')
 ''')
@@ -116,19 +123,23 @@ raise SystemExit('Unexpected Git call')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(suite)
         prefix = ['-C', str(self.root / 'source')]
-        baseline = '3af01e18af99e4329a65636f6e854fedf94a9fc3'
-        self.assertEqual(calls, [prefix + ['fetch', '--no-tags', '--depth=1', 'origin', baseline],
-                                prefix + ['rev-parse', '--verify', 'FETCH_HEAD^{commit}'],
-                                prefix + ['cat-file', '-e', baseline + '^{commit}'],
-                                prefix + ['rev-parse', 'HEAD']])
+        expected=[]
+        for baseline in ('3af01e18af99e4329a65636f6e854fedf94a9fc3',
+                         '3a404e1675467cab79af0ffac454061c1e9150ae'):
+            expected += [prefix + ['fetch', '--no-tags', '--depth=1', 'origin', baseline],
+                         prefix + ['rev-parse', '--verify', 'FETCH_HEAD^{commit}'],
+                         prefix + ['cat-file', '-e', baseline + '^{commit}'],
+                         prefix + ['rev-parse', 'HEAD']]
+        self.assertEqual(calls, expected)
 
     def test_failed_or_wrong_baseline_or_changed_candidate_stops_before_suite(self):
-        for fault, expected_calls in (('fetch', 1), ('wrong-fetch', 2), ('missing', 3), ('changed-head', 4)):
-            with self.subTest(fault=fault):
-                result, calls, suite = self.baseline_fetch(fault=fault)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertEqual(len(calls), expected_calls)
-                self.assertFalse(suite)
+        for stage in ('','second-'):
+            for fault, expected_calls in (('fetch', 1), ('wrong-fetch', 2), ('missing', 3), ('changed-head', 4)):
+                with self.subTest(fault=stage+fault):
+                    result, calls, suite = self.baseline_fetch(fault=stage+fault)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(len(calls), expected_calls + (4 if stage else 0))
+                    self.assertFalse(suite)
 
     def test_susu_does_not_fetch_the_44_regression_baseline(self):
         result, calls, suite = self.baseline_fetch(flavor='k2p-susu')

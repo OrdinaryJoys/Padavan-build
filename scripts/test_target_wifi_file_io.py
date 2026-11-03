@@ -82,10 +82,10 @@ class WifiFileIOTargetTests(unittest.TestCase):
     def rows(self):
         return [{'case':n,'inputs':copy.deepcopy(o),'observed':copy.deepcopy(gate.EXPECTED[n])}for n,o in gate.CASES]
 
-    def test_fixed_three_components201_cases_honest_variant_and_object_scope(self):
+    def test_fixed_three_components218_cases_honest_variant_and_object_scope(self):
         gate.validate_contract()
-        self.assertEqual((len(gate.CASES),len(gate.SOURCE_PATHS),len(gate.COMPILED_OBJECTS),len(gate.EXTRA_OBJECTS)),(201,19,8,5))
-        self.assertEqual({c:sum(o['component']==c for _,o in gate.CASES)for c in gate.COMPONENTS},{'bin':108,'cal':69,'meta':24})
+        self.assertEqual((len(gate.CASES),len(gate.SOURCE_PATHS),len(gate.COMPILED_OBJECTS),len(gate.EXTRA_OBJECTS)),(218,19,8,5))
+        self.assertEqual({c:sum(o['component']==c for _,o in gate.CASES)for c in gate.COMPONENTS},{'bin':125,'cal':69,'meta':24})
         self.assertEqual((len(gate.parent_export_names()),len(gate.io_export_names())),(14,10))
         self.assertEqual(len(gate.COMPONENTS['cal']['functions']),9)
         self.assertIn('rtmp_ee_bin_read_with_range',gate.CONDITIONAL_FUNCTIONS[0]['functions'])

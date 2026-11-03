@@ -43,11 +43,13 @@ test -z "$(git -C "$root/source" status --porcelain --untracked-files=all)"
 # with this public historical revision. A depth-one candidate checkout does not
 # contain that commit; fetch it without changing the locked candidate HEAD.
 if [ "$flavor" = "k2p-4.4" ]; then
-  regression_baseline=3af01e18af99e4329a65636f6e854fedf94a9fc3
-  git -C "$root/source" fetch --no-tags --depth=1 origin "$regression_baseline"
-  test "$(git -C "$root/source" rev-parse --verify 'FETCH_HEAD^{commit}')" = "$regression_baseline"
-  git -C "$root/source" cat-file -e "$regression_baseline^{commit}"
-  test "$(git -C "$root/source" rev-parse HEAD)" = "$source_commit"
+  for regression_baseline in 3af01e18af99e4329a65636f6e854fedf94a9fc3 \
+                             3a404e1675467cab79af0ffac454061c1e9150ae; do
+    git -C "$root/source" fetch --no-tags --depth=1 origin "$regression_baseline"
+    test "$(git -C "$root/source" rev-parse --verify 'FETCH_HEAD^{commit}')" = "$regression_baseline"
+    git -C "$root/source" cat-file -e "$regression_baseline^{commit}"
+    test "$(git -C "$root/source" rev-parse HEAD)" = "$source_commit"
+  done
 fi
 build_commit=$(git -C "$root" rev-parse HEAD)
 trunk="$root/source/trunk"
