@@ -164,7 +164,7 @@ import json,os,sys
 from pathlib import Path
 with open(os.environ['GATE_LOG'],'a') as log:log.write(json.dumps(sys.argv[1:])+'\\n')
 if '--preflight'not in sys.argv:
-    required=('--wifi-report','--io-report')if 'check_target_wifi_calibration_integrity.py'in sys.argv[1]else('--wifi-report',)if 'check_target_wifi_file_io.py'in sys.argv[1]else()
+    required=('--wifi-report','--io-report')if 'check_target_wifi_calibration_integrity.py'in sys.argv[1]else('--wifi-report',)if any(name in sys.argv[1]for name in('check_target_wifi_file_io.py','check_target_rx_transport.py'))else()
     if any(flag not in sys.argv or not Path(sys.argv[sys.argv.index(flag)+1]).is_file()for flag in required):sys.exit(97)
 if '--output'in sys.argv:
     output=Path(sys.argv[sys.argv.index('--output')+1]);output.parent.mkdir(parents=True,exist_ok=True)
@@ -172,7 +172,7 @@ if '--output'in sys.argv:
 sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv[1] else 0)
 ''')
         entry.chmod(0o755)
-        for name in('target-wifi-factory.json','target-wifi-file-io.json','target-wifi-calibration-integrity.json'):
+        for name in('target-wifi-factory.json','target-wifi-file-io.json','target-wifi-calibration-integrity.json','target-rx-transport.json'):
             (self.root/'diagnostics'/name).unlink(missing_ok=True)
         log=self.root/'gate-calls.jsonl';log.unlink(missing_ok=True)
         finished=self.root/'gate-finished';finished.unlink(missing_ok=True)
@@ -186,7 +186,7 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
         return result,calls,finished.exists()
 
     def test_new_preflight_gates_are_mandatory_before_expensive_build(self):
-        names=['controller_clock','spi_dma','spi_lifecycle','nvram_mtd','mtd_mutation','wifi_factory','wifi_file_io','wifi_calibration_integrity']
+        names=['controller_clock','spi_dma','spi_lifecycle','nvram_mtd','mtd_mutation','wifi_factory','wifi_file_io','wifi_calibration_integrity','rx_transport']
         result,calls,done=self.new_target_gate_block()
         self.assertEqual(result.returncode,0,result.stderr);self.assertTrue(done)
         self.assertEqual([Path(call[0]).stem for call in calls],['check_target_'+name for name in names])
@@ -202,10 +202,11 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
         end=script.index('# Keep Linux /tmp rewriting',start);block=script[start:end]
         required=tuple(word.rstrip(';')for word in block.split()if word.startswith('test_'))
         self.assertIn('test_flash_persist',required);self.assertIn('test_mcu_precal',required)
+        self.assertTrue({'test_cmd_queue','test_rx_transport','test_rx_pool','test_rx_startup'}<=set(required))
         tests=self.root/'source/tests';tests.mkdir(parents=True,exist_ok=True)
         for name in required:(tests/(name+'.py')).touch()
         marker=self.root/'source-suite-started'
-        for missing in('', 'test_flash_persist','test_mcu_precal'):
+        for missing in('', 'test_flash_persist','test_mcu_precal','test_cmd_queue','test_rx_transport','test_rx_pool','test_rx_startup'):
             marker.unlink(missing_ok=True)
             if missing:(tests/(missing+'.py')).unlink()
             result=subprocess.run(['bash','-c','set -euo pipefail\n'+block+'\ntouch "$SUITE_MARKER"\n'],
@@ -215,7 +216,7 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
             if missing:(tests/(missing+'.py')).touch()
 
     def test_late_gates_require_image_or_rootfs_binding_and_stop_publication_on_failure(self):
-        names=['controller_clock','spi_dma','spi_lifecycle','nvram_mtd','mtd_mutation','wifi_factory','wifi_file_io','wifi_calibration_integrity']
+        names=['controller_clock','spi_dma','spi_lifecycle','nvram_mtd','mtd_mutation','wifi_factory','wifi_file_io','wifi_calibration_integrity','rx_transport']
         result,calls,done=self.new_target_gate_block(late=True)
         self.assertEqual(result.returncode,0,result.stderr);self.assertTrue(done)
         self.assertEqual([Path(call[0]).stem for call in calls],['check_target_'+name for name in names])
@@ -226,6 +227,8 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
         self.assertEqual(calls[6][calls[6].index('--wifi-report')+1],str(self.root/'diagnostics/target-wifi-factory.json'))
         self.assertEqual(calls[7][calls[7].index('--wifi-report')+1],str(self.root/'diagnostics/target-wifi-factory.json'))
         self.assertEqual(calls[7][calls[7].index('--io-report')+1],str(self.root/'diagnostics/target-wifi-file-io.json'))
+        self.assertIn('--wifi-report',calls[8])
+        self.assertEqual(calls[8][calls[8].index('--wifi-report')+1],str(self.root/'diagnostics/target-wifi-factory.json'))
         for missing,count in(('target-wifi-factory.json',7),('target-wifi-file-io.json',8)):
             result,missing_calls,done=self.new_target_gate_block(late=True,missing_parent=missing)
             self.assertEqual(result.returncode,97);self.assertEqual(len(missing_calls),count);self.assertFalse(done)
