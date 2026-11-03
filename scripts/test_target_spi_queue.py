@@ -48,11 +48,11 @@ class SPIQueueTargetTests(unittest.TestCase):
         return [{'case': name, 'inputs': copy.deepcopy(inputs),
                  'observed': copy.deepcopy(gate.EXPECTED[name])} for name, inputs in gate.CASES]
 
-    def test_frozen_seventeen_bodies_forty_one_cases_and_typed_dma_contract(self):
+    def test_frozen_seventeen_bodies_forty_seven_cases_and_typed_dma_contract(self):
         self.assertEqual(len(gate.FUNCTION_SOURCES),17)
         self.assertEqual(set(gate.BASELINE_FUNCTION_HASHES),set(gate.FUNCTION_SOURCES))
         self.assertEqual((len(gate.CASES),sum(not row['baseline'] for _,row in gate.CASES),
-                          sum(row['baseline'] for _,row in gate.CASES)),(41,33,8))
+                          sum(row['baseline'] for _,row in gate.CASES)),(47,39,8))
         for label,_ in gate.CASES:
             row=gate.EXPECTED[label]
             self.assertEqual(len(row),43)
@@ -65,6 +65,23 @@ class SPIQueueTargetTests(unittest.TestCase):
                 self.assertEqual(row[field],0)
         dummy=gate.EXPECTED['current:normal-dma-dummy']
         self.assertEqual((dummy['dummy_restored'],dummy['dummy_frees'],dummy['dma_unmaps']),(2,2,2))
+
+    def test_current_message_owner_blocks_stop_destroy_and_failure_interleave(self):
+        for selector in ('stop-current-message-boundary','destroy-current-message-boundary'):
+            row=gate.EXPECTED['current:'+selector]
+            self.assertEqual((row['result'],row['running'],row['cur_msg'],row['sleeps']),(-16,1,1,500))
+            self.assertEqual((row['flush'],row['stop']),(0,0))
+        for selector in ('pm-fail-destroy-interleave','prepare-fail-destroy-interleave'):
+            row=gate.EXPECTED['current:'+selector]
+            self.assertEqual((row['result'],row['result2'],row['running'],row['sleeps']),(-5,-16,1,500))
+            self.assertEqual((row['flush'],row['stop']),(0,0))
+
+    def test_current_message_completion_allows_stop_and_destroy_after_wait(self):
+        for selector in ('stop-current-completes','destroy-current-completes'):
+            row=gate.EXPECTED['current:'+selector]
+            self.assertEqual((row['result'],row['running'],row['cur_msg'],row['completed'],row['sleeps']),(0,0,0,1,1))
+        row=gate.EXPECTED['current:destroy-current-completes']
+        self.assertEqual((row['flush'],row['stop']),(1,1))
 
     def test_fixed_outcomes_reject_missing_extra_reordered_and_extra_schema(self):
         rows = self.rows()
