@@ -48,9 +48,11 @@ class SPIQueueTargetTests(unittest.TestCase):
         return [{'case': name, 'inputs': copy.deepcopy(inputs),
                  'observed': copy.deepcopy(gate.EXPECTED[name])} for name, inputs in gate.CASES]
 
-    def test_frozen_seventeen_bodies_forty_seven_cases_and_typed_dma_contract(self):
-        self.assertEqual(len(gate.FUNCTION_SOURCES),17)
-        self.assertEqual(set(gate.BASELINE_FUNCTION_HASHES),set(gate.FUNCTION_SOURCES))
+    def test_frozen_nineteen_current_seventeen_old_bodies_and_forty_seven_cases(self):
+        self.assertEqual(len(gate.FUNCTION_SOURCES),19)
+        self.assertEqual(len(gate.BASELINE_FUNCTION_HASHES),17)
+        self.assertEqual(set(gate.FUNCTION_SOURCES)-set(gate.BASELINE_FUNCTION_HASHES),
+                         {'spi_queue_enter','spi_queue_leave'})
         self.assertEqual((len(gate.CASES),sum(not row['baseline'] for _,row in gate.CASES),
                           sum(row['baseline'] for _,row in gate.CASES)),(47,39,8))
         for label,_ in gate.CASES:

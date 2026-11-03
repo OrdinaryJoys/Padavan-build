@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -133,6 +134,57 @@ raise SystemExit('Unexpected Git call')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls, [])
         self.assertTrue(suite)
+
+    def new_target_gate_block(self, late=False, fault=''):
+        """Run the production shell block with inert compiler/gate entrypoints."""
+        script=Path(__file__).with_name('build_k2p.sh').read_text()
+        marker='  for extra_gate in controller_clock spi_dma spi_lifecycle nvram_mtd; do'
+        start=script.index(marker,script.index('images=(') if late else 0)
+        end=script.index('  python3 "$root/scripts/check_target_mtd_backup.py"',start)
+        if not late:end=script.rfind('  test -f ',start,end)
+        block=script[start:end]
+        tools=self.root/'gate-tools';tools.mkdir(exist_ok=True)
+        entry=tools/'python3'
+        entry.write_text('#!'+sys.executable+'''\n
+import json,os,sys
+with open(os.environ['GATE_LOG'],'a') as log:log.write(json.dumps(sys.argv[1:])+'\\n')
+sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv[1] else 0)
+''')
+        entry.chmod(0o755)
+        log=self.root/'gate-calls.jsonl';log.unlink(missing_ok=True)
+        finished=self.root/'gate-finished';finished.unlink(missing_ok=True)
+        env=dict(os.environ,PATH=str(tools)+os.pathsep+os.environ['PATH'],root=str(self.root),
+                 trunk=str(self.root/'source/trunk'),toolchain=str(self.root/'compiler'),
+                 diagnostics=str(self.root/'diagnostics'),GATE_LOG=str(log),GATE_FAULT=fault,
+                 GATE_FINISHED=str(finished))
+        result=subprocess.run(['bash','-c','set -euo pipefail\n'+block+'\ntouch "$GATE_FINISHED"\n'],
+                              env=env,capture_output=True,text=True,timeout=10)
+        calls=[json.loads(row)for row in log.read_text().splitlines()]
+        return result,calls,finished.exists()
+
+    def test_new_preflight_gates_are_mandatory_before_expensive_build(self):
+        names=['controller_clock','spi_dma','spi_lifecycle','nvram_mtd','mtd_mutation','wifi_factory']
+        result,calls,done=self.new_target_gate_block()
+        self.assertEqual(result.returncode,0,result.stderr);self.assertTrue(done)
+        self.assertEqual([Path(call[0]).stem for call in calls],['check_target_'+name for name in names])
+        self.assertTrue(all('--preflight'in call for call in calls))
+        for i,name in enumerate(names):
+            with self.subTest(gate=name):
+                result,calls,done=self.new_target_gate_block(fault=name)
+                self.assertEqual(result.returncode,23);self.assertEqual(len(calls),i+1);self.assertFalse(done)
+
+    def test_late_gates_require_image_or_rootfs_binding_and_stop_publication_on_failure(self):
+        names=['controller_clock','spi_dma','spi_lifecycle','nvram_mtd','mtd_mutation','wifi_factory']
+        result,calls,done=self.new_target_gate_block(late=True)
+        self.assertEqual(result.returncode,0,result.stderr);self.assertTrue(done)
+        self.assertEqual([Path(call[0]).stem for call in calls],['check_target_'+name for name in names])
+        self.assertTrue(all('--preflight'not in call for call in calls))
+        self.assertTrue(all('--spi-report'in call for call in calls[:4]+calls[5:]))
+        self.assertTrue(all('--rootfs'in call for call in calls[4:]))
+        for i,name in enumerate(names):
+            with self.subTest(gate=name):
+                result,calls,done=self.new_target_gate_block(late=True,fault=name)
+                self.assertEqual(result.returncode,23);self.assertEqual(len(calls),i+1);self.assertFalse(done)
 
 
 if __name__ == '__main__':

@@ -57,7 +57,7 @@ def synthetic_inputs():
     data['rc'] = ('static volatile sig_atomic_t firmware_upgrade_pid1_active;\n'
                   'static volatile sig_atomic_t firmware_upgrade_pid1_fault;\n' + data['rc'])
     data['rc_header'] = ('int firmware_upgrade_signal_inhibited(void);\n'
-                         'void firmware_upgrade_signal_fault(void);\n')
+                         'void firmware_upgrade_signal_fault(void);\nint erase_storage(void);\nint erase_nvram(void);\n')
     data['rc_makefile'] = 'LDFLAGS += -Wl,-z,now\n'
     data['shared_makefile'] = '\t$(LD) -shared -z now -o $@ $(OBJS)\n'
     return data
@@ -85,12 +85,12 @@ def records():
 
 class UpgradeTransactionDataControls(unittest.TestCase):
     def test_frozen_contract_has_all_component_and_flash_cases(self):
-        self.assertEqual(len(gate.CASES), 56)
-        self.assertEqual(len(gate.COMPONENT_EXPECTED), 50)
+        self.assertEqual(len(gate.CASES), 66)
+        self.assertEqual(len(gate.COMPONENT_EXPECTED), 60)
         self.assertEqual(len(gate.FLASH_EXPECTED), 6)
         self.assertEqual(len(gate.HARNESS_SOURCE_PATHS), 13)
         self.assertEqual(len(gate.SOURCE_PATHS), 17)
-        self.assertEqual(len(gate.FUNCTION_SOURCES), 37)
+        self.assertEqual(len(gate.FUNCTION_SOURCES), 39)
         self.assertEqual(len(gate.FLASH_FUNCTION_SOURCES), 24)
         self.assertIn('init_signals', gate.FUNCTION_SOURCES)
         self.assertIn('flash_firmware', gate.FLASH_FUNCTION_SOURCES)

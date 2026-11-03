@@ -70,7 +70,8 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_notification_consumer test_firmware_writer_protocol test_upgrade_upload_no_public_writer \
                        test_upgrade_transaction test_resident_upgrade test_legacy_firmware_gate \
                        test_resident_parent test_resident_consumer test_spi_completion test_sr3_startup test_controller test_collector_cleanup \
-                       test_spi_queue test_mtd_backup; do
+                       test_spi_queue test_mtd_backup test_spi_dma test_spi_lifecycle \
+                       test_mtd_mutation test_controller_clock test_nvram_mtd test_wifi_factory; do
     test -f "$root/source/tests/$required_test.py"
   done
 fi
@@ -106,6 +107,18 @@ if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/check_target_spi_queue.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --output "$diagnostics/spi-queue-preflight/target-spi-queue.json"
+  for extra_gate in controller_clock spi_dma spi_lifecycle nvram_mtd; do
+    proof_name=${extra_gate//_/-}
+    python3 "$root/scripts/check_target_${extra_gate}.py" --preflight --trunk "$trunk" \
+      --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+      --output "$diagnostics/${proof_name}-preflight/target-${proof_name}.json"
+  done
+  python3 "$root/scripts/check_target_mtd_mutation.py" --preflight --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --output "$diagnostics/mtd-mutation-preflight/target-mtd-mutation.json"
+  python3 "$root/scripts/check_target_wifi_factory.py" --preflight --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --output "$diagnostics/wifi-factory-preflight/target-wifi-factory.json"
   test -f "$root/source/tests/mtd_backup_harness.py"
   python3 "$root/scripts/check_target_mtd_backup.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
@@ -438,6 +451,17 @@ if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/check_target_spi_queue.py" --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --spi-report "$diagnostics/target-spi-nor.json" --output "$diagnostics/target-spi-queue.json"
+  for extra_gate in controller_clock spi_dma spi_lifecycle nvram_mtd; do
+    proof_name=${extra_gate//_/-}
+    python3 "$root/scripts/check_target_${extra_gate}.py" --trunk "$trunk" \
+      --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+      --spi-report "$diagnostics/target-spi-nor.json" --output "$diagnostics/target-${proof_name}.json"
+  done
+  python3 "$root/scripts/check_target_mtd_mutation.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --output "$diagnostics/target-mtd-mutation.json"
+  python3 "$root/scripts/check_target_wifi_factory.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --spi-report "$diagnostics/target-spi-nor.json" --output "$diagnostics/target-wifi-factory.json"
   python3 "$root/scripts/check_target_mtd_backup.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --output "$diagnostics/target-mtd-backup.json"
   python3 "$root/scripts/check_target_sr3.py" --trunk "$trunk" \
@@ -468,6 +492,9 @@ if [ "$flavor" = "k2p-4.4" ]; then
   cp "$diagnostics/target-sr3"* "$dist/"
   cp "$diagnostics/target-controller"* "$dist/"
   cp "$diagnostics/target-mtd-backup"* "$dist/"
+  cp "$diagnostics/target-mtd-mutation"* "$dist/"
+  cp "$diagnostics/target-nvram-mtd"* "$dist/"
+  cp "$diagnostics/target-wifi-factory"* "$dist/"
   cp "$diagnostics/target-collector"* "$dist/"
   cp "$diagnostics/target-resident-upgrade.json" "$dist/"
   for resident_adapter in helper legacy legacy-disabled parent consumer; do

@@ -30,7 +30,12 @@ SOURCE_PATHS = {'m25p': 'trunk/linux-4.4.x/drivers/mtd/devices/m25p80.c',
  'controller': 'trunk/linux-4.4.x/drivers/spi/spi-mt7621.c',
  'queue_core': 'trunk/linux-4.4.x/drivers/spi/spi.c',
  'queue_pm_header': 'trunk/linux-4.4.x/include/linux/pm_runtime.h',
- 'queue_pm_core': 'trunk/linux-4.4.x/drivers/base/power/runtime.c'}
+ 'queue_pm_core': 'trunk/linux-4.4.x/drivers/base/power/runtime.c',
+ 'queue_header': 'trunk/linux-4.4.x/include/linux/spi/spi.h',
+ 'sg_core': 'trunk/linux-4.4.x/lib/scatterlist.c',
+ 'sg_header': 'trunk/linux-4.4.x/include/linux/scatterlist.h',
+ 'driver_core': 'trunk/linux-4.4.x/drivers/base/dd.c',
+ 'nvram_mtd': 'trunk/linux-4.4.x/drivers/net/wireless/wifi_utility/mt_wifi_mtd.c'}
 HARNESS_SOURCE_PATHS = {'m25p': 'trunk/linux-4.4.x/drivers/mtd/devices/m25p80.c',
  'nor': 'trunk/linux-4.4.x/drivers/mtd/spi-nor/spi-nor.c',
  'core': 'trunk/linux-4.4.x/drivers/mtd/mtdcore.c',
@@ -934,13 +939,23 @@ LIMITS = (
 )
 MAX_ELF = 64*1024*1024
 MAX_KERNEL = 48*1024*1024
-OBJECTS = {
-    'm25p80': ('drivers/mtd/devices/m25p80.o',('m25p80_read','m25p80_write','m25p80_erase','m25p_probe')),
-    'spi-nor': ('drivers/mtd/spi-nor/spi-nor.o',('spi_nor_write','spi_nor_scan')),
-    'mtdchar': ('drivers/mtd/mtdchar.o',('mtdchar_read','mtdchar_write')),
-    'mt7621': ('drivers/spi/spi-mt7621.o',('mt7621_spi_probe','mt7621_spi_remove','mt7621_spi_transfer_one_message')),
-    'spi-core': ('drivers/spi/spi.o',('__spi_pump_messages','spi_finalize_current_message','__spi_sync','spi_queued_transfer')),
-}
+OBJECTS = {'m25p80': ('drivers/mtd/devices/m25p80.o', ('m25p80_read', 'm25p80_write', 'm25p80_erase', 'm25p_probe')),
+ 'spi-nor': ('drivers/mtd/spi-nor/spi-nor.o', ('spi_nor_write', 'spi_nor_scan')),
+ 'mtdchar': ('drivers/mtd/mtdchar.o', ('mtdchar_read', 'mtdchar_write')),
+ 'mt7621': ('drivers/spi/spi-mt7621.o',
+            ('mt7621_spi_probe', 'mt7621_spi_remove', 'mt7621_spi_transfer_one_message')),
+ 'spi-core': ('drivers/spi/spi.o',
+              ('__spi_pump_messages',
+               'spi_finalize_current_message',
+               '__spi_sync',
+               'spi_queued_transfer',
+               'spi_async',
+               'spi_async_locked',
+               'spi_unregister_master')),
+ 'sg-table': ('lib/scatterlist.o', ('sg_alloc_table', 'sg_free_table')),
+ 'driver-core': ('drivers/base/dd.o', ('device_release_driver',)),
+ 'wifi-mtd': ('drivers/net/wireless/wifi_utility/mt_wifi_mtd.o',
+              ('mt_mtd_read_nm_wifi', 'mt_mtd_write_nm_wifi'))}
 
 
 def require(value,message):
