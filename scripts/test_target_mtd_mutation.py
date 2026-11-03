@@ -41,6 +41,8 @@ class MtdMutationTargetTests(unittest.TestCase):
             with self.assertRaises(ValueError):gate.validate_records(changed)
 
     def test_function_parser_refuses_comment_duplicate_or_truncation(self):
+        self.assertIn('volatile int which=-1;',gate.SELECTOR_DECLARATION)
+        self.assertNotIn('-Wno-clobbered',gate.FLAGS)
         body='static int mutation(void) { const char *s="}"; /* } */ if (s) { return 0; } return 1; }'
         self.assertEqual(gate.function(body,'mutation'),body)
         for source in ('/* '+body+' */',body+'\n'+body,body[:-1]):

@@ -53,6 +53,7 @@ FLAGS = ('-std=gnu99',
 MAX_SOURCE = 1048576
 MAX_REPORT = 2097152
 MAX_PROBE = 8388608
+SELECTOR_DECLARATION = 'char modified[9000],*p;volatile int which=-1;int result;size_t i;'
 CASE_ARGS = {'erase-ok': ['erase', 'Storage'],
  'unlock-ok': ['unlock', 'Storage'],
  'unlock-error': ['erase', 'Storage'],
@@ -584,6 +585,7 @@ def regenerate(inputs,fixture_root,owner_uid,mode):
     texts={key:inputs[key] for key in HARNESS_SOURCE_PATHS}
     code=module.generate_source(texts,fixture_root,owner_uid,baseline=mode=='baseline',disabled_oracle=mode=='disabled')
     require(type(code) is str and 0<len(code.encode())<=MAX_SOURCE,'Mutation generated source budget')
+    require(code.count(SELECTOR_DECLARATION)==1,'Mutation longjmp selector must be retained explicitly')
     # Disabled oracle deliberately omits the actual main invocation, but keeps
     # the source bodies so body hashing alone cannot make the oracle pass.
     for name,body in bodies.items():require(code.count(body)==1,'Mutation actual body omitted/duplicated: '+name)
