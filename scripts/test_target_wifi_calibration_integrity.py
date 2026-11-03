@@ -1,5 +1,6 @@
 """Offline typed-data/source/ELF corruption controls for MCU/Flash target gate."""
-import copy,importlib.util,json,os,tempfile,unittest
+import contextlib,copy,importlib.util,json,os,tempfile,unittest
+import io as capture_io
 from pathlib import Path
 from unittest.mock import patch
 from test_target_wifi_factory import module_elf
@@ -210,8 +211,11 @@ class WifiCalibrationIntegrityTests(unittest.TestCase):
             for name,data in files.items():(parents/name).write_bytes(data)
             (parents/'target-wifi-factory.json').write_text(json.dumps(factory));(parents/'target-wifi-file-io.json').write_text(json.dumps(io))
             with patch.object(gate,'generate_source',side_effect=generate),patch.object(gate.shutil,'which',return_value='/inert/qemu'),patch.object(gate.subprocess,'run',side_effect=run):
-                early=gate.check(trunk,Path('/inert/compiler'),directory/'early/target-wifi-calibration-integrity.json',True)
-                late=gate.check(trunk,Path('/inert/compiler'),directory/'late/target-wifi-calibration-integrity.json',False,parents/'target-wifi-factory.json',parents/'target-wifi-file-io.json')
+                output=capture_io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    early=gate.check(trunk,Path('/inert/compiler'),directory/'early/target-wifi-calibration-integrity.json',True)
+                    late=gate.check(trunk,Path('/inert/compiler'),directory/'late/target-wifi-calibration-integrity.json',False,parents/'target-wifi-factory.json',parents/'target-wifi-file-io.json')
+                self.assertEqual(output.getvalue(),'WiFi calibration integrity: 277 inert source/MIPS cases PASS\n'*2)
                 self.assertEqual(early['phase'],'early-source-only');self.assertIsNone(early['module_reference']);self.assertIsNone(early['compiled_binding'])
                 self.assertEqual(late['phase'],'final-module-reference-bound');self.assertEqual(len(late['compiled_binding']['objects']),5)
                 self.assertEqual(len(list((directory/'early').iterdir())),13);self.assertEqual(len(list((directory/'late').iterdir())),13)
