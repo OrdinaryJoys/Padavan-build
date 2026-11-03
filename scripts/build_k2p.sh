@@ -77,7 +77,8 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_mtd_mutation test_controller_clock test_nvram_mtd test_wifi_factory \
                        test_wifi_bin_io test_wifi_buffer_lifetime test_wifi_cal_io \
                        test_wifi_cal_consumers test_meta_nvram test_ate_dispatch \
-                       test_flash_persist test_mcu_precal; do
+                       test_flash_persist test_mcu_precal \
+                       test_cmd_queue test_rx_transport test_rx_pool test_rx_startup; do
     test -f "$root/source/tests/$required_test.py"
   done
 fi
@@ -131,6 +132,9 @@ if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/check_target_wifi_calibration_integrity.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --output "$diagnostics/wifi-calibration-integrity-preflight/target-wifi-calibration-integrity.json"
+  python3 "$root/scripts/check_target_rx_transport.py" --preflight --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --output "$diagnostics/rx-transport-preflight/target-rx-transport.json"
   test -f "$root/source/tests/mtd_backup_harness.py"
   python3 "$root/scripts/check_target_mtd_backup.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
@@ -481,6 +485,10 @@ if [ "$flavor" = "k2p-4.4" ]; then
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --wifi-report "$diagnostics/target-wifi-factory.json" --io-report "$diagnostics/target-wifi-file-io.json" \
     --output "$diagnostics/target-wifi-calibration-integrity.json"
+  python3 "$root/scripts/check_target_rx_transport.py" --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --wifi-report "$diagnostics/target-wifi-factory.json" \
+    --output "$diagnostics/target-rx-transport.json"
   python3 "$root/scripts/check_target_mtd_backup.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --output "$diagnostics/target-mtd-backup.json"
   python3 "$root/scripts/check_target_sr3.py" --trunk "$trunk" \
@@ -514,6 +522,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
   cp "$diagnostics/target-mtd-mutation"* "$dist/"
   cp "$diagnostics/target-nvram-mtd"* "$dist/"
   cp "$diagnostics/target-wifi-"* "$dist/"
+  cp "$diagnostics/target-rx-"* "$dist/"
   cp "$diagnostics/target-collector"* "$dist/"
   cp "$diagnostics/target-resident-upgrade.json" "$dist/"
   for resident_adapter in helper legacy legacy-disabled parent consumer; do

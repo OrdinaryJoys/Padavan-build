@@ -83,7 +83,7 @@ COMPONENTS = {'mcu': {'paths': {'mcu': 'trunk/linux-4.4.x/drivers/net/wireless/m
                              'ExtEventRxFICalInfoHandler': 'cf978fe70ba49eceb55c46eb23036cfb423ae3acc140ab4b9a76720913d4b205',
                              'ExtEventRxFDCalInfoHandler': '103f37b958491be3b8a0631d9b5b0e56cd355a56fb62292499a0d5e862d347f5',
                              'AndesMTRxEventHandler': '52b37aa57459d3e466f96df625f94742a37249b5f4e35b2e12e372f669d3322e'},
-         'model_data_sha256': '01432b78f1653d86d01f0edac27bff7a80f0d98d912ca7a5669381b697184900',
+         'model_data_sha256': 'dc7bf0cdbd61f430f4f9286a901687667936556bfe1eb08e570edef201270101',
          'source_literals': {}},
  'flash': {'paths': {'flash': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/common/ee_flash.c',
                      'eeprom': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/common/eeprom.c',
@@ -8291,7 +8291,8 @@ def generate_component(inputs,component,profile,old_bodies=None):
         admission='\n'.join('if(!strcmp(case_name,'+json.dumps(n)+'))known=1;'for n in values['BASELINE_CASES'if profile=='baseline'else'DISABLED_CASES'if profile=='disabled'else'CASE_NAMES'])
         call='#define CALL_STORE(p,id,data,len) ExtEventPreCalStoreProc(p,id,data'+(')'if profile=='baseline'else',len)')
         validate='#define VALIDATE_STORE(p,n) '+('((void)(p),(void)(n),0)'if profile=='baseline'else'rtmp_precal_records_valid(p,n)')
-        prefix=values['PREFIX'].replace('SOURCE_DECLARATIONS',mcu_declarations(local,values))+'\n'+call+'\n'+validate
+        outer='#define CALL_OUTER(p,data,len) AndesMTRxEventHandler(p,data'+(')'if profile!='current'else',len)')
+        prefix=values['PREFIX'].replace('SOURCE_DECLARATIONS',mcu_declarations(local,values))+'\n'+outer+'\n'+call+'\n'+validate
         main=values['MAIN'].replace('CASE_ADMISSION',admission)
     else:
         for key in('ABI_PROTOTYPES','BASE_PROTOTYPES'):
