@@ -44,7 +44,8 @@ test -z "$(git -C "$root/source" status --porcelain --untracked-files=all)"
 # contain that commit; fetch it without changing the locked candidate HEAD.
 if [ "$flavor" = "k2p-4.4" ]; then
   for regression_baseline in 3af01e18af99e4329a65636f6e854fedf94a9fc3 \
-                             3a404e1675467cab79af0ffac454061c1e9150ae; do
+                             3a404e1675467cab79af0ffac454061c1e9150ae \
+                             3ba292933a5cdbcaac3d5187d2454b387fbfbcc1; do
     git -C "$root/source" fetch --no-tags --depth=1 origin "$regression_baseline"
     test "$(git -C "$root/source" rev-parse --verify 'FETCH_HEAD^{commit}')" = "$regression_baseline"
     git -C "$root/source" cat-file -e "$regression_baseline^{commit}"
@@ -75,7 +76,8 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_spi_queue test_mtd_backup test_spi_dma test_spi_lifecycle \
                        test_mtd_mutation test_controller_clock test_nvram_mtd test_wifi_factory \
                        test_wifi_bin_io test_wifi_buffer_lifetime test_wifi_cal_io \
-                       test_wifi_cal_consumers test_meta_nvram test_ate_dispatch; do
+                       test_wifi_cal_consumers test_meta_nvram test_ate_dispatch \
+                       test_flash_persist test_mcu_precal; do
     test -f "$root/source/tests/$required_test.py"
   done
 fi
@@ -126,6 +128,9 @@ if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/check_target_wifi_file_io.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --output "$diagnostics/wifi-file-io-preflight/target-wifi-file-io.json"
+  python3 "$root/scripts/check_target_wifi_calibration_integrity.py" --preflight --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --output "$diagnostics/wifi-calibration-integrity-preflight/target-wifi-calibration-integrity.json"
   test -f "$root/source/tests/mtd_backup_harness.py"
   python3 "$root/scripts/check_target_mtd_backup.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
@@ -472,6 +477,10 @@ if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/check_target_wifi_file_io.py" --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --wifi-report "$diagnostics/target-wifi-factory.json" --output "$diagnostics/target-wifi-file-io.json"
+  python3 "$root/scripts/check_target_wifi_calibration_integrity.py" --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --wifi-report "$diagnostics/target-wifi-factory.json" --io-report "$diagnostics/target-wifi-file-io.json" \
+    --output "$diagnostics/target-wifi-calibration-integrity.json"
   python3 "$root/scripts/check_target_mtd_backup.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --output "$diagnostics/target-mtd-backup.json"
   python3 "$root/scripts/check_target_sr3.py" --trunk "$trunk" \
