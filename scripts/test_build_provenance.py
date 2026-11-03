@@ -1,4 +1,5 @@
 import hashlib
+import ast
 import json
 import os
 from pathlib import Path
@@ -185,6 +186,29 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
             with self.subTest(gate=name):
                 result,calls,done=self.new_target_gate_block(late=True,fault=name)
                 self.assertEqual(result.returncode,23);self.assertEqual(len(calls),i+1);self.assertFalse(done)
+
+    def test_wifi_module_and_object_evidence_is_copied_into_firmware_artifact(self):
+        script=Path(__file__).with_name('build_k2p.sh').read_text()
+        lines=[line for line in script.splitlines()if line.startswith('  cp "$diagnostics/target-wifi-')]
+        self.assertEqual(len(lines),1)
+        tree=ast.parse(Path(__file__).with_name('check_target_wifi_factory.py').read_text())
+        objects=[node.value for node in tree.body if isinstance(node,ast.Assign) and
+                 any(isinstance(target,ast.Name)and target.id=='OBJECTS' for target in node.targets)]
+        self.assertEqual(len(objects),1)
+        labels=ast.literal_eval(objects[0])
+        names={'target-wifi-built.ko','target-wifi-shipped.ko','target-wifi-module.cmd','target-wifi-link.cmd'}
+        for label in labels:names.update(('target-wifi-'+label+'.o','target-wifi-'+label+'.cmd'))
+        self.assertEqual(len(names),14)
+        names.update(('target-wifi-factory.json','target-wifi-factory','target-wifi-factory.c',
+                      'target-wifi-factory-baseline','target-wifi-factory-disabled'))
+        diagnostics=self.root/'diagnostics';dist=self.root/'dist';diagnostics.mkdir();dist.mkdir()
+        for name in names:(diagnostics/name).write_bytes(('evidence:'+name).encode())
+        (diagnostics/'unrelated.log').write_text('separate diagnostic')
+        result=subprocess.run(['bash','-c','set -euo pipefail\n'+lines[0]],
+            env=dict(os.environ,diagnostics=str(diagnostics),dist=str(dist)),capture_output=True,text=True,timeout=10)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual({path.name for path in dist.iterdir()},names)
+        for name in names:self.assertEqual((dist/name).read_bytes(),(diagnostics/name).read_bytes())
 
 
 if __name__ == '__main__':

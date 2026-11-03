@@ -494,7 +494,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
   cp "$diagnostics/target-mtd-backup"* "$dist/"
   cp "$diagnostics/target-mtd-mutation"* "$dist/"
   cp "$diagnostics/target-nvram-mtd"* "$dist/"
-  cp "$diagnostics/target-wifi-factory"* "$dist/"
+  cp "$diagnostics/target-wifi-"* "$dist/"
   cp "$diagnostics/target-collector"* "$dist/"
   cp "$diagnostics/target-resident-upgrade.json" "$dist/"
   for resident_adapter in helper legacy legacy-disabled parent consumer; do
