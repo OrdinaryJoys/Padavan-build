@@ -108,7 +108,7 @@ COMPONENTS = {'cmdq': {'paths': {'queue': 'trunk/linux-4.4.x/drivers/net/wireles
                       'rx_normal_header_valid': 'data',
                       'rx_frame_header_valid': 'data'},
         'harness_key': 'rx_harness',
-        'model_data_sha256': '2a725d3d1a75adb25b4dbc25c81e6f5860576336336745c07ea62fc1906dced5',
+        'model_data_sha256': '96204bfac776fcf6528a3514e78d833b6e71374fc36ba1eba3cca830bcc98ee4',
         'variants': ('build', 'legacy')},
  'pool': {'paths': {'hif': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/common/hif_pci.c',
                     'pool': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/common/cmm_mac_pci.c',
