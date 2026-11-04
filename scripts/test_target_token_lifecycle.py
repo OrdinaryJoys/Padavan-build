@@ -85,6 +85,7 @@ class TokenLifecycleGateTests(unittest.TestCase):
         g.validate_contract();g.validate_records(self.rows())
         self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.COMPILED_OBJECTS)),(40,24,8))
         self.assertEqual({k:len(v['functions'])for k,v in g.COMPONENTS.items()},{'token':6,'ser':7,'task':3})
+        self.assertNotIn('-DCONFIG_PROPRIETARY_DRIVER',g.REQUIRED_OBJECT_FLAGS)
 
     def test_every_typed_cell_schema_order_and_inventory_is_required(self):
         rows=self.rows()

@@ -4,6 +4,8 @@ This gate executes 40 fixed current cases in three inert static MIPS userspace p
 
 The source manifest contains 16 complete function entries, with 15 distinct functions because `__RtmpOSTaskKill` is retained in both the SER and task probes. Token binds six functions; SER binds seven; task ownership binds three. The actual token structures, SER state/owner declarations, task states, NDIS status values, HALT flag and SER wire constants are read or checked against the locked source headers. Source-only checks also bind close/HwCtrlExit retirement order, normal reopen order and Linux4.4 `kthread_stop` semantics.
 
+Tasklet selection is established by the MT7615 chip capabilities. `CONFIG_PROPRIETARY_DRIVER` is not a required MT7615 compiler flag; its active unconditional definition belongs to another chipset branch.
+
 The source harnesses are parsed as literal data. The gate never imports or calls a source harness generator. Current model hashes are:
 
 - token: `52e6a603c471a58810eb71f5a2cce4304fc0a68527890bef89457f15d213e852`
