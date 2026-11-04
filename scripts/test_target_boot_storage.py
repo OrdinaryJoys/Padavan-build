@@ -32,13 +32,14 @@ def synthetic_sources():
  [ "$fsz" -gt "$mtd_part_size" ]
 }'''
     functions['func_restore'] = 'func_restore()\n{\n func_ready_clear || return 1\n func_stop_apps\n}'
+    functions['func_reset'] = 'func_reset()\n{\n\trm -f "$slk" &&\n\t\trm -rf "$dir_storage" &&\n\t\tmkdir -p -m 755 "$dir_storage"\n}'
     storage = '\n'.join(functions.values())+'''
 case "$1" in load|erase|reset) func_ready_clear || exit 1;; esac
 func_begin || exit 1
 save)
 	func_ready || exit 1
 	if [ -e "$slk" ] || [ -L "$slk" ]; then exit 1; fi
-if func_fill && func_tarb && func_ready_publish; then :; fi
+if func_reset && func_fill && func_tarb && func_ready_publish; then :; fi
 fill)
 	func_mdir || exit 1
 	func_fill
@@ -113,7 +114,7 @@ class TargetBootStorageTests(unittest.TestCase):
 
     def test_private_source_contract_records_real_function_hashes(self):
         proof=self.source_check(synthetic_sources())
-        self.assertEqual(len(proof['actual_functions_sha256']),12)
+        self.assertEqual(len(proof['actual_functions_sha256']),13)
         self.assertIs(proof['semantics']['whole_boot_executed'],False)
         self.assertIs(proof['semantics']['custom_script_executed'],False)
         self.assertEqual(set(proof['source_sha256']),set(boot.SOURCE_PATHS))
@@ -132,6 +133,10 @@ class TargetBootStorageTests(unittest.TestCase):
             ('storage','func_record_hash &&','true &&'),
             ('storage','func_ready_clear || return 1','true'),
             ('storage','func_fill && func_tarb && func_ready_publish','func_fill && func_ready_publish'),
+            ('storage','if func_reset && func_fill','if func_fill'),
+            ('storage','rm -f "$slk" &&\n\t\trm -rf','rm -f "$slk";\n\t\trm -rf'),
+            ('storage','rm -rf "$dir_storage" &&','rm -rf "$dir_storage";'),
+            ('storage','mkdir -p -m 755 "$dir_storage"','mkdir -p -m 777 "$dir_storage"'),
             ('storage','ulimit -f 16384','ulimit -f 32768'),
             ('storage','mtd_part_size / 512','mtd_part_size / 1024'),
             ('dev_init','exit "$storage_load_status"','exit 0'),

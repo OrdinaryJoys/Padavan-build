@@ -32,7 +32,7 @@ SOURCE_PATHS = {
 }
 # Declared from the reviewed source before reading candidate artifact bytes.
 EXPECTED_SOURCE_SHA256 = {
-    'storage': 'fa81466b3571123c27d11f48af4650180bddf8e59d57743ba4f163f23dac75ba',
+    'storage': '0c56bb501692a0c73d51266d2bd7037de4d1a63b8c546973eef353d1d1f4c1dd',
     'dev_init': 'cb2ff8015f4a649bd1e3978ca5b3185706503b9e36c39a6ff0e41efd4199cd2b',
     'rc': '261cb624ee1446dcb28436f2397696886ce51ff22b2797230a9901f0aeaed80e',
     'init': '1d01ebbbd9a130d5d5cda3ed7ac20befb8624abec556aff6fbe439f14eadae52',
@@ -44,7 +44,7 @@ EXPECTED_SOURCE_SHA256 = {
 ROOTFS_SCRIPTS = {'storage': 'sbin/mtd_storage.sh', 'dev_init': 'sbin/dev_init.sh'}
 SHELL_FUNCTIONS = (
     'func_ready_parent', 'func_ready', 'func_ready_clear', 'func_ready_publish',
-    'func_load', 'func_unpack', 'func_tarb', 'func_save', 'func_restore',
+    'func_load', 'func_unpack', 'func_tarb', 'func_save', 'func_restore', 'func_reset',
 )
 C_FUNCTIONS = {'rc': ('run_startup_script',), 'init': ('init_main_loop',),
                'runner': ('shutdown_hook_run',)}
@@ -170,7 +170,9 @@ def source_contract(inputs):
             'Load authorizes before complete publication/hash')
     require(shell['func_restore'].index('func_ready_clear || return 1') <
             shell['func_restore'].index('func_stop_apps'), 'Restore changes RAM before revoke')
-    require('if func_fill && func_tarb && func_ready_publish; then' in storage and
+    require(shell['func_reset'] == 'func_reset()\n{\n\trm -f "$slk" &&\n\t\trm -rf "$dir_storage" &&\n\t\tmkdir -p -m 755 "$dir_storage"\n}',
+            'Explicit reset must check lock removal, old-tree removal and new-directory creation')
+    require('if func_reset && func_fill && func_tarb && func_ready_publish; then' in storage and
             'fill)\n\tfunc_mdir || exit 1\n\tfunc_fill\n\t;;' in storage,
             'Fill implicitly authorizes defaults or explicit reset gate missing')
     require('(ulimit -f 16384 && cd "$dir_storage" &&' in shell['func_tarb'] and
@@ -197,6 +199,7 @@ def source_contract(inputs):
             'actual_functions_sha256': {name: sha(body.encode()) for name, body in {**shell, **bodies}.items()},
             'semantics': {'coldboot_default_deny': True, 'early_revoke': True,
                           'validated_load_restore_or_explicit_reset_only': True,
+                          'reset_requires_checked_recreate': True,
                           'tar_bytes': 8388608, 'storage_bytes': 524288,
                           'startup_zero_arguments_at_original_boundary': True,
                           'whole_boot_executed': False, 'custom_script_executed': False}}
