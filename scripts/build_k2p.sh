@@ -78,7 +78,8 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_wifi_bin_io test_wifi_buffer_lifetime test_wifi_cal_io \
                        test_wifi_cal_consumers test_meta_nvram test_ate_dispatch \
                        test_flash_persist test_mcu_precal \
-                       test_cmd_queue test_rx_transport test_rx_pool test_rx_startup; do
+                       test_cmd_queue test_rx_transport test_rx_pool test_rx_startup \
+                       test_mtd_preflight test_pci_lifecycle; do
     test -f "$root/source/tests/$required_test.py"
   done
 fi
@@ -135,6 +136,13 @@ if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/check_target_rx_transport.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --output "$diagnostics/rx-transport-preflight/target-rx-transport.json"
+  python3 "$root/scripts/check_target_pci_lifecycle.py" --preflight --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --output "$diagnostics/pci-lifecycle-preflight/target-pci-lifecycle.json"
+  test -f "$root/source/tests/mtd_preflight_harness.py"
+  python3 "$root/scripts/check_target_mtd_preflight.py" --preflight --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --output "$diagnostics/mtd-preflight/target-mtd-preflight.json"
   test -f "$root/source/tests/mtd_backup_harness.py"
   python3 "$root/scripts/check_target_mtd_backup.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
@@ -252,6 +260,8 @@ python3 "$root/scripts/check_target_storage.py" "$trunk/romfs" \
 python3 "$root/scripts/check_target_services.py" "$trunk/romfs" \
   --sysroot "$qemu_root" --output "$diagnostics/target-services.json"
 if [ "$flavor" = "k2p-4.4" ]; then
+  python3 "$root/scripts/check_target_boot_storage.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
+    --sysroot "$trunk/romfs" --output "$diagnostics/target-boot-storage.json"
   python3 "$root/scripts/check_target_config_publish.py" --rootfs "$trunk/romfs" \
     --sysroot "$qemu_root" --output "$diagnostics/target-config-publish.json"
   python3 "$root/scripts/check_target_upgrade.py" --trunk "$trunk" \
@@ -489,8 +499,14 @@ if [ "$flavor" = "k2p-4.4" ]; then
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --wifi-report "$diagnostics/target-wifi-factory.json" \
     --output "$diagnostics/target-rx-transport.json"
+  python3 "$root/scripts/check_target_pci_lifecycle.py" --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --wifi-report "$diagnostics/target-wifi-factory.json" --output "$diagnostics/target-pci-lifecycle.json"
   python3 "$root/scripts/check_target_mtd_backup.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --output "$diagnostics/target-mtd-backup.json"
+  python3 "$root/scripts/check_target_mtd_preflight.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --image "${images[0]}" \
+    --mtd-backup-report "$diagnostics/target-mtd-backup.json" --output "$diagnostics/target-mtd-preflight.json"
   python3 "$root/scripts/check_target_sr3.py" --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --spi-report "$diagnostics/target-spi-nor.json" --output "$diagnostics/target-sr3.json"
@@ -523,6 +539,9 @@ if [ "$flavor" = "k2p-4.4" ]; then
   cp "$diagnostics/target-nvram-mtd"* "$dist/"
   cp "$diagnostics/target-wifi-"* "$dist/"
   cp "$diagnostics/target-rx-"* "$dist/"
+  cp "$diagnostics/target-pci-lifecycle"* "$dist/"
+  cp "$diagnostics/target-mtd-preflight"* "$dist/"
+  cp "$diagnostics/target-boot-storage"* "$dist/"
   cp "$diagnostics/target-collector"* "$dist/"
   cp "$diagnostics/target-resident-upgrade.json" "$dist/"
   for resident_adapter in helper legacy legacy-disabled parent consumer; do
