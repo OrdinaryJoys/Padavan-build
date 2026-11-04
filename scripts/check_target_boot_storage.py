@@ -23,6 +23,7 @@ from check_target_storage import prepare_uid_runtime
 SOURCE_PATHS = {
     'storage': 'user/scripts/mtd_storage.sh',
     'dev_init': 'user/scripts/dev_init.sh',
+    'reset_ss': 'user/scripts/reset_ss.sh',
     'rc': 'user/rc/rc.c',
     'init': 'user/rc/init.c',
     'rc_header': 'user/rc/rc.h',
@@ -32,8 +33,9 @@ SOURCE_PATHS = {
 }
 # Declared from the reviewed source before reading candidate artifact bytes.
 EXPECTED_SOURCE_SHA256 = {
-    'storage': '0c56bb501692a0c73d51266d2bd7037de4d1a63b8c546973eef353d1d1f4c1dd',
-    'dev_init': 'cb2ff8015f4a649bd1e3978ca5b3185706503b9e36c39a6ff0e41efd4199cd2b',
+    'storage': 'b2e40a853fb308d7b7d773f903c034cf5ab32f67d92ceed542c130ac64f6d017',
+    'dev_init': 'd6bc8c0d7ebc1f0a17fe00cdb1a0752d29899b1b417a3091d851cf5c0369aef9',
+    'reset_ss': 'dbe46eb5391499bbf6b88f212ca9420870ce2b0158d5b185cc6fd01ed7edefd8',
     'rc': '261cb624ee1446dcb28436f2397696886ce51ff22b2797230a9901f0aeaed80e',
     'init': '1d01ebbbd9a130d5d5cda3ed7ac20befb8624abec556aff6fbe439f14eadae52',
     'rc_header': '04002579c5c64f235a2b43682e4bb64e267406af725f0006d96956bcd04f711a',
@@ -41,10 +43,12 @@ EXPECTED_SOURCE_SHA256 = {
     'shell_common': '8f2f353859e3cee9c4b5aee07c855eb28e56e5c9f75a138eb7bec7fc9983f34f',
     'busybox_template': '49789620f949cd362a6cfee16e2025672a30d71b08b9ca615b1d87e6044a7e70',
 }
-ROOTFS_SCRIPTS = {'storage': 'sbin/mtd_storage.sh', 'dev_init': 'sbin/dev_init.sh'}
+ROOTFS_SCRIPTS = {'storage': 'sbin/mtd_storage.sh', 'dev_init': 'sbin/dev_init.sh',
+                  'reset_ss': 'sbin/reset_ss.sh'}
 SHELL_FUNCTIONS = (
     'func_ready_parent', 'func_ready', 'func_ready_clear', 'func_ready_publish',
     'func_load', 'func_unpack', 'func_tarb', 'func_save', 'func_restore', 'func_reset',
+    'func_invalidate_hash', 'func_fill',
 )
 C_FUNCTIONS = {'rc': ('run_startup_script',), 'init': ('init_main_loop',),
                'runner': ('shutdown_hook_run',)}
@@ -59,6 +63,27 @@ CASES = (
     ('tar-producer-overflow', 16384, 8388609, 73, 8388608),
 )
 CASE_NAMES = tuple(row[0] for row in CASES)
+FILL_GUARD = ('\tfill_was_ready=0\n'
+              '\tif func_ready; then fill_was_ready=1; fi\n'
+              '\tif func_ready_clear && func_mdir && func_fill; then\n'
+              '\t\tif [ "$fill_was_ready" = 1 ]; then\n'
+              '\t\t\tfunc_tarb && func_ready_publish || result=1\n'
+              '\t\tfi\n'
+              '\telse\n'
+              '\t\tresult=1\n'
+              '\tfi\n')
+SEMANTICS = {'coldboot_default_deny': True, 'early_revoke': True,
+             'validated_load_restore_or_explicit_reset_only': True,
+             'reset_requires_checked_recreate': True,
+             'fill_revokes_before_mutation': True,
+             'fill_failure_keeps_save_denied': True,
+             'healthy_fill_restores_only_prior_authority': True,
+             'cache_invalidated_before_save_and_erase': True,
+             'dev_init_fill_failure_propagated': True,
+             'reset_ss_a_failure_propagated': True,
+             'tar_bytes': 8388608, 'storage_bytes': 524288,
+             'startup_zero_arguments_at_original_boundary': True,
+             'whole_boot_executed': False, 'custom_script_executed': False}
 FIELDS = {'case', 'limit_blocks', 'requested_bytes', 'raw_exit',
           'actual_bytes', 'sha256', 'eof'}
 MAX_FILE = 32 * 1024 * 1024
@@ -138,9 +163,25 @@ def c_function(text, name):
 
 
 def shell_function(text, name):
-    found = re.findall(r'^' + re.escape(name) + r'\(\)\n\{\n.*?^\}', text, re.M | re.S)
+    found = list(re.finditer(r'^' + re.escape(name) + r'\(\)\n\{\n', text, re.M))
     require(len(found) == 1, 'Missing/ambiguous Storage function: ' + name)
-    return found[0]
+    start = found[0].start()
+    cursor = found[0].end()
+    documents = []
+    for line in text[cursor:].splitlines(keepends=True):
+        bare = line.rstrip('\r\n')
+        if documents:
+            delimiter, strip_tabs = documents[0]
+            if (bare.lstrip('\t') if strip_tabs else bare) == delimiter:
+                documents.pop(0)
+        elif bare == '}':
+            return text[start:cursor + 1]
+        elif not bare.lstrip().startswith('#'):
+            for match in re.finditer(r"<<(-?)[ \t]*(?:'([A-Za-z_][A-Za-z_0-9]*)'|\"([A-Za-z_][A-Za-z_0-9]*)\"|([A-Za-z_][A-Za-z_0-9]*))", bare):
+                documents.append((next(value for value in match.groups()[1:] if value is not None),
+                                  match.group(1) == '-'))
+        cursor += len(line)
+    raise ValueError('Unterminated Storage function/heredoc: ' + name)
 
 
 def config_contract(raw):
@@ -173,15 +214,32 @@ def source_contract(inputs):
     require(shell['func_reset'] == 'func_reset()\n{\n\trm -f "$slk" &&\n\t\trm -rf "$dir_storage" &&\n\t\tmkdir -p -m 755 "$dir_storage"\n}',
             'Explicit reset must check lock removal, old-tree removal and new-directory creation')
     require('if func_reset && func_fill && func_tarb && func_ready_publish; then' in storage and
-            'fill)\n\tfunc_mdir || exit 1\n\tfunc_fill\n\t;;' in storage,
+            FILL_GUARD in storage,
             'Fill implicitly authorizes defaults or explicit reset gate missing')
+    require(shell['func_save'].count('func_invalidate_hash || return 1') == 1 and
+            shell['func_save'].index('func_invalidate_hash || return 1') <
+            shell['func_save'].index('mtd_write write'), 'Save must invalidate cache before MTD write')
+    invalidate = shell['func_invalidate_hash']
+    require('rm -f "$hsh"' in invalidate and '[ -e "$hsh" ]' in invalidate and
+            '[ -L "$hsh" ]' in invalidate, 'Cache invalidation ignores failed unlink or residual object')
+    erase = shell_function(storage, 'func_erase')
+    require(erase.index('func_invalidate_hash') < erase.index('mtd_write erase') and
+            'result=1\n\t\treturn 1' in erase, 'Erase must fail before backend when cache revoke fails')
+    require('reset_ss.sh -a || return 1' in shell['func_fill'] and
+            '<<EOF || return 1' in shell['func_fill'] and 'chmod ' in shell['func_fill'],
+            'Fill must propagate default producer/write failures')
     require('(ulimit -f 16384 && cd "$dir_storage" &&' in shell['func_tarb'] and
             'blocks=$((mtd_part_size / 512))' in shell['func_save'] and
             '(ulimit -f "$blocks" && bzip2 -c -9 "$tmp" > "$archive")' in shell['func_save'] and
             '"$fsz" -gt "$mtd_part_size"' in shell['func_save'], 'Production output quota placement changed')
     require('storage_load_status=0\nmtd_storage.sh load || storage_load_status=$?' in texts['dev_init'] and
+            'storage_fill_status=0\nmtd_storage.sh fill || storage_fill_status=$?' in texts['dev_init'] and
+            'if [ "$storage_load_status" -eq 0 ]; then\n\tstorage_load_status=$storage_fill_status\nfi' in texts['dev_init'] and
             'exit "$storage_load_status"' in texts['dev_init'] and
             '\n\t/etc/storage/start_script.sh' not in texts['dev_init'], 'Boot load result/direct startup bypass changed')
+    require('cat > "$script_start" <<EOF || exit 1' in texts['reset_ss'] and
+            'chmod 755 "$script_start" || exit 1' in texts['reset_ss'] and
+            'if [ -z "$1" ] ; then' in texts['reset_ss'], 'reset_ss -a must propagate creation failure')
     init = bodies['init_main_loop']
     require(init.count('run_startup_script();') == 1 and
             init.index('system("dev_init.sh -l")') < init.index('run_startup_script();') < init.index('init_nodes();') and
@@ -197,12 +255,7 @@ def source_contract(inputs):
             'Bounded runner no-argument/shutdown boundary changed')
     return {'source_sha256': {key: sha(value) for key, value in inputs.items()},
             'actual_functions_sha256': {name: sha(body.encode()) for name, body in {**shell, **bodies}.items()},
-            'semantics': {'coldboot_default_deny': True, 'early_revoke': True,
-                          'validated_load_restore_or_explicit_reset_only': True,
-                          'reset_requires_checked_recreate': True,
-                          'tar_bytes': 8388608, 'storage_bytes': 524288,
-                          'startup_zero_arguments_at_original_boundary': True,
-                          'whole_boot_executed': False, 'custom_script_executed': False}}
+            'semantics': dict(SEMANTICS)}
 
 
 def expected_rows():

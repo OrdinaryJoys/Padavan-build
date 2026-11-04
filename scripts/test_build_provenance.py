@@ -166,7 +166,7 @@ import json,os,sys
 from pathlib import Path
 with open(os.environ['GATE_LOG'],'a') as log:log.write(json.dumps(sys.argv[1:])+'\\n')
 if '--preflight'not in sys.argv:
-    required=('--wifi-report','--io-report')if 'check_target_wifi_calibration_integrity.py'in sys.argv[1]else('--wifi-report',)if any(name in sys.argv[1]for name in('check_target_wifi_file_io.py','check_target_rx_transport.py','check_target_pci_lifecycle.py'))else()
+    required=('--wifi-report','--io-report')if 'check_target_wifi_calibration_integrity.py'in sys.argv[1]else('--wifi-report',)if any(name in sys.argv[1]for name in('check_target_wifi_file_io.py','check_target_rx_transport.py','check_target_pci_lifecycle.py','check_target_token_lifecycle.py'))else()
     if 'check_target_mtd_preflight.py'in sys.argv[1]:required=('--mtd-backup-report','--image')
     if any(flag not in sys.argv or not Path(sys.argv[sys.argv.index(flag)+1]).is_file()for flag in required):sys.exit(97)
 if '--output'in sys.argv:
@@ -190,7 +190,7 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
         return result,calls,finished.exists()
 
     def test_new_preflight_gates_are_mandatory_before_expensive_build(self):
-        names=['controller_clock','spi_dma','spi_lifecycle','nvram_mtd','mtd_mutation','wifi_factory','wifi_file_io','wifi_calibration_integrity','rx_transport','pci_lifecycle','mtd_preflight']
+        names=['controller_clock','spi_dma','spi_lifecycle','nvram_mtd','mtd_mutation','wifi_factory','wifi_file_io','wifi_calibration_integrity','rx_transport','pci_lifecycle','token_lifecycle','mtd_preflight']
         result,calls,done=self.new_target_gate_block()
         self.assertEqual(result.returncode,0,result.stderr);self.assertTrue(done)
         self.assertEqual([Path(call[0]).stem for call in calls],['check_target_'+name for name in names])
@@ -206,11 +206,11 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
         end=script.index('# Keep Linux /tmp rewriting',start);block=script[start:end]
         required=tuple(word.rstrip(';')for word in block.split()if word.startswith('test_'))
         self.assertIn('test_flash_persist',required);self.assertIn('test_mcu_precal',required)
-        self.assertTrue({'test_cmd_queue','test_rx_transport','test_rx_pool','test_rx_startup','test_mtd_preflight','test_pci_lifecycle'}<=set(required))
+        self.assertTrue({'test_cmd_queue','test_rx_transport','test_rx_pool','test_rx_startup','test_mtd_preflight','test_pci_lifecycle','test_token_init','test_ser_lifecycle','test_kthread_owner'}<=set(required))
         tests=self.root/'source/tests';tests.mkdir(parents=True,exist_ok=True)
         for name in required:(tests/(name+'.py')).touch()
         marker=self.root/'source-suite-started'
-        for missing in('', 'test_flash_persist','test_mcu_precal','test_cmd_queue','test_rx_transport','test_rx_pool','test_rx_startup','test_mtd_preflight','test_pci_lifecycle'):
+        for missing in('', 'test_flash_persist','test_mcu_precal','test_cmd_queue','test_rx_transport','test_rx_pool','test_rx_startup','test_mtd_preflight','test_pci_lifecycle','test_token_init','test_ser_lifecycle','test_kthread_owner'):
             marker.unlink(missing_ok=True)
             if missing:(tests/(missing+'.py')).unlink()
             result=subprocess.run(['bash','-c','set -euo pipefail\n'+block+'\ntouch "$SUITE_MARKER"\n'],
@@ -220,7 +220,7 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
             if missing:(tests/(missing+'.py')).touch()
 
     def test_late_gates_require_image_or_rootfs_binding_and_stop_publication_on_failure(self):
-        names=['controller_clock','spi_dma','spi_lifecycle','nvram_mtd','mtd_mutation','wifi_factory','wifi_file_io','wifi_calibration_integrity','rx_transport','pci_lifecycle','mtd_backup','mtd_preflight']
+        names=['controller_clock','spi_dma','spi_lifecycle','nvram_mtd','mtd_mutation','wifi_factory','wifi_file_io','wifi_calibration_integrity','rx_transport','pci_lifecycle','token_lifecycle','mtd_backup','mtd_preflight']
         result,calls,done=self.new_target_gate_block(late=True)
         self.assertEqual(result.returncode,0,result.stderr);self.assertTrue(done)
         self.assertEqual([Path(call[0]).stem for call in calls],['check_target_'+name for name in names])
@@ -234,8 +234,8 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
         self.assertIn('--wifi-report',calls[8])
         self.assertEqual(calls[8][calls[8].index('--wifi-report')+1],str(self.root/'diagnostics/target-wifi-factory.json'))
         self.assertIn('--wifi-report',calls[9])
-        self.assertIn('--rootfs',calls[11]);self.assertIn('--image',calls[11]);self.assertIn('--mtd-backup-report',calls[11])
-        for missing,count in(('target-wifi-factory.json',7),('target-wifi-file-io.json',8),('target-mtd-backup.json',12)):
+        self.assertIn('--rootfs',calls[12]);self.assertIn('--image',calls[12]);self.assertIn('--mtd-backup-report',calls[12])
+        for missing,count in(('target-wifi-factory.json',7),('target-wifi-file-io.json',8),('target-mtd-backup.json',13)):
             result,missing_calls,done=self.new_target_gate_block(late=True,missing_parent=missing)
             self.assertEqual(result.returncode,97);self.assertEqual(len(missing_calls),count);self.assertFalse(done)
         for i,name in enumerate(names):
@@ -303,13 +303,15 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
 
     def test_all_pci_mtd_and_boot_export_members_are_copied(self):
         script=Path(__file__).with_name('build_k2p.sh').read_text()
-        prefixes=('target-pci-lifecycle','target-mtd-preflight','target-boot-storage')
+        prefixes=('target-pci-lifecycle','target-mtd-preflight','target-boot-storage','target-token-lifecycle','target-storage-cache')
         lines=[line for line in script.splitlines()if any(line.startswith('  cp "$diagnostics/'+prefix+'"')for prefix in prefixes)]
-        self.assertEqual(len(lines),3)
+        self.assertEqual(len(lines),5)
         names={'target-pci-lifecycle.json','target-pci-lifecycle-pci.o','target-pci-lifecycle-pci.cmd',
                'target-pci-lifecycle-pci-current','target-pci-lifecycle-pci-current.c','target-pci-lifecycle-pci-current.stdout.json',
                'target-mtd-preflight.json','target-mtd-preflight','target-mtd-preflight.c','target-mtd-preflight.stdout.json',
-               'target-boot-storage.json','target-boot-storage-probe.sh'}
+               'target-boot-storage.json','target-boot-storage-probe.sh',
+               'target-token-lifecycle.json','target-token-lifecycle-token-current.c','target-token-lifecycle-token-current',
+               'target-storage-cache.json','target-storage-cache.sh','target-storage-cache.stdout.json'}
         diagnostics=self.root/'diagnostics';dist=self.root/'dist';diagnostics.mkdir();dist.mkdir()
         for name in names:(diagnostics/name).write_bytes(('public:'+name).encode())
         (diagnostics/'unrelated.log').write_text('not copied')
@@ -317,6 +319,28 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
             env=dict(os.environ,diagnostics=str(diagnostics),dist=str(dist)),capture_output=True,text=True,timeout=10)
         self.assertEqual(result.returncode,0,result.stderr);self.assertEqual({p.name for p in dist.iterdir()},names)
         for name in names:self.assertEqual((dist/name).read_bytes(),(diagnostics/name).read_bytes())
+
+
+    def test_storage_cache_gate_binds_image_and_parent_and_blocks_publication(self):
+        script=Path(__file__).with_name('build_k2p.sh').read_text()
+        start=script.index('  python3 "$root/scripts/check_target_storage_cache.py"')
+        block=script[start:script.index('\nfi',start)]
+        self.assertNotIn('--preflight',block)
+        tools=self.root/'cache-tools';tools.mkdir()
+        entry=tools/'python3'
+        entry.write_text('#!'+sys.executable+'\nimport json,os,sys\nfrom pathlib import Path\nPath(os.environ["CACHE_LOG"]).write_text(json.dumps(sys.argv[1:]))\nraise SystemExit(int(os.environ["CACHE_FAIL"]))\n')
+        entry.chmod(0o755)
+        for code in (0,23):
+            log=self.root/'cache-command.json';marker=self.root/'cache-finished'
+            marker.unlink(missing_ok=True)
+            env=dict(os.environ,PATH=str(tools)+os.pathsep+os.environ['PATH'],root=str(self.root),trunk=str(self.root/'source/trunk'),
+                     diagnostics=str(self.root/'diagnostics'),CACHE_LOG=str(log),CACHE_FAIL=str(code),DONE=str(marker))
+            result=subprocess.run(['bash','-c','set -euo pipefail\nimages=("$root/candidate.trx")\n'+block+'\ntouch "$DONE"\n'],env=env,capture_output=True,text=True,timeout=10)
+            self.assertEqual(result.returncode,code,result.stderr);self.assertEqual(marker.exists(),code==0)
+            call=json.loads(log.read_text())
+            self.assertEqual(call[1:],['--trunk',str(self.root/'source/trunk'),'--rootfs',str(self.root/'source/trunk/romfs'),
+                '--sysroot',str(self.root/'source/trunk/romfs'),'--image',str(self.root/'candidate.trx'),
+                '--boot-storage-report',str(self.root/'diagnostics/target-boot-storage.json'),'--output',str(self.root/'diagnostics/target-storage-cache.json')])
 
 
 if __name__ == '__main__':

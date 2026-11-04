@@ -30,6 +30,30 @@ def synthetic_sources():
  blocks=$((mtd_part_size / 512))
  (ulimit -f "$blocks" && bzip2 -c -9 "$tmp" > "$archive")
  [ "$fsz" -gt "$mtd_part_size" ]
+ func_invalidate_hash || return 1
+ mtd_write write "$archive" "$mtd_part_name"
+}'''
+    functions['func_invalidate_hash'] = '''func_invalidate_hash()
+{
+	if ! rm -f "$hsh" || [ -e "$hsh" ] || [ -L "$hsh" ]; then
+		return 1
+	fi
+}'''
+    functions['func_fill'] = '''func_fill()
+{
+ cat > "$fixture" <<EOF || return 1
+}
+EOF
+ chmod 755 "$fixture" || return 1
+ reset_ss.sh -a || return 1
+}'''
+    functions['func_erase'] = '''func_erase()
+{
+	if ! func_invalidate_hash; then
+		result=1
+		return 1
+	fi
+	mtd_write erase "$mtd_part_name"
 }'''
     functions['func_restore'] = 'func_restore()\n{\n func_ready_clear || return 1\n func_stop_apps\n}'
     functions['func_reset'] = 'func_reset()\n{\n\trm -f "$slk" &&\n\t\trm -rf "$dir_storage" &&\n\t\tmkdir -p -m 755 "$dir_storage"\n}'
@@ -41,13 +65,30 @@ save)
 	if [ -e "$slk" ] || [ -L "$slk" ]; then exit 1; fi
 if func_reset && func_fill && func_tarb && func_ready_publish; then :; fi
 fill)
-	func_mdir || exit 1
-	func_fill
-	;;
-'''
+'''+boot.FILL_GUARD+'\n\t;;\n'
     return {key: value.encode() for key, value in {
         'storage': storage,
-        'dev_init': 'storage_load_status=0\nmtd_storage.sh load || storage_load_status=$?\nexit "$storage_load_status"\n',
+        'dev_init': '''storage_load_status=0
+mtd_storage.sh load || storage_load_status=$?
+storage_fill_status=0
+mtd_storage.sh fill || storage_fill_status=$?
+if [ "$storage_load_status" -eq 0 ]; then
+	storage_load_status=$storage_fill_status
+fi
+exit "$storage_load_status"
+''',
+        'reset_ss': '''#!/bin/sh
+script_start="/etc/storage/start_script.sh"
+cat > "$script_start" <<EOF || exit 1
+#!/bin/sh
+# private synthetic default, never executed
+EOF
+chmod 755 "$script_start" || exit 1
+if [ -z "$1" ] ; then
+	$script_start
+	mtd_storage.sh save
+fi
+''',
         'rc': '''void run_startup_script(void){
  access(SCRIPT_STARTUP, X_OK);
  shutdown_hook_run(SCRIPT_STARTUP, HOOK_RUNNER_NO_ARGUMENT, 30000, 2000, 1000);
@@ -114,7 +155,8 @@ class TargetBootStorageTests(unittest.TestCase):
 
     def test_private_source_contract_records_real_function_hashes(self):
         proof=self.source_check(synthetic_sources())
-        self.assertEqual(len(proof['actual_functions_sha256']),13)
+        self.assertEqual(len(proof['actual_functions_sha256']),15)
+        self.assertEqual(len(proof['source_sha256']),9)
         self.assertIs(proof['semantics']['whole_boot_executed'],False)
         self.assertIs(proof['semantics']['custom_script_executed'],False)
         self.assertEqual(set(proof['source_sha256']),set(boot.SOURCE_PATHS))
@@ -150,6 +192,50 @@ class TargetBootStorageTests(unittest.TestCase):
                 inputs=synthetic_sources();self.assertIn(old.encode(),inputs[key])
                 inputs[key]=inputs[key].replace(old.encode(),new.encode(),1)
                 with self.assertRaises(ValueError):self.source_check(inputs)
+
+    def test_fill_cache_and_default_creation_failures_cannot_mint_authority(self):
+        changes=[
+            ('storage','func_invalidate_hash || return 1','true'),
+            ('storage',' || [ -e "$hsh" ]',''),
+            ('storage',' || [ -L "$hsh" ]',''),
+            ('storage','result=1\n\t\treturn 1','result=0\n\t\treturn 1'),
+            ('storage','reset_ss.sh -a || return 1','reset_ss.sh -a'),
+            ('storage','<<EOF || return 1','<<EOF'),
+            ('storage','fill_was_ready=0','fill_was_ready=1'),
+            ('storage','if func_ready; then fill_was_ready=1; fi','fill_was_ready=1'),
+            ('storage','if func_ready_clear && func_mdir && func_fill; then','if func_mdir && func_fill; then'),
+            ('storage','if [ "$fill_was_ready" = 1 ]; then','if true; then'),
+            ('storage','func_tarb && func_ready_publish || result=1','func_ready_publish || result=1'),
+            ('dev_init','mtd_storage.sh fill || storage_fill_status=$?','mtd_storage.sh fill'),
+            ('dev_init','if [ "$storage_load_status" -eq 0 ]; then','if true; then'),
+            ('dev_init','storage_load_status=$storage_fill_status','storage_load_status=0'),
+            ('reset_ss','<<EOF || exit 1','<<EOF'),
+            ('reset_ss','chmod 755 "$script_start" || exit 1','chmod 755 "$script_start"'),
+        ]
+        for key,old,new in changes:
+            with self.subTest(change=old):
+                inputs=synthetic_sources();self.assertIn(old.encode(),inputs[key])
+                inputs[key]=inputs[key].replace(old.encode(),new.encode(),1)
+                with self.assertRaises(ValueError):self.source_check(inputs)
+
+    def test_shell_extraction_keeps_column_zero_braces_and_multiple_heredocs(self):
+        bodies=[
+            'func_fixture()\n{\n cat <<FIRST\n}\nFIRST\n printf complete\n}',
+            "func_fixture()\n{\n cat <<'FIRST'\n}\nFIRST\n cat <<-SECOND\n\t}\n\tSECOND\n printf complete\n}",
+            "func_fixture()\n{\n cat <<FIRST <<'SECOND'\n}\nFIRST\n}\nSECOND\n printf complete\n}",
+        ]
+        for body in bodies:
+            with self.subTest(body=body):
+                text=body+'\nfunc_next()\n{\n :\n}\n'
+                self.assertEqual(boot.shell_function(text,'func_fixture'),body)
+                self.assertNotIn('func_next',boot.shell_function(text,'func_fixture'))
+
+    def test_shell_extraction_rejects_ambiguous_or_unterminated_heredoc_functions(self):
+        body='func_fixture()\n{\n cat <<FIRST\n}\nFIRST\n printf complete\n}'
+        for text in (body+'\n'+body,body.replace('\nFIRST\n','\nMISSING\n'),
+                     body.replace('func_fixture()','func_other()')):
+            with self.subTest(text=text),self.assertRaises(ValueError):
+                boot.shell_function(text,'func_fixture')
 
     def test_ash_printf_test_rmdir_and_stat_configuration_must_be_explicit(self):
         for line in boot.REQUIRED_CONFIG:
@@ -259,7 +345,7 @@ class TargetBootStorageTests(unittest.TestCase):
         with self.assertRaises(ValueError):boot.read_regular(self.root/'fifo')
         self.assertEqual(original.read_bytes(),b'keep')
 
-    def test_final_checker_binds_both_shipped_scripts_and_exports_only_declared_proof(self):
+    def test_final_checker_binds_three_shipped_scripts_and_exports_only_declared_proof(self):
         rootfs,sysroot,runtime,hashes,binary=self.runtime()
         trunk=self.root/'trunk';trunk.mkdir();inputs=synthetic_sources()
         for key,path in boot.SOURCE_PATHS.items():
@@ -281,12 +367,15 @@ class TargetBootStorageTests(unittest.TestCase):
             boot.validate_records(value['checks'])
             self.assertEqual((report.parent/boot.SCRIPT_FILE).read_text(),boot.QUOTA_SCRIPT)
             self.assertEqual((report.parent/boot.CONFIG_FILE).read_bytes(),inputs['busybox_template'])
-            self.assertEqual(set(value['rootfs_scripts']),{'storage','dev_init'})
-            (rootfs/'sbin/dev_init.sh').write_bytes(b'wrong shipped script')
-            execute.reset_mock()
-            with self.assertRaisesRegex(ValueError,'differs from reviewed source'):
-                boot.check(trunk,rootfs,sysroot,report)
-            execute.assert_not_called()
+            self.assertEqual(set(value['rootfs_scripts']),{'storage','dev_init','reset_ss'})
+            for key,path in boot.ROOTFS_SCRIPTS.items():
+                with self.subTest(shipped=key):
+                    (rootfs/path).write_bytes(b'wrong shipped script')
+                    execute.reset_mock()
+                    with self.assertRaisesRegex(ValueError,'differs from reviewed source'):
+                        boot.check(trunk,rootfs,sysroot,report)
+                    execute.assert_not_called()
+                    (rootfs/path).write_bytes(inputs[key])
 
     def test_cli_is_final_only_and_requires_all_four_explicit_inputs(self):
         script=Path(boot.__file__)

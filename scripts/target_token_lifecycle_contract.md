@@ -1,0 +1,23 @@
+# Current token / SER / KTHREAD ownership contract
+
+This gate executes 40 fixed current cases in three inert static MIPS userspace probes: token18, SER15 and task7. It never loads a module, creates a kernel task, opens a device, performs DMA, connects to a router or writes firmware.
+
+The source manifest contains 16 complete function entries, with 15 distinct functions because `__RtmpOSTaskKill` is retained in both the SER and task probes. Token binds six functions; SER binds seven; task ownership binds three. The actual token structures, SER state/owner declarations, task states, NDIS status values, HALT flag and SER wire constants are read or checked against the locked source headers. Source-only checks also bind close/HwCtrlExit retirement order, normal reopen order and Linux4.4 `kthread_stop` semantics.
+
+The source harnesses are parsed as literal data. The gate never imports or calls a source harness generator. Current model hashes are:
+
+- token: `52e6a603c471a58810eb71f5a2cce4304fc0a68527890bef89457f15d213e852`
+- SER: `21ac6f2947e86bcd63a1713076ac63a4cf85cd1f0467473ae9fd1c16a4439e39`
+- task: `ad676332c4a063f113719791b0c96e9fc4e30e64cfa965996f2640f4cac2b000`
+
+Run the early check with `--trunk PATH --compiler PATH --output PATH/target-token-lifecycle.json --preflight`. Run the final check with the same three arguments and `--wifi-report PATH/target-wifi-factory.json`, omitting `--preflight`. The modes are exclusive. The final mode requires the completed same-source/configuration Factory49 module/image parent and its four existing exports. A separate independent verifier must validate that parent and its actual image identity.
+
+The report exposes `schema_version`, `status`, `profile`, `phase`, `execution_role`, `required_cases`, `checks`, `source_files`, `source_sha256`, `component_models`, `source_contract`, `function_manifest`, `probes`, `compiled_binding`, `compiler` and `limits`. Every case has exact typed inputs/observations; each complete stdout JSON line is separately exported. Preflight phase is `early-source-only` with a null compiled binding. Final phase is `final-module-reference-bound`.
+
+Nine probe files are emitted: `target-token-lifecycle-{token,ser,task}-current`, each with `.c` and `.stdout.json` companions. Final mode additionally emits exactly 16 object/command files, `.o` and `.cmd` for labels `token`, `hif`, `hardware`, `recovery`, `basic`, `command`, `os` and `close`. These bind the actual `cut_through`, `rtmp_init`, `hw_init`, `hw_ctrl`, `hw_ctrl_basic`, `hw_ctrl_cmd`, `rt_linux` and `rtmp_init_inf` objects. A missing or extra export is rejected. All names use the token lifecycle prefix and do not alter RX/PCI inventories.
+
+`compiled_binding` exposes status, Factory report hash/cases, image hash, built/shipped module hashes, parent/compiled export hashes and each actual object/command/symbol record. Required symbols include token init/deinit, HIF init, recovery, SER init/exit/worker, HwCtrlExit, recovery event producer, public task init/attach/kill wrappers and RTMPDrvClose. Source/command/object/module evidence does not independently replay compilation, linking or relocations.
+
+The concurrency contract has one serialized lifecycle teardown owner racing a SER worker and its producer. It does not cover simultaneous independent teardown owners, non-KTHREAD or OS_ABL variants, other queue-management algorithms or the target kernel callback ABI. Private allocator, pthread, reference and lock recorders model software ownership only. The new source takes a task reference before publication/wake and releases it after stop, including natural early exit; no kernel task is executed by the probes.
+
+DMA stop-before-free, first-arm/idle failure propagation, actual hardware hot reset, full-system memory pressure, efd2 first-hop safety and historical outage attribution remain outside this proof. Passing this gate authorizes no deployment or device operation.
