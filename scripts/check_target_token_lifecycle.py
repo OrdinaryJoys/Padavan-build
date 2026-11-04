@@ -86,7 +86,7 @@ COMPONENTS = {'token': {'paths': {'token': 'trunk/linux-4.4.x/drivers/net/wirele
                        'ser_exit': 'basic',
                        'RTMP_MAC_RECOVERY': 'command'},
          'harness_key': 'ser_harness',
-         'model_data_sha256': '21ac6f2947e86bcd63a1713076ac63a4cf85cd1f0467473ae9fd1c16a4439e39',
+         'model_data_sha256': '4be11e4b9a9c95041f6db418a37d97f82bcc14b0b814b3aa156b768a1d93f38c',
          'variants': ('current',)},
  'task': {'paths': {'os': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/os/linux/rt_linux.c',
                     'os_header': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/include/os/rt_linux.h',
@@ -146,6 +146,15 @@ CASES = (('token:current:token-cb-oom', {'component': 'token', 'variant': 'curre
  ('ser:current:ser-reopen-reset', {'component': 'ser', 'variant': 'current', 'selector': 'ser-reopen-reset'}),
  ('ser:current:stop-during-recovery',
   {'component': 'ser', 'variant': 'current', 'selector': 'stop-during-recovery'}),
+ ('ser:current:ser-stop-failure', {'component': 'ser', 'variant': 'current', 'selector': 'ser-stop-failure'}),
+ ('ser:current:ser-stop-failure-repeat',
+  {'component': 'ser', 'variant': 'current', 'selector': 'ser-stop-failure-repeat'}),
+ ('ser:current:ser-idle-failure', {'component': 'ser', 'variant': 'current', 'selector': 'ser-idle-failure'}),
+ ('ser:current:ser-arm-failure', {'component': 'ser', 'variant': 'current', 'selector': 'ser-arm-failure'}),
+ ('ser:current:ser-arm-failure-repeat',
+  {'component': 'ser', 'variant': 'current', 'selector': 'ser-arm-failure-repeat'}),
+ ('ser:current:ser-qm-failure', {'component': 'ser', 'variant': 'current', 'selector': 'ser-qm-failure'}),
+ ('ser:current:ser-tm-failure', {'component': 'ser', 'variant': 'current', 'selector': 'ser-tm-failure'}),
  ('task:current:create-failure', {'component': 'task', 'variant': 'current', 'selector': 'create-failure'}),
  ('task:current:create-order', {'component': 'task', 'variant': 'current', 'selector': 'create-order'}),
  ('task:current:natural-early-exit',
@@ -188,6 +197,13 @@ EXPECTED = {'token:current:token-cb-oom': [0, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0
  'ser:current:stop-before-owner-release': [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0],
  'ser:current:ser-reopen-reset': [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0],
  'ser:current:stop-during-recovery': [0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0],
+ 'ser:current:ser-stop-failure': [1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0],
+ 'ser:current:ser-stop-failure-repeat': [1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0],
+ 'ser:current:ser-idle-failure': [1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0],
+ 'ser:current:ser-arm-failure': [1, 2, 2, 1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0],
+ 'ser:current:ser-arm-failure-repeat': [1, 2, 2, 1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0],
+ 'ser:current:ser-qm-failure': [1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0],
+ 'ser:current:ser-tm-failure': [1, 1, 2, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0],
  'task:current:create-failure': [1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1],
  'task:current:create-order': [0, 1, 1, 1, 1, 1, 1, 2, 0, 1, 1, 0, 6, 1, 2, 3, 4, 5, 6],
  'task:current:natural-early-exit': [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 7, 1, 2, 3, 7, 4, 5, 6],
@@ -254,7 +270,7 @@ FORBIDDEN_OBJECT_FLAGS = ('-DWHNAT_SUPPORT',
 SOURCE_ABI = {'enabled_config': ('CONFIG_RALINK_MT7621=y', 'CONFIG_CHIP_MT7615E=y', 'CONFIG_MT7615_AP=m'),
  'disabled_config': ('# CONFIG_WHNAT_SUPPORT is not set',)}
 
-ROLE = 'Complete current token18, SER15 and task-owner7 inert static MIPS adapters'
+ROLE = 'Complete current token18, SER22 and task-owner7 inert static MIPS adapters'
 
 LIMITS = ('One serialized lifecycle teardown owner may race SER and its event producer; multiple concurrent teardown '
  'owners are not covered.',
@@ -263,8 +279,8 @@ LIMITS = ('One serialized lifecycle teardown owner may race SER and its event pr
  'The task model uses a uniform ULONG callback ABI; target kernel callback ABI is not executed.',
  'Only current KTHREAD/non-OS_ABL/tasklet profile is covered; other QM algorithms and non-KTHREAD are not '
  'covered.',
- 'DMA stop-before-free, first-arm/idle failure propagation, hardware hot reset, full-system memory pressure '
- 'and efd2 first-hop safety remain unproved.',
+ 'This gate stubs checked DMA/queue APIs; separate init/DMA probes bind those implementations. '
+ 'Permanent-busy ordinary close/remove quarantine, hardware reset/drain, whole-system memory and efd2 remain unproved.',
  'Actual source/object/module/parent evidence is bound without independent compiler or relocation replay.',
  'No module, device, network, MTD, flash, reset or historical unsafe source is executed.')
 
@@ -459,10 +475,10 @@ def function(source, name):
 
 
 def validate_contract():
-    require(set(COMPONENTS) == {'token', 'ser', 'task'} and len(CASES) == 40 and len(COMPILED_OBJECTS) == 8,
-            'Fixed token18/SER15/task7 object contract required')
-    require(len({name for name, _ in CASES}) == 40 and set(EXPECTED) == {name for name, _ in CASES},
-            'Fixed40 case names differ')
+    require(set(COMPONENTS) == {'token', 'ser', 'task'} and len(CASES) == 47 and len(COMPILED_OBJECTS) == 8,
+            'Fixed token18/SER22/task7 object contract required')
+    require(len({name for name, _ in CASES}) == 47 and set(EXPECTED) == {name for name, _ in CASES},
+            'Fixed47 case names differ')
     counts = {key: 0 for key in COMPONENTS}
     for name, options in CASES:
         require(type(options) is dict and set(options) == {'component', 'variant', 'selector'} and
@@ -470,7 +486,7 @@ def validate_contract():
                 type(options['selector']) is str and re.fullmatch('[a-z0-9-]{1,100}', options['selector']) and
                 name == options['component']+':current:'+options['selector'], 'Fixed token typed selector differs')
         counts[options['component']] += 1
-    require(counts == {'token': 18, 'ser': 15, 'task': 7}, 'Fixed component counts differ')
+    require(counts == {'token': 18, 'ser': 22, 'task': 7}, 'Fixed component counts differ')
     for spec in COMPONENTS.values():
         require(spec['variants'] == ('current',) and
                 all(SOURCE_PATHS[spec['source_keys'][k]] == v for k, v in spec['paths'].items()) and
@@ -478,7 +494,7 @@ def validate_contract():
 
 
 def validate_records(rows):
-    require(type(rows) is list and len(rows) == len(CASES), 'Exactly40 token lifecycle observations required')
+    require(type(rows) is list and len(rows) == len(CASES), 'Exactly47 token lifecycle observations required')
     for row, (name, options) in zip(rows, CASES):
         exact(row, {'case': name, 'inputs': options, 'observed': EXPECTED[name]},
               'Token complete typed/order observation differs: '+name)

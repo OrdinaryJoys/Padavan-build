@@ -83,7 +83,7 @@ class TokenLifecycleGateTests(unittest.TestCase):
 
     def test_fixed_forty_cases_three_components_and_eight_objects(self):
         g.validate_contract();g.validate_records(self.rows())
-        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.COMPILED_OBJECTS)),(40,24,8))
+        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.COMPILED_OBJECTS)),(47,24,8))
         self.assertEqual({k:len(v['functions'])for k,v in g.COMPONENTS.items()},{'token':6,'ser':7,'task':3})
         self.assertNotIn('-DCONFIG_PROPRIETARY_DRIVER',g.REQUIRED_OBJECT_FLAGS)
 
@@ -193,14 +193,14 @@ class TokenLifecycleGateTests(unittest.TestCase):
             with patch.dict(g.COMPONENTS,specs),patch.object(g.shutil,'which',return_value='/inert/qemu'),patch.object(g.subprocess,'run',side_effect=run),contextlib.redirect_stdout(io.StringIO()):
                 # Snapshot before patch.dict restores the shared contract map.
                 report=json.loads(json.dumps(g.check(trunk,Path('/inert/compiler'),output,not final,parent_path if final else None)))
-            self.assertEqual(len(commands),43);self.assertEqual(sum(c[0]=='/inert/compiler'for c in commands),3)
-            self.assertEqual(len(report['checks']),40);g.validate_records(report['checks'])
+            self.assertEqual(len(commands),50);self.assertEqual(sum(c[0]=='/inert/compiler'for c in commands),3)
+            self.assertEqual(len(report['checks']),47);g.validate_records(report['checks'])
             self.assertEqual(set(report['probes']),{'token','ser','task'})
             self.assertEqual(report['phase'],'final-module-reference-bound'if final else'early-source-only')
             self.assertEqual(json.loads(output.read_text()),report)
             for comp,probe in report['probes'].items():
                 item=probe['current'];self.assertEqual(g.sha((output.parent/item['source_file']).read_bytes()),item['source_sha256'])
-                stdout=json.loads((output.parent/item['stdout_file']).read_text());self.assertEqual(len(stdout),{'token':18,'ser':15,'task':7}[comp])
+                stdout=json.loads((output.parent/item['stdout_file']).read_text());self.assertEqual(len(stdout),{'token':18,'ser':22,'task':7}[comp])
             if final:
                 self.assertEqual(set(report['compiled_binding']['compiled_exports_sha256']),g.compiled_export_names())
                 self.assertTrue(all((output.parent/name).is_file()for name in g.compiled_export_names()))
