@@ -56,7 +56,7 @@ COMPONENTS = {'token': {'paths': {'token': 'trunk/linux-4.4.x/drivers/net/wirele
                          'WfHifSysInit': 'hif',
                          'WfHifInit': 'hardware'},
            'harness_key': 'token_harness',
-           'model_data_sha256': '52e6a603c471a58810eb71f5a2cce4304fc0a68527890bef89457f15d213e852',
+           'model_data_sha256': '0534395867ebdd22df8da5ef3a24cf1cc294aef0509657c92c5aca34462079bf',
            'variants': ('current',)},
  'ser': {'paths': {'basic': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/hw_ctrl/hw_ctrl_basic.c',
                    'recovery': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/hw_ctrl/hw_ctrl.c',
@@ -79,6 +79,7 @@ COMPONENTS = {'token': {'paths': {'token': 'trunk/linux-4.4.x/drivers/net/wirele
                          'flag_header': 'ser_flag_header',
                          'os_header': 'token_os_header'},
          'functions': {'__RtmpOSTaskKill': 'os',
+                       'HwRecoveryFromErrorOwned': 'recovery',
                        'HwRecoveryFromError': 'recovery',
                        'ser_ctrl_task': 'basic',
                        'ser_init': 'basic',
@@ -86,7 +87,7 @@ COMPONENTS = {'token': {'paths': {'token': 'trunk/linux-4.4.x/drivers/net/wirele
                        'ser_exit': 'basic',
                        'RTMP_MAC_RECOVERY': 'command'},
          'harness_key': 'ser_harness',
-         'model_data_sha256': '4be11e4b9a9c95041f6db418a37d97f82bcc14b0b814b3aa156b768a1d93f38c',
+         'model_data_sha256': '93e02e20f176ec51464a8d504d8928f26060af3bfb578b077366043a150ce355',
          'variants': ('current',)},
  'task': {'paths': {'os': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/os/linux/rt_linux.c',
                     'os_header': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/include/os/rt_linux.h',
@@ -155,6 +156,12 @@ CASES = (('token:current:token-cb-oom', {'component': 'token', 'variant': 'curre
   {'component': 'ser', 'variant': 'current', 'selector': 'ser-arm-failure-repeat'}),
  ('ser:current:ser-qm-failure', {'component': 'ser', 'variant': 'current', 'selector': 'ser-qm-failure'}),
  ('ser:current:ser-tm-failure', {'component': 'ser', 'variant': 'current', 'selector': 'ser-tm-failure'}),
+ ('ser:current:recovery-owner-busy',
+  {'component': 'ser', 'variant': 'current', 'selector': 'recovery-owner-busy'}),
+ ('ser:current:recovery-stopping',
+  {'component': 'ser', 'variant': 'current', 'selector': 'recovery-stopping'}),
+ ('ser:current:recovery-unpinned',
+  {'component': 'ser', 'variant': 'current', 'selector': 'recovery-unpinned'}),
  ('task:current:create-failure', {'component': 'task', 'variant': 'current', 'selector': 'create-failure'}),
  ('task:current:create-order', {'component': 'task', 'variant': 'current', 'selector': 'create-order'}),
  ('task:current:natural-early-exit',
@@ -204,6 +211,9 @@ EXPECTED = {'token:current:token-cb-oom': [0, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0
  'ser:current:ser-arm-failure-repeat': [1, 2, 2, 1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0],
  'ser:current:ser-qm-failure': [1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0],
  'ser:current:ser-tm-failure': [1, 1, 2, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0],
+ 'ser:current:recovery-owner-busy': [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0],
+ 'ser:current:recovery-stopping': [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0],
+ 'ser:current:recovery-unpinned': [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0],
  'task:current:create-failure': [1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1],
  'task:current:create-order': [0, 1, 1, 1, 1, 1, 1, 2, 0, 1, 1, 0, 6, 1, 2, 3, 4, 5, 6],
  'task:current:natural-early-exit': [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 7, 1, 2, 3, 7, 4, 5, 6],
@@ -252,7 +262,8 @@ FLAGS = ('-std=gnu99',
  '-Wno-unused-variable',
  '-Wno-unused-but-set-variable')
 
-REQUIRED_OBJECT_FLAGS = ('-DMT7615',
+REQUIRED_OBJECT_FLAGS = ('-DLINUX',
+ '-DMT7615',
  '-DRTMP_MAC_PCI',
  '-DRTMP_PCI_SUPPORT',
  '-DCUT_THROUGH',
@@ -270,7 +281,7 @@ FORBIDDEN_OBJECT_FLAGS = ('-DWHNAT_SUPPORT',
 SOURCE_ABI = {'enabled_config': ('CONFIG_RALINK_MT7621=y', 'CONFIG_CHIP_MT7615E=y', 'CONFIG_MT7615_AP=m'),
  'disabled_config': ('# CONFIG_WHNAT_SUPPORT is not set',)}
 
-ROLE = 'Complete current token18, SER22 and task-owner7 inert static MIPS adapters'
+ROLE = 'Complete current token18, SER25 and task-owner7 inert static MIPS adapters'
 
 LIMITS = ('One serialized lifecycle teardown owner may race SER and its event producer; multiple concurrent teardown '
  'owners are not covered.',
@@ -475,10 +486,10 @@ def function(source, name):
 
 
 def validate_contract():
-    require(set(COMPONENTS) == {'token', 'ser', 'task'} and len(CASES) == 47 and len(COMPILED_OBJECTS) == 8,
-            'Fixed token18/SER22/task7 object contract required')
-    require(len({name for name, _ in CASES}) == 47 and set(EXPECTED) == {name for name, _ in CASES},
-            'Fixed47 case names differ')
+    require(set(COMPONENTS) == {'token', 'ser', 'task'} and len(CASES) == 50 and len(COMPILED_OBJECTS) == 8,
+            'Fixed token18/SER25/task7 object contract required')
+    require(len({name for name, _ in CASES}) == 50 and set(EXPECTED) == {name for name, _ in CASES},
+            'Fixed50 case names differ')
     counts = {key: 0 for key in COMPONENTS}
     for name, options in CASES:
         require(type(options) is dict and set(options) == {'component', 'variant', 'selector'} and
@@ -486,7 +497,7 @@ def validate_contract():
                 type(options['selector']) is str and re.fullmatch('[a-z0-9-]{1,100}', options['selector']) and
                 name == options['component']+':current:'+options['selector'], 'Fixed token typed selector differs')
         counts[options['component']] += 1
-    require(counts == {'token': 18, 'ser': 22, 'task': 7}, 'Fixed component counts differ')
+    require(counts == {'token': 18, 'ser': 25, 'task': 7}, 'Fixed component counts differ')
     for spec in COMPONENTS.values():
         require(spec['variants'] == ('current',) and
                 all(SOURCE_PATHS[spec['source_keys'][k]] == v for k, v in spec['paths'].items()) and
@@ -494,7 +505,7 @@ def validate_contract():
 
 
 def validate_records(rows):
-    require(type(rows) is list and len(rows) == len(CASES), 'Exactly47 token lifecycle observations required')
+    require(type(rows) is list and len(rows) == len(CASES), 'Exactly50 token lifecycle observations required')
     for row, (name, options) in zip(rows, CASES):
         exact(row, {'case': name, 'inputs': options, 'observed': EXPECTED[name]},
               'Token complete typed/order observation differs: '+name)

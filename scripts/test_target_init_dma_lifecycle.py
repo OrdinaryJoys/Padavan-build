@@ -5,13 +5,100 @@ import io
 import json
 import os
 from pathlib import Path
+import struct
 import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import check_target_init_dma_lifecycle as g
-from test_target_wifi_factory import module_elf
 from test_target_resident_upgrade import elf as static_elf
+
+
+def module_elf(names):
+    """Data-only ET_REL with disjoint dynamic sections and complete name offsets."""
+    names=tuple(names)
+    labels=b'\0.text\0.shstrtab\0.strtab\0.symtab\0'
+    strings=b'\0';offsets={}
+    for name in names:
+        offsets[name]=len(strings);strings+=name.encode()+b'\0'
+    text=b''.join(struct.pack('<I',0x24020000|i)for i in range(len(names)))
+    symbols=bytes(16)+b''.join(struct.pack('<IIIBBH',offsets[name],i*4,4,0x12,0,1)
+                              for i,name in enumerate(names))
+    raw=bytearray(0x100);parts=[]
+    for payload in(text,labels,strings,symbols):
+        raw.extend(bytes((-len(raw))%16));parts.append((len(raw),len(payload)));raw.extend(payload)
+    raw.extend(bytes((-len(raw))%16));shoff=len(raw)
+    rows=[(0,0,0,0,0,0,0,0,0,0),
+          (labels.index(b'.text'),1,6,0,*parts[0],0,0,4,0),
+          (labels.index(b'.shstrtab'),3,0,0,*parts[1],0,0,1,0),
+          (labels.index(b'.strtab'),3,0,0,*parts[2],0,0,1,0),
+          (labels.index(b'.symtab'),2,0,0,*parts[3],3,1,4,16)]
+    for row in rows:raw.extend(struct.pack('<10I',*row))
+    raw[:16]=b'\x7fELF\x01\x01\x01'+bytes(9)
+    struct.pack_into('<HHIIIIIHHHHHH',raw,16,1,8,1,0,0,shoff,0x50001001,52,0,0,40,len(rows),2)
+    return bytes(raw)
+
+
+KERNEL_REFERENCE_BODIES = {'try_module_get': 'bool try_module_get(struct module *module)\n'
+                   '{\n'
+                   '\tbool ret = true;\n'
+                   '\n'
+                   '\tif (module) {\n'
+                   '\t\tpreempt_disable();\n'
+                   '\t\t/* Note: here, we can fail to get a reference */\n'
+                   '\t\tif (likely(module_is_live(module) &&\n'
+                   '\t\t\t   atomic_inc_not_zero(&module->refcnt) != 0))\n'
+                   '\t\t\ttrace_module_get(module, _RET_IP_);\n'
+                   '\t\telse\n'
+                   '\t\t\tret = false;\n'
+                   '\n'
+                   '\t\tpreempt_enable();\n'
+                   '\t}\n'
+                   '\treturn ret;\n'
+                   '}',
+ 'module_put': 'void module_put(struct module *module)\n'
+               '{\n'
+               '\tint ret;\n'
+               '\n'
+               '\tif (module) {\n'
+               '\t\tpreempt_disable();\n'
+               '\t\tret = atomic_dec_if_positive(&module->refcnt);\n'
+               '\t\tWARN_ON(ret < 0);\t/* Failed to put refcount */\n'
+               '\t\ttrace_module_put(module, _RET_IP_);\n'
+               '\t\tpreempt_enable();\n'
+               '\t}\n'
+               '}',
+ 'try_release_module_ref': 'static int try_release_module_ref(struct module *mod)\n'
+                           '{\n'
+                           '\tint ret;\n'
+                           '\n'
+                           '\t/* Try to decrement refcnt which we set at loading */\n'
+                           '\tret = atomic_sub_return(MODULE_REF_BASE, &mod->refcnt);\n'
+                           '\tBUG_ON(ret < 0);\n'
+                           '\tif (ret)\n'
+                           '\t\t/* Someone can put this right now, recover with checking */\n'
+                           '\t\tret = atomic_add_unless(&mod->refcnt, MODULE_REF_BASE, 0);\n'
+                           '\n'
+                           '\treturn ret;\n'
+                           '}',
+ 'try_stop_module': 'static int try_stop_module(struct module *mod, int flags, int *forced)\n'
+                    '{\n'
+                    "\t/* If it's not unused, quit unless we're forcing. */\n"
+                    '\tif (try_release_module_ref(mod) != 0) {\n'
+                    '\t\t*forced = try_force_unload(flags);\n'
+                    '\t\tif (!(*forced))\n'
+                    '\t\t\treturn -EWOULDBLOCK;\n'
+                    '\t}\n'
+                    '\n'
+                    '\t/* Mark it as dying. */\n'
+                    '\tmod->state = MODULE_STATE_GOING;\n'
+                    '\n'
+                    '\treturn 0;\n'
+                    '}',
+ 'module_is_live': 'static inline int module_is_live(struct module *mod)\n'
+                   '{\n'
+                   '\treturn mod->state != MODULE_STATE_GOING;\n'
+                   '}'}
 
 
 def fixture():
@@ -29,18 +116,23 @@ def fixture():
             key=s['source_keys'][local]
             if inputs[key].startswith('inert '):inputs[key]=''
             body='NDIS_STATUS '+name+'(void) { return 0; }\n'
+            if name=='rt_pci_probe':body='static int DEVINIT rt_pci_probe(struct pci_dev *pdev) {\n'+g.SOURCE_ABI['probe_rejection_fragment']+'\nreturn pci_enable_device(pdev);\n}\n'
             if body not in inputs[key]:inputs[key]+=body
     inputs['os_header']='#define NDIS_STATUS_SUCCESS 0x00\n#define NDIS_STATUS_FAILURE 0x01\n#define NDIS_STATUS_INVALID_DATA 0x02\n#define NDIS_STATUS_RESOURCES 0x03\n#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 29)\n#define KTHREAD_SUPPORT 1\n#endif\n'
     inputs['wifi_config']='\n'.join(g.SOURCE_ABI['enabled_config']+g.SOURCE_ABI['disabled_config'])+'\n'
-    make='DRV_NAME = mt_7615e\nifeq ($(CONFIG_CHIP_MT7615E),y)\nEXTRA_CFLAGS += -DMT7615 -DRTMP_MAC_PCI -DRTMP_PCI_SUPPORT\nendif\n'
+    make='DRV_NAME = mt_7615e\nifeq ($(CONFIG_CHIP_MT7615E),y)\nEXTRA_CFLAGS += -DMT7615 -DRTMP_MAC_PCI -DRTMP_PCI_SUPPORT -DLINUX\nendif\n'
     inputs['flags']=inputs['wifi_makefile']=make
     inputs['kernel_makefile']='VERSION = 4\nPATCHLEVEL = 4\nKBUILD_CFLAGS += -fno-strict-aliasing\n'
-    inputs['driver_config']='HAS_RESOURCE_PRE_ALLOC=y\nHAS_RX_CUT_THROUGH=n\nHAS_CUT_THROUGH_DBG=n\nWFLAGS += -DERR_RECOVERY\n'
+    inputs['driver_config']='HAS_RESOURCE_PRE_ALLOC=y\nHAS_RX_CUT_THROUGH=n\nHAS_CUT_THROUGH_DBG=n\nWFLAGS += -DERR_RECOVERY -DLINUX\n'
     inputs['chip']='MT7615_ChipCap.qm = FAST_PATH_QM;\nMT7615_ChipCap.qm_tm = TASKLET_METHOD;\nMT7615_ChipCap.hif_tm = TASKLET_METHOD;\n'
+    inputs['irq_shim']=g.SOURCE_ABI['irq_quarantine_fragment']+'\n'
+    inputs['module_core']='#define MODULE_REF_BASE\t1\n'+'\n'.join(v for n,v in KERNEL_REFERENCE_BODIES.items()if n!='module_is_live')+'\n'+g.SOURCE_ABI['no_force_unload_fragment']+'\n'
+    inputs['module_header']=KERNEL_REFERENCE_BODIES['module_is_live']+'\n'+'\n'.join(g.SOURCE_ABI['module_reference_declarations'])+'\n'
     inputs[specs['dma']['source_keys']['chip_header']]='NDIS_STATUS (*FwInit)(struct _RTMP_ADAPTER *pAd);\nBOOLEAN (*hif_wait_dma_idle)(struct _RTMP_ADAPTER *pAd, INT round, INT wait_us);\n'
     by_path={}
     for key,path in g.SOURCE_PATHS.items():by_path.setdefault(path,[]).append(key)
     for keys in by_path.values():
+        if len(keys)==1:continue
         text='\n'.join(dict.fromkeys(line for key in keys for line in inputs[key].splitlines()))+'\n'
         for key in keys:inputs[key]=text
     return inputs,specs,models
@@ -67,10 +159,17 @@ def compiled_fixture():
 class InitDmaGateTests(unittest.TestCase):
     def rows(self):return [{'case':n,'inputs':copy.deepcopy(o),'observed':copy.deepcopy(g.EXPECTED[n])}for n,o in g.CASES]
 
+    def test_complete_pci_callback_qualifiers_and_braces_in_literals(self):
+        for qualifier in ('DEVINIT','DEVEXIT'):
+            body='static int '+qualifier+' lifecycle(void) { char close=\'}\'; const char *s="{"; /* } */ return close+s[0]; }'
+            text='/* lifecycle() { } */\n'+body+'\nint unrelated(void) { return 0; }\n'
+            self.assertEqual(g.function(text,'lifecycle'),body)
+            with self.assertRaises(ValueError):g.function(text+'\n'+body,'lifecycle')
+
     def test_fixed_forty_cases_three_components_and_eight_objects(self):
         g.validate_contract();g.validate_records(self.rows())
-        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.COMPILED_OBJECTS)),(106,51,22))
-        self.assertEqual(set(g.COMPONENTS),{'init','dma','unwind'})
+        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.COMPILED_OBJECTS)),(210,92,28))
+        self.assertEqual(set(g.COMPONENTS),{'init','dma','unwind','quarantine','command','vif'})
         self.assertNotIn('-DCONFIG_PROPRIETARY_DRIVER',g.REQUIRED_OBJECT_FLAGS)
 
     def test_every_typed_cell_schema_order_and_inventory_is_required(self):
@@ -100,6 +199,22 @@ class InitDmaGateTests(unittest.TestCase):
                     self.assertEqual(manifest[n]['full_body_sha256'],g.sha(body.encode()));self.assertEqual(manifest[n]['execution'],'whole-function')
                 self.assertNotIn('CASE_ADMISSION',code)
 
+    def test_reviewed_actual_prototype_marker_is_replaced_once_and_still_pinned(self):
+        inputs,specs,models=fixture()
+        component='init';spec=specs[component];data=copy.deepcopy(models[component])
+        data['PREFIX']+='FUNCTION_DECLARATIONS\n'
+        inputs[spec['harness_key']]='\n'.join(k+'='+repr(v)for k,v in data.items())
+        spec['model_data_sha256']=g.model_data_hash(data)
+        with patch.dict(g.COMPONENTS,specs):code,_=g.generate_component(inputs,component)
+        self.assertNotIn('FUNCTION_DECLARATIONS',code)
+        for name,key in spec['functions'].items():
+            signature=g.function(inputs[spec['source_keys'][key]],name).split('{',1)[0].rstrip()+';'
+            self.assertEqual(code.count(signature),1)
+        data['PREFIX']+='FUNCTION_DECLARATIONS'
+        inputs[spec['harness_key']]='\n'.join(k+'='+repr(v)for k,v in data.items())
+        spec['model_data_sha256']=g.model_data_hash(data)
+        with patch.dict(g.COMPONENTS,specs),self.assertRaises(ValueError):g.generate_component(inputs,component)
+
     def test_resealed_wrong_path_rows_admission_and_model_pin_fail(self):
         inputs,specs,models=fixture()
         for fault in ('path','rows','admission','model'):
@@ -115,8 +230,29 @@ class InitDmaGateTests(unittest.TestCase):
     def test_source_profile_close_reopen_and_kernel_stop_order(self):
         inputs,specs,_=fixture()
         with patch.dict(g.COMPONENTS,specs):self.assertTrue(g.source_selection(inputs)['current_K2P_profile'])
-        for key,old,new in [('chip','TASKLET_METHOD','CMWQ_METHOD'),('kernel_makefile','-fno-strict-aliasing','-fstrict-aliasing'),('driver_config','HAS_RESOURCE_PRE_ALLOC=y','HAS_RESOURCE_PRE_ALLOC=n'),('os_header','NDIS_STATUS_SUCCESS 0x00','NDIS_STATUS_SUCCESS 0x01')]:
+        for key,old,new in [('chip','TASKLET_METHOD','CMWQ_METHOD'),('kernel_makefile','-fno-strict-aliasing','-fstrict-aliasing'),('driver_config','HAS_RESOURCE_PRE_ALLOC=y','HAS_RESOURCE_PRE_ALLOC=n'),('os_header','NDIS_STATUS_SUCCESS 0x00','NDIS_STATUS_SUCCESS 0x01'),('quarantine_pci',g.SOURCE_ABI['probe_rejection_fragment'],''),('irq_shim',g.SOURCE_ABI['irq_quarantine_fragment'],'if (pAd == NULL) {')]:
             with patch.dict(g.COMPONENTS,specs),self.subTest(key=key),self.assertRaises(ValueError):g.source_selection(dict(inputs,**{key:inputs[key].replace(old,new)}))
+
+    def test_actual_kernel_module_reference_sources_and_selected_unload_branch(self):
+        inputs,specs,_=fixture()
+        with patch.dict(g.COMPONENTS,specs):proof=g.source_selection(inputs)
+        self.assertIs(proof['module_unload_configured'],True)
+        self.assertIs(proof['forced_module_unload_configured'],False)
+        self.assertIs(proof['kernel_reference_functions_executed'],False)
+        self.assertEqual(set(proof['kernel_module_reference_manifest']),set(KERNEL_REFERENCE_BODIES))
+        for row in proof['kernel_module_reference_manifest'].values():
+            self.assertEqual(row['execution'],'source-only-not-run')
+        for key,old,new in (
+            ('wifi_config','CONFIG_MODULE_UNLOAD=y','# CONFIG_MODULE_UNLOAD is not set'),
+            ('wifi_config','# CONFIG_MODULE_FORCE_UNLOAD is not set','CONFIG_MODULE_FORCE_UNLOAD=y'),
+            ('module_core','return -EWOULDBLOCK;','return 0;'),
+            ('module_core','module_is_live(module) &&','true &&'),
+            ('module_core','atomic_sub_return(MODULE_REF_BASE,','atomic_sub_return(0,'),
+            ('module_core','return 0;\n}\n#endif /* CONFIG_MODULE_FORCE_UNLOAD */','return 1;\n}\n#endif /* CONFIG_MODULE_FORCE_UNLOAD */'),
+            ('module_header','extern bool try_module_get(','extern int try_module_get(')):
+            self.assertIn(old,inputs[key])
+            with patch.dict(g.COMPONENTS,specs),self.subTest(key=key,old=old),self.assertRaises(ValueError):
+                g.source_selection(dict(inputs,**{key:inputs[key].replace(old,new)}))
 
     def test_exact_sixteen_actual_exports_and_module_parent_binding(self):
         inputs,files,parent=compiled_fixture();expected={'target-init-dma-lifecycle-'+n+e for n in g.COMPILED_OBJECTS for e in ('.o','.cmd')}
@@ -168,7 +304,7 @@ class InitDmaGateTests(unittest.TestCase):
                     obj=trunk/'linux-4.4.x'/relative;obj.parent.mkdir(parents=True,exist_ok=True)
                     stem='target-init-dma-lifecycle-'+label
                     obj.write_bytes(files[stem+'.o']);obj.with_name('.'+obj.name+'.cmd').write_bytes(files[stem+'.cmd'])
-            selectors={o['selector']:g.EXPECTED[n]for n,o in g.CASES}
+            selectors={(o['component'],o['selector']):g.EXPECTED[n]for n,o in g.CASES}
             commands=[]
             def run(argv,**kwargs):
                 commands.append(argv)
@@ -176,7 +312,7 @@ class InitDmaGateTests(unittest.TestCase):
                     Path(argv[argv.index('-o')+1]).write_bytes(bytes(static_elf()))
                     return SimpleNamespace(returncode=0,stdout='',stderr='')
                 self.assertEqual(argv[0],'/inert/qemu');self.assertEqual(len(argv),3)
-                return SimpleNamespace(returncode=0,stdout=json.dumps(selectors[argv[2]])+'\n',stderr='')
+                return SimpleNamespace(returncode=0,stdout=json.dumps(selectors[(Path(argv[1]).name.removeprefix('target-init-dma-lifecycle-').removesuffix('-current'),argv[2])])+'\n',stderr='')
             with patch.dict(g.COMPONENTS,specs),patch.object(g.shutil,'which',return_value='/inert/qemu'),patch.object(g.subprocess,'run',side_effect=run),contextlib.redirect_stdout(io.StringIO()):
                 # Snapshot before patch.dict restores the shared contract map.
                 report=json.loads(json.dumps(g.check(trunk,Path('/inert/compiler'),output,not final,parent_path if final else None)))
@@ -207,7 +343,9 @@ class InitDmaGateTests(unittest.TestCase):
     def test_source_only_outer_functions_and_known_busy_gap_are_explicit(self):
         inputs,specs,_=fixture()
         with patch.dict(g.COMPONENTS,specs):proof=g.source_selection(inputs)
-        self.assertIs(proof['known_busy_teardown_release_gap'],True)
+        self.assertIs(proof['known_busy_teardown_release_gap'],False)
+        self.assertIs(proof['failed_idle_complete_owner_graph_retained_in_models'],True)
+        self.assertIs(proof['terminal_reenable_rejected_in_models'],True)
         self.assertIs(proof['hardware_DMA_or_reset_executed'],False)
         self.assertTrue(any(proof['outer_function_manifest'].values()))
         for functions in proof['outer_function_manifest'].values():

@@ -38,7 +38,7 @@ COMPONENTS = {'pci': {
     'source_keys': {'pci': 'pci', 'config': 'wifi_config', 'flags': 'flags'},
     'functions': {'rt_pci_remove': 'pci', 'rt_pci_shutdown': 'pci'},
     'harness_key': 'harness',
-    'model_data_sha256': 'cab3fb384e561ba7d597facd007f15bcf736473a95af5eda317b5ad14004895b',
+    'model_data_sha256': 'e2f668be92d4fc3c89be5bc62956f8e3149898fe7ce15e0dc22225a8593daf56',
     'variants': ('current',),
 }}
 CASES = (
@@ -86,7 +86,7 @@ LIMITS = (
     'PCI API operations, netdev/adapter frees, DMA ownership and DMA busy are inert recorders, not kernel or hardware execution.',
     'The adapter represents the actual K2P Linux4.4 non-MSI/non-PM/non-IntelP6/non-diagnostic preprocessor branch; reduced fixture structures are not the kernel ABI.',
     'Shutdown only suppresses new bus mastering and retains all modeled ownership; it does not prove in-flight DMA drained or that physical reset/boot succeeds.',
-    'The real driver close, DMA stop-before-free, first-arm error propagation and complete callback/quarantine graph remain unverified and unrepaired by this gate.',
+    'This narrow PCI adapter uses driver-close seams; the complementary init/DMA gate binds real close, first-arm and full-owner terminal containment paths. It does not prove physical DMA drain or the complete kernel callback graph.',
     'The PCI core ordinary-reboot versus kexec boundary is a fixed source-declaration proof, not execution of either kernel path.',
     'Actual object commands and function symbols are bound to the same built/shipped module and Factory49 image parent; clean locked compilation/relocation attestations are not independently replayed.',
     'No kernel module, PCI configuration, device, networking, MTD, flash, reset or historical unsafe code is executed.',

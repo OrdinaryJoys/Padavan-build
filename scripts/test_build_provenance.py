@@ -206,11 +206,11 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
         end=script.index('# Keep Linux /tmp rewriting',start);block=script[start:end]
         required=tuple(word.rstrip(';')for word in block.split()if word.startswith('test_'))
         self.assertIn('test_flash_persist',required);self.assertIn('test_mcu_precal',required)
-        self.assertTrue({'test_cmd_queue','test_rx_transport','test_rx_pool','test_rx_startup','test_mtd_preflight','test_pci_lifecycle','test_token_init','test_ser_lifecycle','test_kthread_owner','test_init_transaction','test_dma_lifecycle','test_first_arm_unwind','test_wsc_init'}<=set(required))
+        self.assertTrue({'test_cmd_queue','test_rx_transport','test_rx_pool','test_rx_startup','test_mtd_preflight','test_pci_lifecycle','test_token_init','test_ser_lifecycle','test_kthread_owner','test_init_transaction','test_dma_lifecycle','test_first_arm_unwind','test_wsc_init','test_dma_quarantine','test_dma_command_lifecycle','test_vif_lifecycle'}<=set(required))
         tests=self.root/'source/tests';tests.mkdir(parents=True,exist_ok=True)
         for name in required:(tests/(name+'.py')).touch()
         marker=self.root/'source-suite-started'
-        for missing in('', 'test_flash_persist','test_mcu_precal','test_cmd_queue','test_rx_transport','test_rx_pool','test_rx_startup','test_mtd_preflight','test_pci_lifecycle','test_token_init','test_ser_lifecycle','test_kthread_owner','test_init_transaction','test_dma_lifecycle','test_first_arm_unwind','test_wsc_init'):
+        for missing in('', 'test_flash_persist','test_mcu_precal','test_cmd_queue','test_rx_transport','test_rx_pool','test_rx_startup','test_mtd_preflight','test_pci_lifecycle','test_token_init','test_ser_lifecycle','test_kthread_owner','test_init_transaction','test_dma_lifecycle','test_first_arm_unwind','test_wsc_init','test_dma_quarantine','test_dma_command_lifecycle','test_vif_lifecycle'):
             marker.unlink(missing_ok=True)
             if missing:(tests/(missing+'.py')).unlink()
             result=subprocess.run(['bash','-c','set -euo pipefail\n'+block+'\ntouch "$SUITE_MARKER"\n'],
