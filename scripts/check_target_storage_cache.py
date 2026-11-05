@@ -371,10 +371,24 @@ def bounded_run(command,cwd,env,timeout=TIMEOUT):
         return status,bytes(streams['stdout']),bytes(streams['stderr'])
     finally:
         selector.close()
-        try:os.killpg(process.pid,signal.SIGKILL)
-        except ProcessLookupError:pass
-        process.wait(timeout=5)
-        process.stdout.close();process.stderr.close()
+        try:
+            # Once wait has reaped the child, its PID/PGID may be reused.
+            # Only an unreaped Popen child still reserves this identity.
+            if process.returncode is None:
+                try:os.killpg(process.pid,signal.SIGKILL)
+                except ProcessLookupError:pass
+                except PermissionError:
+                    # Only this exact owned child is a safe fallback.  This
+                    # does not establish retirement of every descendant.
+                    try:process.kill()
+                    except ProcessLookupError:pass
+        finally:
+            try:
+                # A refused signal never means retirement succeeded.
+                # Preserve the original validation error only after this join.
+                process.wait(timeout=5)
+            finally:
+                process.stdout.close();process.stderr.close()
 
 
 def tool_path(name):

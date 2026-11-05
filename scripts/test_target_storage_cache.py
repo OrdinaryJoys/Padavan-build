@@ -3,6 +3,7 @@ import base64
 import bz2
 import contextlib
 import copy
+import errno
 import gzip
 import io
 import json
@@ -53,6 +54,38 @@ class TargetStorageCacheTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix='k2p-cache-contract-')
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
+
+    @contextlib.contextmanager
+    def owned_processes(self, deny_owned_signal=False, reject_join=False):
+        """Track real private native children and retain exact-owned cleanup."""
+        real_popen = cache.subprocess.Popen
+        rows = []
+        with contextlib.ExitStack() as stack:
+            def start(*args, **kwargs):
+                self.assertIs(kwargs.get('start_new_session'), True)
+                child = real_popen(*args, **kwargs)
+                row = dict(child=child, real_kill=child.kill, real_wait=child.wait)
+                row['kill'] = stack.enter_context(mock.patch.object(child, 'kill', wraps=row['real_kill']))
+                row['wait'] = stack.enter_context(mock.patch.object(child, 'wait', wraps=row['real_wait']))
+                if deny_owned_signal:
+                    row['kill'].side_effect = PermissionError(errno.EPERM, 'injected owned-child signal denial')
+                if reject_join:
+                    row['wait'].side_effect = cache.subprocess.TimeoutExpired(child.args, 5)
+                rows.append(row)
+                return child
+            stack.enter_context(mock.patch.object(cache.subprocess, 'Popen', side_effect=start))
+            try:
+                yield rows
+            finally:
+                # Fault injection must not leave even this private test child.
+                for row in rows:
+                    child = row['child']
+                    try:
+                        if child.poll() is None:
+                            row['real_kill']()
+                        row['real_wait'](timeout=5)
+                    finally:
+                        child.stdout.close();child.stderr.close()
 
     @contextlib.contextmanager
     def pins(self, inputs, functions=None):
@@ -296,19 +329,90 @@ class TargetStorageCacheTests(unittest.TestCase):
     def test_bounded_native_run_preserves_complete_streams_and_nonzero_exit(self):
         for status in (0, 7):
             cmd = [sys.executable, '-c', 'import os,sys;os.write(1,b"complete stdout\\n");os.write(2,b"stderr\\n");sys.exit(%d)' % status]
-            self.assertEqual(cache.bounded_run(cmd, self.root, dict(os.environ, PATH=''), timeout=3), (status, b'complete stdout\n', b'stderr\n'))
+            with self.subTest(status=status), self.owned_processes() as rows, \
+                    mock.patch.object(cache.os, 'killpg', side_effect=AssertionError('Never signal a reaped process group')) as signal_group, \
+                    mock.patch.object(cache.os, 'kill', side_effect=AssertionError('Never signal a reaped child')) as signal_child:
+                self.assertEqual(cache.bounded_run(cmd, self.root, dict(os.environ, PATH=''), timeout=3),
+                                 (status, b'complete stdout\n', b'stderr\n'))
+                row = rows[0]; child = row['child']
+                signal_group.assert_not_called(); row['kill'].assert_not_called(); signal_child.assert_not_called()
+                self.assertEqual(row['wait'].call_args, mock.call(timeout=5))
+                self.assertEqual(child.poll(), status)
+                self.assertTrue(child.stdout.closed and child.stderr.closed)
 
     def test_bounded_native_run_rejects_both_stream_overflows(self):
         for fd, limit in ((1, cache.MAX_STDOUT), (2, cache.MAX_STDERR)):
-            cmd = [sys.executable, '-c', 'import os;os.write(%d,b"X"*%d)' % (fd, limit+1)]
-            with self.subTest(stream=fd), self.assertRaisesRegex(ValueError, 'output exceeded bound'):
-                cache.bounded_run(cmd, self.root, dict(os.environ, PATH=''), timeout=3)
+            for mode in ('normal', 'group-already-gone', 'group-denied'):
+                suffix = ';import time;time.sleep(30)' if mode == 'group-denied' else ''
+                cmd = [sys.executable, '-c', 'import os;os.write(%d,b"X"*%d)' % (fd, limit+1)+suffix]
+                effect = (ProcessLookupError() if mode == 'group-already-gone' else
+                          PermissionError(errno.EPERM, 'injected group signal denial'))
+                real_group_signal = cache.os.killpg
+                actual_denials = []
+                def real_group(pid, signum):
+                    try:
+                        return real_group_signal(pid, signum)
+                    except PermissionError:
+                        actual_denials.append(True)
+                        raise
+                group = (mock.patch.object(cache.os, 'killpg', side_effect=real_group) if mode == 'normal' else
+                         mock.patch.object(cache.os, 'killpg', side_effect=effect))
+                with self.subTest(stream=fd, mode=mode), self.owned_processes() as rows, group as signal_group, \
+                        mock.patch.object(cache.os, 'kill', wraps=cache.os.kill) as signal_child:
+                    with self.assertRaisesRegex(ValueError, 'output exceeded bound'):
+                        cache.bounded_run(cmd, self.root, dict(os.environ, PATH=''), timeout=3)
+                    row = rows[0]; child = row['child']
+                    signal_group.assert_called_once_with(child.pid, cache.signal.SIGKILL)
+                    fallback = mode == 'group-denied' or bool(actual_denials)
+                    self.assertEqual(row['kill'].call_count, int(fallback))
+                    if mode == 'group-denied':
+                        signal_child.assert_called_once_with(child.pid, cache.signal.SIGKILL)
+                    elif not fallback:
+                        signal_child.assert_not_called()
+                    # A real denied group may race a natural child exit:
+                    # Popen.kill can correctly discover it already reaped.
+                    self.assertLessEqual(signal_child.call_count, 1)
+                    for call in signal_child.call_args_list:
+                        self.assertEqual(call.args, (child.pid, cache.signal.SIGKILL))
+                    self.assertEqual(row['wait'].call_args, mock.call(timeout=5))
+                    self.assertIsNotNone(child.poll())
+                    self.assertTrue(child.stdout.closed and child.stderr.closed)
 
     def test_bounded_native_run_deadline_prevents_late_private_side_effect(self):
-        marker = self.root/'late-side-effect'
-        cmd = [sys.executable, '-c', 'import pathlib,time;time.sleep(2);pathlib.Path(%r).write_text("late")' % str(marker)]
-        with self.assertRaisesRegex(ValueError, 'deadline exceeded'): cache.bounded_run(cmd, self.root, dict(os.environ, PATH=''), timeout=0.15)
-        self.assertFalse(marker.exists())
+        for denied in (False, True):
+            marker = self.root/('late-side-effect-'+str(denied))
+            cmd = [sys.executable, '-c', 'import pathlib,time;time.sleep(2);pathlib.Path(%r).write_text("late")' % str(marker)]
+            real_group_signal = cache.os.killpg
+            actual_denials = []
+            def real_group(pid, signum):
+                try:
+                    return real_group_signal(pid, signum)
+                except PermissionError:
+                    actual_denials.append(True)
+                    raise
+            group = (mock.patch.object(cache.os, 'killpg', side_effect=PermissionError(errno.EPERM, 'injected group signal denial')) if denied else
+                     mock.patch.object(cache.os, 'killpg', side_effect=real_group))
+            with self.subTest(group_denied=denied), self.owned_processes() as rows, group:
+                with self.assertRaisesRegex(ValueError, 'deadline exceeded'):
+                    cache.bounded_run(cmd, self.root, dict(os.environ, PATH=''), timeout=0.15)
+                row = rows[0]
+                self.assertEqual(row['kill'].call_count, int(denied or bool(actual_denials)))
+                self.assertEqual(row['wait'].call_args, mock.call(timeout=5))
+                self.assertIsNotNone(row['child'].poll())
+                self.assertFalse(marker.exists())
+        # If both allowed signal routes fail and the bounded join cannot
+        # confirm retirement, reject explicitly rather than return success.
+        cmd = [sys.executable, '-c', 'import time;time.sleep(30)']
+        with self.owned_processes(deny_owned_signal=True, reject_join=True) as rows, \
+                mock.patch.object(cache.os, 'killpg', side_effect=PermissionError(errno.EPERM, 'injected group signal denial')):
+            with self.assertRaises(cache.subprocess.TimeoutExpired) as refused:
+                cache.bounded_run(cmd, self.root, dict(os.environ, PATH=''), timeout=0.05)
+            row = rows[0]
+            row['kill'].assert_called_once_with()
+            row['wait'].assert_called_once_with(timeout=5)
+            self.assertEqual(refused.exception.timeout, 5)
+            self.assertIsNone(row['child'].poll())
+            self.assertTrue(row['child'].stdout.closed and row['child'].stderr.closed)
 
     def test_cli_requires_six_explicit_arguments_and_rejects_preflight(self):
         names = ('trunk', 'rootfs', 'sysroot', 'image', 'boot-storage-report', 'output')
