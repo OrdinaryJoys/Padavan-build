@@ -110,6 +110,7 @@ def fixture():
            'EXPECTED_ROWS':{o['selector']:g.EXPECTED[c+':current:'+o['selector']]for o in opts},
            'PREFIX':'/* inert model */\n','SUFFIX':'\n/* CASE_ADMISSION */\n'}
         d['SOURCE_ONLY_FUNCTION_SOURCES']=s.get('source_only_functions',{})
+        if c in g.SOURCE_ABI.get('model_variants',{}):d['MODEL_VARIANT']=copy.deepcopy(g.SOURCE_ABI['model_variants'][c])
         models[c]=d;s['model_data_sha256']=g.model_data_hash(d)
         inputs[s['harness_key']]='\n'.join(k+'='+repr(v)for k,v in d.items())+'\ndef generate_source():\n raise AssertionError("Do not execute generator")\n'
         for name,local in {**s['functions'],**s.get('source_only_functions',{})}.items():
@@ -117,14 +118,19 @@ def fixture():
             if inputs[key].startswith('inert '):inputs[key]=''
             body='NDIS_STATUS '+name+'(void) { return 0; }\n'
             if name=='rt_pci_probe':body='static int DEVINIT rt_pci_probe(struct pci_dev *pdev) {\n'+g.SOURCE_ABI['probe_rejection_fragment']+'\nreturn pci_enable_device(pdev);\n}\n'
+            if name=='tm_init':body='NDIS_STATUS tm_init(void) {\n'+'\n'.join(g.SOURCE_ABI['cmwq_runtime_selector_fragments'])+'\nreturn 0;\n}\n'
+            if name in g.SOURCE_ABI['beacon_lifecycle_fragments']:
+                direct=''if name=='RTMPFreeAdapter'else'struct _PCI_HIF_T *hif = &pAd->PciHif;\n'
+                body='NDIS_STATUS '+name+'(void) {\n'+direct+'\n'.join(g.SOURCE_ABI['beacon_lifecycle_fragments'][name])+'\nreturn 0;\n}\n'
             if body not in inputs[key]:inputs[key]+=body
+    inputs[specs['probe']['source_keys']['header']]+='\nBOOLEAN BcnContentLockInitialized;\n'
     inputs['os_header']='#define NDIS_STATUS_SUCCESS 0x00\n#define NDIS_STATUS_FAILURE 0x01\n#define NDIS_STATUS_INVALID_DATA 0x02\n#define NDIS_STATUS_RESOURCES 0x03\n#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 29)\n#define KTHREAD_SUPPORT 1\n#endif\n'
     inputs['wifi_config']='\n'.join(g.SOURCE_ABI['enabled_config']+g.SOURCE_ABI['disabled_config'])+'\n'
     make='DRV_NAME = mt_7615e\nifeq ($(CONFIG_CHIP_MT7615E),y)\nEXTRA_CFLAGS += -DMT7615 -DRTMP_MAC_PCI -DRTMP_PCI_SUPPORT -DLINUX\nendif\n'
     inputs['flags']=inputs['wifi_makefile']=make
     inputs['kernel_makefile']='VERSION = 4\nPATCHLEVEL = 4\nKBUILD_CFLAGS += -fno-strict-aliasing\n'
     inputs['driver_config']='HAS_RESOURCE_PRE_ALLOC=y\nHAS_RX_CUT_THROUGH=n\nHAS_CUT_THROUGH_DBG=n\nWFLAGS += -DERR_RECOVERY -DLINUX\n'
-    inputs['chip']='MT7615_ChipCap.qm = FAST_PATH_QM;\nMT7615_ChipCap.qm_tm = TASKLET_METHOD;\nMT7615_ChipCap.hif_tm = TASKLET_METHOD;\n'
+    inputs['chip']='MT7615_ChipCap.qm = FAST_PATH_QM;\nMT7615_ChipCap.qm_tm = TASKLET_METHOD;\nMT7615_ChipCap.hif_tm = TASKLET_METHOD;\n'+g.SOURCE_ABI['chip_hif_type_fragment']+'\n'
     inputs['irq_shim']=g.SOURCE_ABI['irq_quarantine_fragment']+'\n'
     inputs['module_core']='#define MODULE_REF_BASE\t1\n'+'\n'.join(v for n,v in KERNEL_REFERENCE_BODIES.items()if n!='module_is_live')+'\n'+g.SOURCE_ABI['no_force_unload_fragment']+'\n'
     inputs['module_header']=KERNEL_REFERENCE_BODIES['module_is_live']+'\n'+'\n'.join(g.SOURCE_ABI['module_reference_declarations'])+'\n'
@@ -133,7 +139,20 @@ def fixture():
     for key,path in g.SOURCE_PATHS.items():by_path.setdefault(path,[]).append(key)
     for keys in by_path.values():
         if len(keys)==1:continue
-        text='\n'.join(dict.fromkeys(line for key in keys for line in inputs[key].splitlines()))+'\n'
+        bodies={};other=[]
+        names={name for spec in specs.values() for name in
+               (*spec['functions'],*spec.get('source_only_functions',{}))
+               if any(spec['paths'][spec.get('functions',{}).get(name,spec.get('source_only_functions',{}).get(name))]
+                      ==g.SOURCE_PATHS[key]for key in keys)}
+        for key in keys:
+            remainder=inputs[key]
+            for name in names:
+                try:body=g.function(remainder,name)
+                except ValueError:continue
+                if name in bodies:assert bodies[name]==body
+                bodies[name]=body;remainder=remainder.replace(body,'')
+            other.extend(remainder.splitlines())
+        text='\n'.join(dict.fromkeys(other))+'\n'+'\n'.join(bodies.values())+'\n'
         for key in keys:inputs[key]=text
     return inputs,specs,models
 
@@ -168,8 +187,9 @@ class InitDmaGateTests(unittest.TestCase):
 
     def test_fixed_forty_cases_three_components_and_eight_objects(self):
         g.validate_contract();g.validate_records(self.rows())
-        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.COMPILED_OBJECTS)),(210,92,28))
-        self.assertEqual(set(g.COMPONENTS),{'init','dma','unwind','quarantine','command','vif'})
+        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.COMPILED_OBJECTS)),(432,136,36))
+        self.assertEqual((len(g.compiled_export_names()),sum(len(row[2])for row in g.COMPILED_OBJECTS.values())),(72,131))
+        self.assertEqual(set(g.COMPONENTS),{'init','dma','unwind','quarantine','command','vif','probe','cmwq','resource'})
         self.assertNotIn('-DCONFIG_PROPRIETARY_DRIVER',g.REQUIRED_OBJECT_FLAGS)
 
     def test_every_typed_cell_schema_order_and_inventory_is_required(self):
@@ -232,6 +252,107 @@ class InitDmaGateTests(unittest.TestCase):
         with patch.dict(g.COMPONENTS,specs):self.assertTrue(g.source_selection(inputs)['current_K2P_profile'])
         for key,old,new in [('chip','TASKLET_METHOD','CMWQ_METHOD'),('kernel_makefile','-fno-strict-aliasing','-fstrict-aliasing'),('driver_config','HAS_RESOURCE_PRE_ALLOC=y','HAS_RESOURCE_PRE_ALLOC=n'),('os_header','NDIS_STATUS_SUCCESS 0x00','NDIS_STATUS_SUCCESS 0x01'),('quarantine_pci',g.SOURCE_ABI['probe_rejection_fragment'],''),('irq_shim',g.SOURCE_ABI['irq_quarantine_fragment'],'if (pAd == NULL) {')]:
             with patch.dict(g.COMPONENTS,specs),self.subTest(key=key),self.assertRaises(ValueError):g.source_selection(dict(inputs,**{key:inputs[key].replace(old,new)}))
+        bad=dict(inputs);bad['chip']=inputs['chip'].replace(g.SOURCE_ABI['chip_hif_type_fragment'],'')
+        with patch.dict(g.COMPONENTS,specs),self.assertRaises(ValueError):g.source_selection(bad)
+        probe=specs['probe']
+        for name,fragments in g.SOURCE_ABI['beacon_lifecycle_fragments'].items():
+            key=probe['source_keys'][probe['functions'][name]]
+            for fragment in fragments:
+                bad=dict(inputs);bad[key]=inputs[key].replace(fragment,'')
+                with patch.dict(g.COMPONENTS,specs),self.subTest(function=name,fragment=fragment),self.assertRaises(ValueError):
+                    g.source_selection(bad)
+            bad=dict(inputs);bad[key]=inputs[key].replace('&pAd->PciHif','hc_get_hif_ctrl(pAd->hdev_ctrl)')
+            with patch.dict(g.COMPONENTS,specs),self.subTest(function=name,direct_hif=False),self.assertRaises(ValueError):
+                g.source_selection(bad)
+            a,b=fragments[-2:];bad=dict(inputs)
+            bad[key]=inputs[key].replace(a,'BEACON_ORDER_MARKER').replace(b,a).replace('BEACON_ORDER_MARKER',b)
+            with patch.dict(g.COMPONENTS,specs),self.subTest(function=name,owner_order=False),self.assertRaises(ValueError):
+                g.source_selection(bad)
+        key=probe['source_keys']['header'];bad=dict(inputs)
+        bad[key]=inputs[key].replace('BOOLEAN BcnContentLockInitialized;','')
+        with patch.dict(g.COMPONENTS,specs),self.assertRaises(ValueError):g.source_selection(bad)
+        key=probe['source_keys'][probe['functions']['RTMPFreeAdapter']];bad=dict(inputs)
+        bad[key]=inputs[key].replace('hif = &pAd->PciHif;','NdisFreeSpinLock(&pAd->early_lock);\nhif = &pAd->PciHif;')
+        with patch.dict(g.COMPONENTS,specs),self.assertRaisesRegex(ValueError,'every adapter lock'):g.source_selection(bad)
+
+    def test_optional_cmwq_is_compiled_but_not_current_runtime_or_real_workqueue_execution(self):
+        inputs,specs,models=fixture()
+        with patch.dict(g.COMPONENTS,specs):proof=g.source_selection(inputs)
+        cmwq=proof['cmwq_variant_contract']
+        self.assertIs(cmwq['CMWQ_present_in_nonproprietary_compilation'],True)
+        self.assertIs(cmwq['current_K2P_runtime_selects_CMWQ'],False)
+        self.assertIs(cmwq['inert_CMWQ_model_execution_required'],True)
+        self.assertIs(cmwq['real_Linux_workqueue_execution_performed'],False)
+        self.assertIs(cmwq['FQ_SCH_SUPPORT_forbidden_in_actual_objects'],True)
+        self.assertEqual(cmwq['current_K2P_qm_method'],cmwq['current_K2P_hif_method'])
+        self.assertEqual(cmwq['current_K2P_qm_method'],'TASKLET_METHOD')
+        key=specs['init']['source_keys']['tm']
+        for fragment in g.SOURCE_ABI['cmwq_runtime_selector_fragments']:
+            bad=dict(inputs);bad[key]=inputs[key].replace(fragment,'')
+            with patch.dict(g.COMPONENTS,specs),self.subTest(fragment=fragment),self.assertRaises(ValueError):g.source_selection(bad)
+        for component in ('probe','cmwq','resource'):
+            current=copy.deepcopy(specs);bad=dict(inputs);data=copy.deepcopy(models[component])
+            data['MODEL_VARIANT'][next(iter(data['MODEL_VARIANT']))]='changed'
+            bad[current[component]['harness_key']]='\n'.join(k+'='+repr(v)for k,v in data.items())
+            current[component]['model_data_sha256']=g.model_data_hash(data)
+            with patch.dict(g.COMPONENTS,current),self.subTest(component=component),self.assertRaises(ValueError):g.source_selection(bad)
+
+    def test_probe_and_cmwq_components_keep_full_current_functions_and_source_owners(self):
+        probe=g.COMPONENTS['probe'];cmwq=g.COMPONENTS['cmwq']
+        for name,suffix in [('rt_pci_probe','os/linux/pci_main_dev.c'),('RTMPAllocAdapterBlock','embedded/common/rtmp_init.c')]:
+            self.assertIn(name,probe['functions'])
+            self.assertTrue(probe['paths'][probe['functions'][name]].endswith(suffix))
+        self.assertTrue({'tm_init','tm_exit','tm_quiesce','tm_wq_prepare','tm_wq_abort','tm_wq_publish','tm_wq_destroy'}<=set(cmwq['functions']))
+        self.assertTrue(set(g.SOURCE_ABI['cmwq_compiled_entrypoints'])<=set(g.COMPILED_OBJECTS['tm'][2]))
+        inputs,specs,_=fixture()
+        with patch.dict(g.COMPONENTS,specs):variant=g.source_selection(inputs)['probe_variant_contract']
+        self.assertIs(variant['model_uses_current_source_not_exact_current_preprocessor_profile'],True)
+        self.assertIs(variant['inert_model_forces_MULTI_INF_SUPPORT'],True)
+        self.assertIs(variant['actual_K2P_MULTI_INF_SUPPORT_enabled'],False)
+        self.assertIs(variant['default_MIPS_model_MSI_enabled'],False)
+        self.assertIs(variant['actual_K2P_kernel_MSI_enabled'],False)
+        self.assertEqual(variant['actual_K2P_hif_type'],'HIF_MT')
+        self.assertIs(variant['inert_beacon_model_HIF_MT'],True)
+        self.assertIs(variant['beacon_content_lock_has_explicit_owner_flag'],True)
+        self.assertIs(variant['beacon_destructor_precedes_all_adapter_lock_and_hdev_retirement'],True)
+        self.assertIs(variant['beacon_fixture_is_real_kernel_ABI'],False)
+        self.assertIs(variant['beacon_packet_and_lock_operations_are_inert_seams'],True)
+        self.assertEqual(tuple(g.COMPILED_OBJECTS['probe_bcn'][2]),('bcn_buf_init','bcn_buf_deinit'))
+        for name in g.COMPILED_OBJECTS['probe_bcn'][2]:
+            self.assertEqual(probe['functions'][name],'bcn')
+        for row in (
+                ('drivers/net/wireless/mediatek/mt7615/embedded/common/other.o','probe_bcn',('bcn_buf_init','bcn_buf_deinit')),
+                ('drivers/net/wireless/mediatek/mt7615/embedded/common/bcn.o','probe_free',('bcn_buf_init','bcn_buf_deinit')),
+                ('drivers/net/wireless/mediatek/mt7615/embedded/common/bcn.o','probe_bcn',('other_beacon_init','bcn_buf_deinit'))):
+            with patch.dict(g.COMPILED_OBJECTS,{'probe_bcn':row}),self.subTest(beacon_object=row),self.assertRaises(ValueError):
+                g.validate_contract()
+        self.assertNotIn('-DHIF_MT',g.REQUIRED_OBJECT_FLAGS)
+        self.assertIn('-DMULTI_INF_SUPPORT',g.FORBIDDEN_OBJECT_FLAGS)
+        self.assertEqual(len(g.COMPONENTS['resource']['functions']),17)
+        for name in ('WcInit','WcExit','HdevHwResourceInit','hdev_resource_init','alloc_chip_cap_dep_data',
+                     'alloc_chip_cap_dep_data_cmm','alloc_chip_cap_dep_data_pci','RtmpRaDevCtrlInit','RTMPInitPCIeDevice'):
+            self.assertIn(name,g.COMPONENTS['resource']['functions'])
+        with patch.dict(g.COMPONENTS,specs):resource=g.source_selection(inputs)['resource_variant_contract']
+        self.assertIs(resource['current_IP_ASSEMBLY_enabled'],True)
+        self.assertEqual(resource['inert_model_ring_counts'],[2,2])
+        self.assertEqual(resource['NDIS_success_status'],0)
+        self.assertIs(resource['real_driver_kernel_or_device_execution_performed'],False)
+
+    def test_every_compiled_optional_workqueue_callback_is_required_by_actual_object_binding(self):
+        inputs,files,parent=compiled_fixture()
+        for label,required in [('tm',g.SOURCE_ABI['cmwq_compiled_entrypoints']),('probe_bcn',('bcn_buf_init','bcn_buf_deinit'))]:
+            _,_,names=g.COMPILED_OBJECTS[label]
+            for name in required:
+                bad=dict(files);bad['target-init-dma-lifecycle-'+label+'.o']=module_elf(tuple(n for n in names if n!=name))
+                with self.subTest(callback=name,location='object'),self.assertRaisesRegex(ValueError,'symbol'):
+                    g.compiled_binding_from_bytes(inputs,json.dumps(parent).encode(),bad,g.spi.inspect_elf)
+                allnames=tuple(dict.fromkeys(n for _,_,ns in g.COMPILED_OBJECTS.values()for n in ns if n!=name))
+                bad=dict(files);p=copy.deepcopy(parent);mod=module_elf(allnames)
+                for member,field in [('target-wifi-built.ko','built_module'),('target-wifi-shipped.ko','shipped_module')]:
+                    bad[member]=mod;p['module_binding'][field]['ELF']['sha256']=g.sha(mod)
+                p['module_binding']['exports']={n:g.sha(bad[n])for n in g.PARENT_EXPORTS}
+                with self.subTest(callback=name,location='module'),self.assertRaisesRegex(ValueError,'symbol'):
+                    g.compiled_binding_from_bytes(inputs,json.dumps(p).encode(),bad,g.spi.inspect_elf)
 
     def test_actual_kernel_module_reference_sources_and_selected_unload_branch(self):
         inputs,specs,_=fixture()
@@ -365,6 +486,17 @@ class InitDmaGateTests(unittest.TestCase):
                 ('#define VALUE 7\n',{'SOURCE_DECLARATIONS':{r'(#define) (VALUE)':'header'}},prefix),
                 ('#define VALUE 7\n',{'SOURCE_DECLARATIONS':{r'#define VALUE 7':'other'}},prefix)):
             with self.assertRaises(ValueError):g.source_definitions({'source':source},spec,contract,template)
+        field={'SOURCE_FIELD_CONSTRAINTS':{r'UINT8 state;':'header'}}
+        template='struct model { STATE_FIELDS };'
+        self.assertEqual(g.source_definitions({'source':'UINT8 state;'},spec,field,template),
+                         'struct model { UINT8 state; };')
+        for source,contract,target in (
+                ('UINT8 state; UINT8 state;',field,template),
+                ('UINT16 state;',field,template),
+                ('UINT8 state;',field,template+' STATE_FIELDS'),
+                ('UINT8 state;',{},template),
+                ('UINT8 state;',{'SOURCE_FIELD_CONSTRAINTS':[]},template)):
+            with self.assertRaises(ValueError):g.source_definitions({'source':source},spec,contract,target)
 
 
 if __name__=='__main__':unittest.main()

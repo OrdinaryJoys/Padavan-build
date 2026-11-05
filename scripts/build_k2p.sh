@@ -80,7 +80,8 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_flash_persist test_mcu_precal \
                        test_cmd_queue test_rx_transport test_rx_pool test_rx_startup \
                        test_mtd_preflight test_pci_lifecycle test_token_init test_ser_lifecycle test_kthread_owner \
-                       test_init_transaction test_dma_lifecycle test_first_arm_unwind test_wsc_init test_dma_quarantine test_dma_command_lifecycle test_vif_lifecycle; do
+                       test_init_transaction test_dma_lifecycle test_first_arm_unwind test_wsc_init test_dma_quarantine test_dma_command_lifecycle test_vif_lifecycle \
+                       test_probe_oom test_cmwq_lifecycle test_hdev_resource_init; do
     test -f "$root/source/tests/$required_test.py"
   done
 fi

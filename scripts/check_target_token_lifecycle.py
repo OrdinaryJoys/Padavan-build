@@ -587,9 +587,16 @@ def source_selection(inputs):
     require('#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 29)\n#define KTHREAD_SUPPORT 1' in os_header,
             'Linux4.4 real KTHREAD selection differs')
     close = function(inputs[COMPONENTS['ser']['source_keys']['close']], 'RTMPDrvClose')
-    require(close.index('RTMP_OS_IRQ_RELEASE') < close.index('HwCtrlSerExit(pAd);') < close.index('tr_ctl_exit(pAd);') and
-            re.search(r'if \(!pAd->ErrRecoveryCtl.queues_retired\) \{[\s\S]*?tm_exit\(pAd\);[\s\S]*?qm_exit\(pAd\);[\s\S]*?queues_retired = TRUE;\s*\}', close),
+    tm_pos=close.index('tm_exit(pAd)');qm_pos=close.index('qm_exit(pAd);')
+    tr_pos=close.index('tr_ctl_exit(pAd)');hw_pos=close.index('WfSysPosExit(pAd)')
+    require(close.index('RTMP_OS_IRQ_RELEASE') < close.index('HwCtrlSerExit(pAd);') <
+            tm_pos < qm_pos < close.index('queues_retired = TRUE;') < tr_pos < hw_pos and
+            re.search(r'if \(!pAd->ErrRecoveryCtl.queues_retired\) \{[\s\S]*?tm_exit\(pAd\)[\s\S]*?qm_exit\(pAd\);[\s\S]*?queues_retired = TRUE;\s*\}', close),
             'Actual serialized close retirement/owner guard differs')
+    for name,boundary in (('tm_exit',qm_pos),('tr_ctl_exit',hw_pos)):
+        failures=list(re.finditer(r'if\s*\(\s*'+name+r'\(pAd\)\s*!=\s*NDIS_STATUS_SUCCESS\s*\)\s*\{\s*RtmpDmaQuarantine\(pAd\);\s*return;\s*\}',close))
+        require(len(failures)==1 and failures[0].end()<boundary,
+                'Actual checked close cleanup failure must quarantine and return before dependent release: '+name)
     basic = inputs[COMPONENTS['ser']['source_keys']['basic']]
     hwexit = function(basic, 'HwCtrlExit')
     require(hwexit.index('HwCtrlSerExit(pAd);') < hwexit.index('HwCtrlCmdHandler(pAd);') and 'ser_exit(pAd);' in hwexit,
@@ -603,7 +610,8 @@ def source_selection(inputs):
     return {'status': 'PASS', 'KTHREAD_current_profile': True, 'single_serialized_teardown_owner_required': True,
             'RTMPDrvClose_sha256': sha(close.encode()), 'HwCtrlExit_sha256': sha(hwexit.encode()),
             'rtmp_sys_init_sha256': sha(sysinit.encode()), 'kernel_kthread_stop_sha256': sha(core.encode()),
-            'software_retirement_does_not_prove_DMA_idle': True}
+            'software_retirement_does_not_prove_DMA_idle': True,
+            'checked_TM_and_TR_failures_quarantine_before_dependent_release':True}
 
 
 def generate_component(inputs, component):

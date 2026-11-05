@@ -40,12 +40,19 @@ def fixture():
     inputs[s['close']]='''VOID RTMPDrvClose(void) {
 RTMP_OS_IRQ_RELEASE(pAd,net_dev);
 HwCtrlSerExit(pAd);
-tr_ctl_exit(pAd);
 if (!pAd->ErrRecoveryCtl.queues_retired) {
-tm_exit(pAd);
+if (tm_exit(pAd) != NDIS_STATUS_SUCCESS) {
+RtmpDmaQuarantine(pAd);
+return;
+}
 qm_exit(pAd);
 pAd->ErrRecoveryCtl.queues_retired = TRUE;
 }
+if (tr_ctl_exit(pAd) != NDIS_STATUS_SUCCESS) {
+RtmpDmaQuarantine(pAd);
+return;
+}
+WfSysPosExit(pAd);
 }
 INT rtmp_sys_init(void) { HwCtrlInit(pAd); qm_init(pAd); tm_init(pAd); return 0; }
 '''
@@ -130,6 +137,13 @@ class TokenLifecycleGateTests(unittest.TestCase):
         inputs,_,_=fixture();self.assertTrue(g.source_selection(inputs)['KTHREAD_current_profile'])
         for key,old,new in [('chip','TASKLET_METHOD','CMWQ_METHOD'),('kernel_makefile','-fno-strict-aliasing','-fstrict-aliasing'),('driver_config','HAS_RESOURCE_PRE_ALLOC=y','HAS_RESOURCE_PRE_ALLOC=n'),(g.COMPONENTS['ser']['source_keys']['close'],'HwCtrlSerExit(pAd);','late_ser(pAd);'),('kernel_kthread','ret = k->exit_code;','ret = 0;')]:
             with self.subTest(key=key),self.assertRaises(ValueError):g.source_selection(dict(inputs,**{key:inputs[key].replace(old,new)}))
+        key=g.COMPONENTS['ser']['source_keys']['close']
+        self.assertIs(g.source_selection(inputs)['checked_TM_and_TR_failures_quarantine_before_dependent_release'],True)
+        for name in ('tm_exit','tr_ctl_exit'):
+            block='if ('+name+'(pAd) != NDIS_STATUS_SUCCESS) {\nRtmpDmaQuarantine(pAd);\nreturn;\n}'
+            for bad_block in (name+'(pAd);',block.replace('return;',''),block.replace('RtmpDmaQuarantine(pAd);','')):
+                bad=dict(inputs);bad[key]=inputs[key].replace(block,bad_block)
+                with self.subTest(cleanup=name,block=bad_block),self.assertRaises(ValueError):g.source_selection(bad)
 
     def test_exact_sixteen_actual_exports_and_module_parent_binding(self):
         inputs,files,parent=compiled_fixture();expected={'target-token-lifecycle-'+n+e for n in ('token','hif','hardware','recovery','basic','command','os','close')for e in ('.o','.cmd')}
