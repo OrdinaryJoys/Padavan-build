@@ -594,7 +594,7 @@ COMPONENTS = {'init': {'paths': {'tr': 'trunk/linux-4.4.x/drivers/net/wireless/m
                         'tm_exit': 'tm'},
           'source_only_functions': {'RtmpDmaTeardownCheck': 'os'},
           'harness_key': 'cmwq_harness',
-          'model_data_sha256': '9380c0b25bef25a0d5dcc8df255c60930457dd84b85321c8274404e00a7b7d58',
+          'model_data_sha256': '70779ce190811a73385bbae451cb7f86bca37765acb60d86926f12c13e95d2d3',
           'variants': ('current',)},
  'resource': {'paths': {'wmm': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/hw_ctrl/hdev/wmm_ctrl.c',
                         'basic': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/hw_ctrl/hdev/hdev_basic.c',
