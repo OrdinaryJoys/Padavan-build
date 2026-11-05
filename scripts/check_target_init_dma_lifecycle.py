@@ -277,7 +277,7 @@ COMPONENTS = {'init': {'paths': {'tr': 'trunk/linux-4.4.x/drivers/net/wireless/m
                                    'hif_set_WPDMA': 'chip_hw',
                                    'RTMPResetTxRxRingMemory': 'dma'},
          'harness_key': 'dma_harness',
-         'model_data_sha256': '9323812eddbc1b902c9e6d213878799968f531e6f16d66e468c8b99458e91838',
+         'model_data_sha256': 'f1d3ba7192500ec6fa08e0d02a65da070e0bb0a145b824ac5ed326cb5e8e56b9',
          'variants': ('current',)},
  'unwind': {'paths': {'inf': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/common/rtmp_init_inf.c',
                       'hw': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/hw_ctrl/hw_init.c',
