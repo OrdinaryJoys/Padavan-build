@@ -692,7 +692,7 @@ COMPONENTS = {'init': {'paths': {'tr': 'trunk/linux-4.4.x/drivers/net/wireless/m
                                     'Monitor_Init': 'sniffer',
                                     'RTMPFreeAdapter': 'free'},
           'harness_key': 'wdev_harness',
-          'model_data_sha256': 'dd337c3e267ae12b2458d9c41d27fe8ee212e9dd82fa180fef3ccacc83e32038',
+          'model_data_sha256': '7bbb28cda73bd1ffcbd5d258c874f9c21f52569859ff2127752c45d6ee85a29a',
           'variants': ('current',)}}
 
 CASES = (('init:current:tr-oom1', {'component': 'init', 'variant': 'current', 'selector': 'tr-oom1'}),
