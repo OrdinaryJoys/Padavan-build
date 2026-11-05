@@ -122,6 +122,12 @@ def fixture():
             if name in g.SOURCE_ABI['beacon_lifecycle_fragments']:
                 direct=''if name=='RTMPFreeAdapter'else'struct _PCI_HIF_T *hif = &pAd->PciHif;\n'
                 body='NDIS_STATUS '+name+'(void) {\n'+direct+'\n'.join(g.SOURCE_ABI['beacon_lifecycle_fragments'][name])+'\nreturn 0;\n}\n'
+            if name in g.SOURCE_ABI.get('wdev_retirement_fragments',{}):
+                fragments='\n'.join(g.SOURCE_ABI['wdev_retirement_fragments'][name])
+                # Fragment-order fixtures are parsed, never compiled/executed.
+                # Supply any closing loop braces omitted by the selected fragments.
+                closing='}\n'*(fragments.count('{')-fragments.count('}'))
+                body='NDIS_STATUS '+name+'(void) {\n'+fragments+'\n'+closing+'return 0;\n}\n'
             if body not in inputs[key]:inputs[key]+=body
     inputs[specs['probe']['source_keys']['header']]+='\nBOOLEAN BcnContentLockInitialized;\n'
     inputs['os_header']='#define NDIS_STATUS_SUCCESS 0x00\n#define NDIS_STATUS_FAILURE 0x01\n#define NDIS_STATUS_INVALID_DATA 0x02\n#define NDIS_STATUS_RESOURCES 0x03\n#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 29)\n#define KTHREAD_SUPPORT 1\n#endif\n'
@@ -185,11 +191,11 @@ class InitDmaGateTests(unittest.TestCase):
             self.assertEqual(g.function(text,'lifecycle'),body)
             with self.assertRaises(ValueError):g.function(text+'\n'+body,'lifecycle')
 
-    def test_fixed_forty_cases_three_components_and_eight_objects(self):
+    def test_exact_current_ten_component_source_and_object_contract(self):
         g.validate_contract();g.validate_records(self.rows())
-        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.COMPILED_OBJECTS)),(432,136,36))
-        self.assertEqual((len(g.compiled_export_names()),sum(len(row[2])for row in g.COMPILED_OBJECTS.values())),(72,131))
-        self.assertEqual(set(g.COMPONENTS),{'init','dma','unwind','quarantine','command','vif','probe','cmwq','resource'})
+        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.COMPILED_OBJECTS)),(489,150,39))
+        self.assertEqual((len(g.compiled_export_names()),sum(len(row[2])for row in g.COMPILED_OBJECTS.values())),(78,143))
+        self.assertEqual(set(g.COMPONENTS),{'init','dma','unwind','quarantine','command','vif','probe','cmwq','resource','wdev'})
         self.assertNotIn('-DCONFIG_PROPRIETARY_DRIVER',g.REQUIRED_OBJECT_FLAGS)
 
     def test_every_typed_cell_schema_order_and_inventory_is_required(self):
@@ -290,7 +296,7 @@ class InitDmaGateTests(unittest.TestCase):
         for fragment in g.SOURCE_ABI['cmwq_runtime_selector_fragments']:
             bad=dict(inputs);bad[key]=inputs[key].replace(fragment,'')
             with patch.dict(g.COMPONENTS,specs),self.subTest(fragment=fragment),self.assertRaises(ValueError):g.source_selection(bad)
-        for component in ('probe','cmwq','resource'):
+        for component in ('probe','cmwq','resource','wdev'):
             current=copy.deepcopy(specs);bad=dict(inputs);data=copy.deepcopy(models[component])
             data['MODEL_VARIANT'][next(iter(data['MODEL_VARIANT']))]='changed'
             bad[current[component]['harness_key']]='\n'.join(k+'='+repr(v)for k,v in data.items())
@@ -338,9 +344,42 @@ class InitDmaGateTests(unittest.TestCase):
         self.assertEqual(resource['NDIS_success_status'],0)
         self.assertIs(resource['real_driver_kernel_or_device_execution_performed'],False)
 
+    def test_wdev_retirement_interface_order_and_actual_active_callers_are_required(self):
+        inputs,specs,_=fixture()
+        with patch.dict(g.COMPONENTS,specs):claim=g.source_selection(inputs)['wdev_variant_contract']
+        self.assertEqual(claim['complete_current_source_functions'],15)
+        self.assertEqual(claim['inert_model_MBSS_slots'],3)
+        for name in ('current_K2P_MBSS_enabled','current_K2P_APCLI_enabled',
+                     'all_interface_close_precedes_wdev_and_config_retirement',
+                     'published_main_wdev_retired_after_detach_before_config',
+                     'failed_retirement_preserves_wdev_config_and_netdev',
+                     'beacon_owners_retained_until_final_adapter_release'):
+            self.assertIs(claim[name],True)
+        for name in ('current_K2P_WDS_enabled','current_K2P_SNIFFER_enabled',
+                     'real_netdev_kernel_or_device_execution_performed',
+                     'fixture_struct_layout_is_real_kernel_ABI'):
+            self.assertIs(claim[name],False)
+        for name,fragments in g.SOURCE_ABI['wdev_retirement_fragments'].items():
+            local=specs['wdev']['functions'][name];alias=specs['wdev']['source_keys'][local]
+            for fragment in fragments:
+                bad=dict(inputs);bad[alias]=inputs[alias].replace(fragment,'')
+                with patch.dict(g.COMPONENTS,specs),self.subTest(function=name,fragment=fragment),self.assertRaises(ValueError):
+                    g.source_selection(bad)
+            a,b=fragments[-2:];bad=dict(inputs)
+            bad[alias]=inputs[alias].replace(a,'WDEV_STAGE_MARKER').replace(b,a).replace('WDEV_STAGE_MARKER',b)
+            with patch.dict(g.COMPONENTS,specs),self.subTest(function=name,order=False),self.assertRaises(ValueError):g.source_selection(bad)
+        self.assertIn('-DAPCLI_SUPPORT',g.REQUIRED_OBJECT_FLAGS)
+        self.assertIn('-DMBSS_SUPPORT',g.REQUIRED_OBJECT_FLAGS)
+        self.assertTrue({'-DWDS_SUPPORT','-DCONFIG_SNIFFER_SUPPORT','-DSNIFFER_SUPPORT'}<=set(g.FORBIDDEN_OBJECT_FLAGS))
+        for label,names in [('wdev_mbss',('MBSS_Init','MBSS_Remove')),('wdev_apcli',('APCli_Init',)),
+                            ('wdev_vendor',('init_vie_ctrl','deinit_vie_ctrl','add_vie','find_oui_oitype'))]:
+            self.assertEqual(tuple(g.COMPILED_OBJECTS[label][2]),names)
+        body='PNET_DEV RtmpPhyNetDevInit(void *pAd, void *ops) { return NULL; }'
+        self.assertEqual(g.function(body,'RtmpPhyNetDevInit'),body)
+
     def test_every_compiled_optional_workqueue_callback_is_required_by_actual_object_binding(self):
         inputs,files,parent=compiled_fixture()
-        for label,required in [('tm',g.SOURCE_ABI['cmwq_compiled_entrypoints']),('probe_bcn',('bcn_buf_init','bcn_buf_deinit'))]:
+        for label,required in [('tm',g.SOURCE_ABI['cmwq_compiled_entrypoints']),('probe_bcn',('bcn_buf_init','bcn_buf_deinit')),('wdev_mbss',('MBSS_Init','MBSS_Remove')),('wdev_apcli',('APCli_Init',)),('wdev_vendor',('init_vie_ctrl','deinit_vie_ctrl','add_vie','find_oui_oitype'))]:
             _,_,names=g.COMPILED_OBJECTS[label]
             for name in required:
                 bad=dict(files);bad['target-init-dma-lifecycle-'+label+'.o']=module_elf(tuple(n for n in names if n!=name))
@@ -452,7 +491,7 @@ class InitDmaGateTests(unittest.TestCase):
                 self.assertIsNone(report['compiled_binding']);self.assertFalse(any((output.parent/name).exists()for name in g.compiled_export_names()))
             return report
 
-    def test_preflight_emits_all_three_static_probe_sources_and_full_stdout(self):
+    def test_preflight_emits_every_static_component_source_and_full_stdout(self):
         self.check_mode(False)
         with self.assertRaises(ValueError):g.check(Path('/unused'),Path('/unused'),Path('/unused'),False,None)
 

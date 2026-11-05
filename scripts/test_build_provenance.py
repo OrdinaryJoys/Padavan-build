@@ -87,6 +87,7 @@ class ProvenanceTests(unittest.TestCase):
         self.assertIn('for regression_baseline in 3af01e18af99e4329a65636f6e854fedf94a9fc3', block)
         self.assertEqual(block.count('3a404e1675467cab79af0ffac454061c1e9150ae'), 1)
         self.assertEqual(block.count('3ba292933a5cdbcaac3d5187d2454b387fbfbcc1'), 1)
+        self.assertEqual(block.count('a23aaa4e11894cad9306bc87bbac3ed310dcf3de'), 1)
         tools = self.root / 'inert-tools'
         tools.mkdir(exist_ok=True)
         git = tools / 'git'
@@ -99,8 +100,8 @@ state=Path(os.environ['FETCH_LOG']+'.state')
 fault=os.environ['FETCH_FAULT']
 if args[2]=='fetch':
     state.write_text(args[-1])
-active=(not fault.startswith(('second-','third-')) or fault.startswith('second-') and state.read_text()=='3a404e1675467cab79af0ffac454061c1e9150ae' or fault.startswith('third-') and state.read_text()=='3ba292933a5cdbcaac3d5187d2454b387fbfbcc1')
-fault=fault.removeprefix('second-').removeprefix('third-') if active else ''
+active=(not fault.startswith(('second-','third-','fourth-')) or fault.startswith('second-') and state.read_text()=='3a404e1675467cab79af0ffac454061c1e9150ae' or fault.startswith('third-') and state.read_text()=='3ba292933a5cdbcaac3d5187d2454b387fbfbcc1' or fault.startswith('fourth-') and state.read_text()=='a23aaa4e11894cad9306bc87bbac3ed310dcf3de')
+fault=fault.removeprefix('second-').removeprefix('third-').removeprefix('fourth-') if active else ''
 if args[2]=='fetch':sys.exit(1 if fault=='fetch' else 0)
 if args[2]=='cat-file':sys.exit(1 if fault=='missing' else 0)
 if args[2]=='rev-parse':
@@ -127,7 +128,8 @@ raise SystemExit('Unexpected Git call')
         expected=[]
         for baseline in ('3af01e18af99e4329a65636f6e854fedf94a9fc3',
                          '3a404e1675467cab79af0ffac454061c1e9150ae',
-                         '3ba292933a5cdbcaac3d5187d2454b387fbfbcc1'):
+                         '3ba292933a5cdbcaac3d5187d2454b387fbfbcc1',
+                         'a23aaa4e11894cad9306bc87bbac3ed310dcf3de'):
             expected += [prefix + ['fetch', '--no-tags', '--depth=1', 'origin', baseline],
                          prefix + ['rev-parse', '--verify', 'FETCH_HEAD^{commit}'],
                          prefix + ['cat-file', '-e', baseline + '^{commit}'],
@@ -135,12 +137,12 @@ raise SystemExit('Unexpected Git call')
         self.assertEqual(calls, expected)
 
     def test_failed_or_wrong_baseline_or_changed_candidate_stops_before_suite(self):
-        for stage in ('','second-','third-'):
+        for stage in ('','second-','third-','fourth-'):
             for fault, expected_calls in (('fetch', 1), ('wrong-fetch', 2), ('missing', 3), ('changed-head', 4)):
                 with self.subTest(fault=stage+fault):
                     result, calls, suite = self.baseline_fetch(fault=stage+fault)
                     self.assertNotEqual(result.returncode, 0)
-                    self.assertEqual(len(calls), expected_calls + (8 if stage=='third-'else 4 if stage else 0))
+                    self.assertEqual(len(calls), expected_calls + (12 if stage=='fourth-'else 8 if stage=='third-'else 4 if stage else 0))
                     self.assertFalse(suite)
 
     def test_susu_does_not_fetch_the_44_regression_baseline(self):
@@ -206,11 +208,11 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
         end=script.index('# Keep Linux /tmp rewriting',start);block=script[start:end]
         required=tuple(word.rstrip(';')for word in block.split()if word.startswith('test_'))
         self.assertIn('test_flash_persist',required);self.assertIn('test_mcu_precal',required)
-        self.assertTrue({'test_cmd_queue','test_rx_transport','test_rx_pool','test_rx_startup','test_mtd_preflight','test_pci_lifecycle','test_token_init','test_ser_lifecycle','test_kthread_owner','test_init_transaction','test_dma_lifecycle','test_first_arm_unwind','test_wsc_init','test_dma_quarantine','test_dma_command_lifecycle','test_vif_lifecycle','test_probe_oom','test_cmwq_lifecycle','test_hdev_resource_init'}<=set(required))
+        self.assertTrue({'test_cmd_queue','test_rx_transport','test_rx_pool','test_rx_startup','test_mtd_preflight','test_pci_lifecycle','test_token_init','test_ser_lifecycle','test_kthread_owner','test_init_transaction','test_dma_lifecycle','test_first_arm_unwind','test_wsc_init','test_dma_quarantine','test_dma_command_lifecycle','test_vif_lifecycle','test_probe_oom','test_cmwq_lifecycle','test_hdev_resource_init','test_wdev_lifecycle'}<=set(required))
         tests=self.root/'source/tests';tests.mkdir(parents=True,exist_ok=True)
         for name in required:(tests/(name+'.py')).touch()
         marker=self.root/'source-suite-started'
-        for missing in('', 'test_flash_persist','test_mcu_precal','test_cmd_queue','test_rx_transport','test_rx_pool','test_rx_startup','test_mtd_preflight','test_pci_lifecycle','test_token_init','test_ser_lifecycle','test_kthread_owner','test_init_transaction','test_dma_lifecycle','test_first_arm_unwind','test_wsc_init','test_dma_quarantine','test_dma_command_lifecycle','test_vif_lifecycle','test_probe_oom','test_cmwq_lifecycle','test_hdev_resource_init'):
+        for missing in('', 'test_flash_persist','test_mcu_precal','test_cmd_queue','test_rx_transport','test_rx_pool','test_rx_startup','test_mtd_preflight','test_pci_lifecycle','test_token_init','test_ser_lifecycle','test_kthread_owner','test_init_transaction','test_dma_lifecycle','test_first_arm_unwind','test_wsc_init','test_dma_quarantine','test_dma_command_lifecycle','test_vif_lifecycle','test_probe_oom','test_cmwq_lifecycle','test_hdev_resource_init','test_wdev_lifecycle'):
             marker.unlink(missing_ok=True)
             if missing:(tests/(missing+'.py')).unlink()
             result=subprocess.run(['bash','-c','set -euo pipefail\n'+block+'\ntouch "$SUITE_MARKER"\n'],

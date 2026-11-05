@@ -41,11 +41,13 @@ test "$source_commit" = "$ref"
 test -z "$(git -C "$root/source" status --porcelain --untracked-files=all)"
 # The full SPI queue suite independently compares its literal negative control
 # with this public historical revision. A depth-one candidate checkout does not
-# contain that commit; fetch it without changing the locked candidate HEAD.
+# contain those commits; fetch without changing the locked candidate HEAD.
+# Wdev/VIE regression controls also pin the public a23 pre-fix revision.
 if [ "$flavor" = "k2p-4.4" ]; then
   for regression_baseline in 3af01e18af99e4329a65636f6e854fedf94a9fc3 \
                              3a404e1675467cab79af0ffac454061c1e9150ae \
-                             3ba292933a5cdbcaac3d5187d2454b387fbfbcc1; do
+                             3ba292933a5cdbcaac3d5187d2454b387fbfbcc1 \
+                             a23aaa4e11894cad9306bc87bbac3ed310dcf3de; do
     git -C "$root/source" fetch --no-tags --depth=1 origin "$regression_baseline"
     test "$(git -C "$root/source" rev-parse --verify 'FETCH_HEAD^{commit}')" = "$regression_baseline"
     git -C "$root/source" cat-file -e "$regression_baseline^{commit}"
@@ -81,7 +83,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_cmd_queue test_rx_transport test_rx_pool test_rx_startup \
                        test_mtd_preflight test_pci_lifecycle test_token_init test_ser_lifecycle test_kthread_owner \
                        test_init_transaction test_dma_lifecycle test_first_arm_unwind test_wsc_init test_dma_quarantine test_dma_command_lifecycle test_vif_lifecycle \
-                       test_probe_oom test_cmwq_lifecycle test_hdev_resource_init; do
+                       test_probe_oom test_cmwq_lifecycle test_hdev_resource_init test_wdev_lifecycle; do
     test -f "$root/source/tests/$required_test.py"
   done
 fi
