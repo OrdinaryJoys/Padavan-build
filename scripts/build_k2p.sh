@@ -42,12 +42,13 @@ test -z "$(git -C "$root/source" status --porcelain --untracked-files=all)"
 # The full SPI queue suite independently compares its literal negative control
 # with this public historical revision. A depth-one candidate checkout does not
 # contain those commits; fetch without changing the locked candidate HEAD.
-# Wdev/VIE regression controls also pin the public a23 pre-fix revision.
+# Probe stats and wdev/VIE controls also pin the public 5ce/a23 pre-fix revisions.
 if [ "$flavor" = "k2p-4.4" ]; then
   for regression_baseline in 3af01e18af99e4329a65636f6e854fedf94a9fc3 \
                              3a404e1675467cab79af0ffac454061c1e9150ae \
                              3ba292933a5cdbcaac3d5187d2454b387fbfbcc1 \
-                             a23aaa4e11894cad9306bc87bbac3ed310dcf3de; do
+                             a23aaa4e11894cad9306bc87bbac3ed310dcf3de \
+                             5ce45fccc96d085f2786b509a51abcba2a136f80; do
     git -C "$root/source" fetch --no-tags --depth=1 origin "$regression_baseline"
     test "$(git -C "$root/source" rev-parse --verify 'FETCH_HEAD^{commit}')" = "$regression_baseline"
     git -C "$root/source" cat-file -e "$regression_baseline^{commit}"

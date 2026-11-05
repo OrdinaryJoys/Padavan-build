@@ -88,6 +88,7 @@ class ProvenanceTests(unittest.TestCase):
         self.assertEqual(block.count('3a404e1675467cab79af0ffac454061c1e9150ae'), 1)
         self.assertEqual(block.count('3ba292933a5cdbcaac3d5187d2454b387fbfbcc1'), 1)
         self.assertEqual(block.count('a23aaa4e11894cad9306bc87bbac3ed310dcf3de'), 1)
+        self.assertEqual(block.count('5ce45fccc96d085f2786b509a51abcba2a136f80'), 1)
         tools = self.root / 'inert-tools'
         tools.mkdir(exist_ok=True)
         git = tools / 'git'
@@ -100,8 +101,8 @@ state=Path(os.environ['FETCH_LOG']+'.state')
 fault=os.environ['FETCH_FAULT']
 if args[2]=='fetch':
     state.write_text(args[-1])
-active=(not fault.startswith(('second-','third-','fourth-')) or fault.startswith('second-') and state.read_text()=='3a404e1675467cab79af0ffac454061c1e9150ae' or fault.startswith('third-') and state.read_text()=='3ba292933a5cdbcaac3d5187d2454b387fbfbcc1' or fault.startswith('fourth-') and state.read_text()=='a23aaa4e11894cad9306bc87bbac3ed310dcf3de')
-fault=fault.removeprefix('second-').removeprefix('third-').removeprefix('fourth-') if active else ''
+active=(not fault.startswith(('second-','third-','fourth-','fifth-')) or fault.startswith('second-') and state.read_text()=='3a404e1675467cab79af0ffac454061c1e9150ae' or fault.startswith('third-') and state.read_text()=='3ba292933a5cdbcaac3d5187d2454b387fbfbcc1' or fault.startswith('fourth-') and state.read_text()=='a23aaa4e11894cad9306bc87bbac3ed310dcf3de' or fault.startswith('fifth-') and state.read_text()=='5ce45fccc96d085f2786b509a51abcba2a136f80')
+fault=fault.removeprefix('second-').removeprefix('third-').removeprefix('fourth-').removeprefix('fifth-') if active else ''
 if args[2]=='fetch':sys.exit(1 if fault=='fetch' else 0)
 if args[2]=='cat-file':sys.exit(1 if fault=='missing' else 0)
 if args[2]=='rev-parse':
@@ -129,7 +130,8 @@ raise SystemExit('Unexpected Git call')
         for baseline in ('3af01e18af99e4329a65636f6e854fedf94a9fc3',
                          '3a404e1675467cab79af0ffac454061c1e9150ae',
                          '3ba292933a5cdbcaac3d5187d2454b387fbfbcc1',
-                         'a23aaa4e11894cad9306bc87bbac3ed310dcf3de'):
+                         'a23aaa4e11894cad9306bc87bbac3ed310dcf3de',
+                         '5ce45fccc96d085f2786b509a51abcba2a136f80'):
             expected += [prefix + ['fetch', '--no-tags', '--depth=1', 'origin', baseline],
                          prefix + ['rev-parse', '--verify', 'FETCH_HEAD^{commit}'],
                          prefix + ['cat-file', '-e', baseline + '^{commit}'],
@@ -137,12 +139,12 @@ raise SystemExit('Unexpected Git call')
         self.assertEqual(calls, expected)
 
     def test_failed_or_wrong_baseline_or_changed_candidate_stops_before_suite(self):
-        for stage in ('','second-','third-','fourth-'):
+        for stage in ('','second-','third-','fourth-','fifth-'):
             for fault, expected_calls in (('fetch', 1), ('wrong-fetch', 2), ('missing', 3), ('changed-head', 4)):
                 with self.subTest(fault=stage+fault):
                     result, calls, suite = self.baseline_fetch(fault=stage+fault)
                     self.assertNotEqual(result.returncode, 0)
-                    self.assertEqual(len(calls), expected_calls + (12 if stage=='fourth-'else 8 if stage=='third-'else 4 if stage else 0))
+                    self.assertEqual(len(calls), expected_calls + (16 if stage=='fifth-'else 12 if stage=='fourth-'else 8 if stage=='third-'else 4 if stage else 0))
                     self.assertFalse(suite)
 
     def test_susu_does_not_fetch_the_44_regression_baseline(self):
