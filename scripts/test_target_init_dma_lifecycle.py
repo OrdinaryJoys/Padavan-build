@@ -194,9 +194,14 @@ class InitDmaGateTests(unittest.TestCase):
     def test_exact_current_ten_component_source_and_object_contract(self):
         g.validate_contract();g.validate_records(self.rows())
         self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.COMPILED_OBJECTS)),(489,150,39))
-        self.assertEqual((len(g.compiled_export_names()),sum(len(row[2])for row in g.COMPILED_OBJECTS.values())),(78,143))
+        self.assertEqual((len(g.compiled_export_names()),sum(len(row[2])for row in g.COMPILED_OBJECTS.values())),(78,144))
         self.assertEqual(set(g.COMPONENTS),{'init','dma','unwind','quarantine','command','vif','probe','cmwq','resource','wdev'})
         self.assertNotIn('-DCONFIG_PROPRIETARY_DRIVER',g.REQUIRED_OBJECT_FLAGS)
+        relative,key,names=g.COMPILED_OBJECTS['probe_hdev']
+        self.assertIn('hc_get_os_cookie',names)
+        altered=tuple('other_accessor'if name=='hc_get_os_cookie'else name for name in names)
+        with patch.dict(g.COMPILED_OBJECTS,{'probe_hdev':(relative,key,altered)}),self.assertRaises(ValueError):
+            g.validate_contract()
 
     def test_every_typed_cell_schema_order_and_inventory_is_required(self):
         rows=self.rows()
@@ -343,6 +348,8 @@ class InitDmaGateTests(unittest.TestCase):
         self.assertEqual(resource['inert_model_ring_counts'],[2,2])
         self.assertEqual(resource['NDIS_success_status'],0)
         self.assertIs(resource['real_driver_kernel_or_device_execution_performed'],False)
+        self.assertIs(resource['hc_get_os_cookie_fixture_seam'],True)
+        self.assertIs(resource['opaque_consumer_public_accessor_required'],True)
 
     def test_wdev_retirement_interface_order_and_actual_active_callers_are_required(self):
         inputs,specs,_=fixture()

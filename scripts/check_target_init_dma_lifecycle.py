@@ -641,7 +641,7 @@ COMPONENTS = {'init': {'paths': {'tr': 'trunk/linux-4.4.x/drivers/net/wireless/m
                             'RTMPInitPCIeDevice': 'pcie'},
               'source_only_functions': {'RTMPFreeAdapter': 'free', 'RtmpDmaFinalReleaseCheck': 'open'},
               'harness_key': 'resource_harness',
-              'model_data_sha256': '35f463bcc5cd706aa87dfa7f9ee7470de508f522d804ec05c4edcb1edd883679',
+              'model_data_sha256': '3e8b280263554a2d467cbac5a7483371c27047b6c06fc31fe172a0e076ff17be',
               'variants': ('current',)},
  'wdev': {'paths': {'main': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/os/linux/rt_main_dev.c',
                     'os': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/os/linux/rt_linux.c',
@@ -5188,7 +5188,11 @@ COMPILED_OBJECTS = {'data': ('drivers/net/wireless/mediatek/mt7615/embedded/comm
                ('RTMPInitHifAdapterBlock', 'RTMPFreeHifAdapterBlock')),
  'probe_hdev': ('drivers/net/wireless/mediatek/mt7615/embedded/hw_ctrl/hdev_ctrl.o',
                 'probe_hdev',
-                ('hdev_ctrl_init', 'hdev_ctrl_exit', 'hdev_resource_init', 'hdev_resource_exit')),
+                ('hdev_ctrl_init',
+                 'hdev_ctrl_exit',
+                 'hc_get_os_cookie',
+                 'hdev_resource_init',
+                 'hdev_resource_exit')),
  'probe_rlm': ('drivers/net/wireless/mediatek/mt7615/phy/rlm_cal_cache.o',
                'probe_rlm',
                ('rlmCalCacheInit', 'rlmCalCacheDeinit')),
@@ -5405,7 +5409,9 @@ SOURCE_ABI = {'chip_hif_type_fragment': 'MT7615_ChipCap.hif_type = HIF_MT;',
                                  'ring_DMA_hardware_seam': True,
                                  'RtmpChipOpsHook_seam': True,
                                  'RTMPFreeAdapter_fixture_seam': True,
-                                 'RtmpDmaFinalReleaseCheck_fixture_seam': True},
+                                 'RtmpDmaFinalReleaseCheck_fixture_seam': True,
+                                 'hc_get_os_cookie_fixture_seam': True,
+                                 'opaque_consumer_public_accessor_required': True},
                     'wdev': {'role': 'private-wdev-netdev-retirement-inert-model',
                              'CONFIG_AP_SUPPORT': True,
                              'MBSS_SUPPORT': True,
@@ -5716,9 +5722,13 @@ def validate_contract():
     require(set(COMPONENTS)=={'init','dma','unwind','quarantine','command','vif','probe','cmwq','resource','wdev'} and len(CASES)==489 and len(COMPILED_OBJECTS)==39,
             'Exact current init72/DMA29/unwind22/quarantine39/command40/VIF28/probe78/CMWQ42/resource85/WDEV54 object contract required')
     require(len(SOURCE_PATHS)==150 and len({row[0]for row in COMPILED_OBJECTS.values()})==39 and
-            sum(len(row[2])for row in COMPILED_OBJECTS.values())==143 and
-            len({name for row in COMPILED_OBJECTS.values()for name in row[2]})==143,
+            sum(len(row[2])for row in COMPILED_OBJECTS.values())==144 and
+            len({name for row in COMPILED_OBJECTS.values()for name in row[2]})==144,
             'Exact unique source/object/implementation-symbol inventory required')
+    require(COMPILED_OBJECTS.get('probe_hdev')==(
+            'drivers/net/wireless/mediatek/mt7615/embedded/hw_ctrl/hdev_ctrl.o','probe_hdev',
+            ('hdev_ctrl_init','hdev_ctrl_exit','hc_get_os_cookie','hdev_resource_init','hdev_resource_exit')),
+            'Exact public HDEV accessor implementation binding required')
     require(COMPILED_OBJECTS.get('probe_bcn')==(
             'drivers/net/wireless/mediatek/mt7615/embedded/common/bcn.o','probe_bcn',
             ('bcn_buf_init','bcn_buf_deinit')),
@@ -5935,6 +5945,8 @@ def source_selection(inputs):
                 'ring_allocation_and_DMA_are_inert_seams':True,
                 'chip_hook_and_PCI_configuration_are_inert_seams':True,
                 'final_release_and_adapter_free_are_inert_seams':True,
+                'hc_get_os_cookie_fixture_seam':True,
+                'opaque_consumer_public_accessor_required':True,
                 'struct_layout_is_real_kernel_ABI':False,
                 'real_driver_kernel_or_device_execution_performed':False}}
 
