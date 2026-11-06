@@ -32,8 +32,8 @@ def mini():
 
 class BuiltinGateTests(unittest.TestCase):
     def test_fixed_disjoint_case_function_and_actual_object_scopes(self):
-        self.assertEqual({c:sum(o['component']==c for _,o in g.CASES)for c in g.COMPONENTS},{'raeth': 45, 'nor': 31, 'proc': 29, 'runtime': 49, 'qtx': 30, 'ioctl': 74})
-        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.OBJECTS)),(258, 34, 9))
+        self.assertEqual({c:sum(o['component']==c for _,o in g.CASES)for c in g.COMPONENTS},{'raeth': 45, 'nor': 31, 'proc': 29, 'runtime': 49, 'qtx': 31, 'ioctl': 74})
+        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.OBJECTS)),(259, 34, 9))
         self.assertEqual((sum(len(c['functions'])for c in g.COMPONENTS.values()),sum(len(c['source_only_functions'])for c in g.COMPONENTS.values())),(65, 9))
         self.assertIn('ei_init',g.OBJECTS['raeth_driver'][2]);self.assertIn('proc_remove',g.OBJECTS['proc_generic'][2])
 

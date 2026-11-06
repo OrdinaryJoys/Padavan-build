@@ -569,6 +569,8 @@ class RxTransportGateTests(unittest.TestCase):
             tests = root / 'source/tests'; tests.mkdir(parents=True)
             for name in required:
                 (tests / (name + '.py')).touch()
+            baseline=tests/'fixtures/wsys-terminal';baseline.mkdir(parents=True)
+            for name in ('HwCtrlWifiSysClose','HwCtrlWifiSysLinkDown','HwCtrlWifiSysPeerLinkDown'):(baseline/(name+'.c')).touch()
             for missing in ('', *new_suites):
                 marker.unlink(missing_ok=True)
                 if missing:
