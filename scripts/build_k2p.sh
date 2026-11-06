@@ -49,7 +49,9 @@ if [ "$flavor" = "k2p-4.4" ]; then
                              3ba292933a5cdbcaac3d5187d2454b387fbfbcc1 \
                              a23aaa4e11894cad9306bc87bbac3ed310dcf3de \
                              5ce45fccc96d085f2786b509a51abcba2a136f80 \
-                             c4d8e113ffba5f85eb5f37a75b3c5f23594ed193; do
+                             c4d8e113ffba5f85eb5f37a75b3c5f23594ed193 \
+                             6ae86c7a097cfcf8113a2e0d0c174216a5726806 \
+                             5f7eca673b3791bf2f3f05c00ae03abc058dcdff; do
     git -C "$root/source" fetch --no-tags --depth=1 origin "$regression_baseline"
     test "$(git -C "$root/source" rev-parse --verify 'FETCH_HEAD^{commit}')" = "$regression_baseline"
     git -C "$root/source" cat-file -e "$regression_baseline^{commit}"
@@ -86,8 +88,12 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_mtd_preflight test_pci_lifecycle test_token_init test_ser_lifecycle test_kthread_owner \
                        test_init_transaction test_dma_lifecycle test_first_arm_unwind test_wsc_init test_dma_quarantine test_dma_command_lifecycle test_vif_lifecycle \
                        test_probe_oom test_cmwq_lifecycle test_hdev_resource_init test_wdev_lifecycle \
-                       test_raeth_init test_nor_admission test_raeth_proc test_hwcmd_owner; do
+                       test_raeth_init test_nor_admission test_raeth_proc test_hwcmd_owner \
+                       test_raeth_runtime test_raeth_qtx test_raeth_ioctl test_wsys_lifecycle test_wsys_teardown; do
     test -f "$root/source/tests/$required_test.py"
+  done
+  for baseline_fixture in HwCtrlWifiSysClose HwCtrlWifiSysLinkDown HwCtrlWifiSysPeerLinkDown; do
+    test -f "$root/source/tests/fixtures/wsys-terminal/$baseline_fixture.c"
   done
 fi
 # Keep Linux /tmp rewriting exercised even if the runner sets another temp dir.
