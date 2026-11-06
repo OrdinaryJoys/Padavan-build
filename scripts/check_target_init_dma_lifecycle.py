@@ -240,7 +240,7 @@ COMPONENTS = {'init': {'paths': {'tr': 'trunk/linux-4.4.x/drivers/net/wireless/m
                                     'RtmpDmaTeardownCheck': 'lifetime',
                                     'RtmpDmaQuarantine': 'lifetime'},
           'harness_key': 'init_harness',
-          'model_data_sha256': 'df57e44bdeb5917bc7cf4beed8d402c048eae51d1176ce8e3d0527f1b4337af1',
+          'model_data_sha256': '9e846938e18eb3edfa48517d2ba5ed4cccd6c5513f1e4897ac962a1e2bd786f3',
           'variants': ('current',)},
  'dma': {'paths': {'dma': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/common/cmm_mac_pci.c',
                    'asic': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/hw_ctrl/cmm_asic.c',
