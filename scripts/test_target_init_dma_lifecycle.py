@@ -630,6 +630,17 @@ def compiled_fixture():
     return inputs,files,parent
 
 
+def integer_paths(value, path=()):
+    if type(value) is int: yield path
+    elif type(value) is list:
+        for key,item in enumerate(value): yield from integer_paths(item,path+(key,))
+    elif type(value) is dict:
+        for key,item in value.items(): yield from integer_paths(item,path+(key,))
+
+def set_path(value,path,replacement):
+    for key in path[:-1]:value=value[key]
+    value[path[-1]]=replacement
+
 class InitDmaGateTests(unittest.TestCase):
     def rows(self):return [{'case':n,'inputs':copy.deepcopy(o),'observed':copy.deepcopy(g.EXPECTED[n])}for n,o in g.CASES]
 
@@ -658,9 +669,9 @@ class InitDmaGateTests(unittest.TestCase):
 
     def test_exact_current_eleven_component_source_and_object_contract(self):
         g.validate_contract();g.validate_records(self.rows())
-        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.COMPILED_OBJECTS)),(732, 217, 48))
-        self.assertEqual((len(g.compiled_export_names()),sum(len(row[2])for row in g.COMPILED_OBJECTS.values())),(96, 219))
-        self.assertEqual(set(g.COMPONENTS),{'init','dma','unwind','quarantine','command','vif','probe','cmwq','resource','wdev','hwcmd','wsys','terminal'})
+        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.COMPILED_OBJECTS)),(769, 223, 48))
+        self.assertEqual((len(g.compiled_export_names()),sum(len(row[2])for row in g.COMPILED_OBJECTS.values())),(96, 220))
+        self.assertEqual(set(g.COMPONENTS),{'init','dma','unwind','quarantine','command','vif','probe','cmwq','resource','wdev','hwcmd','wsys','terminal','tlv'})
         self.assertNotIn('-DCONFIG_PROPRIETARY_DRIVER',g.REQUIRED_OBJECT_FLAGS)
         relative,key,names=g.COMPILED_OBJECTS['probe_hdev']
         self.assertIn('hc_get_os_cookie',names)
@@ -673,13 +684,22 @@ class InitDmaGateTests(unittest.TestCase):
         for bad in (rows[:-1],rows+rows[:1],list(reversed(rows))):
             with self.assertRaises(ValueError):g.validate_records(bad)
         for i,row in enumerate(rows):
-            for j in range(len(row['observed'])):
-                bad=copy.deepcopy(rows);bad[i]['observed'][j]=bool(bad[i]['observed'][j])
-                with self.subTest(case=row['case'],column=j),self.assertRaises(ValueError):g.validate_records(bad)
+            for path in integer_paths(row['observed']):
+                bad=copy.deepcopy(rows);set_path(bad[i]['observed'],path,True)
+                with self.subTest(case=row['case'],column=path),self.assertRaises(ValueError):g.validate_records(bad)
+        index=next(i for i,r in enumerate(rows)if r['inputs']['component']=='tlv' and r['observed'][-1])
+        sends=rows[index]['observed'][-1]
+        for altered in ([],sends+sends[:1],list(reversed(sends)) if len(sends)>1 else sends+[sends[0]],sends[0]):
+            bad=copy.deepcopy(rows);bad[index]['observed'][-1]=altered
+            with self.subTest(tlv_sends=altered),self.assertRaises(ValueError):g.validate_records(bad)
         bad=copy.deepcopy(rows);bad[0]['extra']=0
         with self.assertRaises(ValueError):g.validate_records(bad)
 
     def test_literal_parser_never_runs_source_generator_or_top_level_code(self):
+        for type_name in ('u32','unsigned char','struct END_DEVICE *'):
+            declaration=type_name+' mdio_fixture(void) { /* } */ return 0; }'
+            self.assertEqual(g.function(declaration,'mdio_fixture'),declaration)
+            with self.assertRaises(ValueError):g.function(declaration+'\n'+declaration,'mdio_fixture')
         inputs,specs,models=fixture()
         for c,s in specs.items():self.assertEqual(g.literal_data(inputs[s['harness_key']]),models[c])
         for tail in ('\nX=dangerous()','\nraise RuntimeError()','\nimport subprocess','\nX={"a":1,"a":2}'):

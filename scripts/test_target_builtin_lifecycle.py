@@ -6,6 +6,17 @@ from pathlib import Path
 from unittest.mock import patch
 import check_target_builtin_lifecycle as g
 
+def integer_paths(value, path=()):
+    if type(value) is int: yield path
+    elif type(value) is list:
+        for key,item in enumerate(value): yield from integer_paths(item,path+(key,))
+    elif type(value) is dict:
+        for key,item in value.items(): yield from integer_paths(item,path+(key,))
+
+def set_path(value,path,replacement):
+    for key in path[:-1]:value=value[key]
+    value[path[-1]]=replacement
+
 def rows():
     return [dict(case=n,inputs=copy.deepcopy(o),observed=copy.deepcopy(g.EXPECTED[n]))for n,o in g.CASES]
 
@@ -16,7 +27,7 @@ def profile_inputs():
         'nor_nor':'#define DEFAULT_READY_WAIT_JIFFIES (40UL * HZ)\n',
         'proc_harness':'SOURCE_MACROS={\'PROCREG_DIR\':\'"mt7621"\'}\nSOURCE_FEATURE_MACROS={\'FE_HW_LRO\':\'BIT(1)\'}\n',
         'proc_reg':'#define PROCREG_DIR "mt7621"\n','proc_config':'#define FE_HW_LRO BIT(1)\n',
-        'kernel_config':'CONFIG_RAETH=y\nCONFIG_MTD_SPI_NOR=y\nCONFIG_CPU_LITTLE_ENDIAN=y\nCONFIG_SOC_MT7621=y\n',
+        'kernel_config':'CONFIG_RAETH=y\nCONFIG_MTD_SPI_NOR=y\nCONFIG_CPU_LITTLE_ENDIAN=y\nCONFIG_SOC_MT7621=y\nCONFIG_RESET_CONTROLLER=y\nCONFIG_RAETH_ESW_CONTROL=y\n# CONFIG_RAETH_ETHTOOL is not set\n',
         'nor_header':'enum spi_nor_ops { SPI_NOR_OPS_READ=0,SPI_NOR_OPS_WRITE,SPI_NOR_OPS_ERASE,SPI_NOR_OPS_LOCK,SPI_NOR_OPS_UNLOCK,};\nenum spi_nor_option_flags {SNOR_F_USE_FSR=BIT(0),};\n'+'\n'.join('#define '+n+' '+v for n,v in {'SPINOR_OP_RDSR':'0x05','SPINOR_OP_RDFSR':'0x70',
             'SPINOR_OP_WREN':'0x06','SPINOR_OP_WRDI':'0x04','SPINOR_OP_CHIP_ERASE':'0xc7','SR_WIP':'BIT(0)','FSR_READY':'BIT(7)'}.items())+'\n'}
     result['runtime_raeth'] = 'static inline void ei_receive(void) { return; }\nstatic void ei_receive_tasklet(unsigned long unused) { ei_receive(); }\nstatic int fe_int_enable(struct net_device *dev) { if (ei_local->features & FE_INT_TASKLET) { tasklet_init(&ei_local->rx_tasklet, ei_receive_tasklet, 0); } return 0; }\nint ei_open(struct net_device *dev) { err = fe_int_enable(dev); if (err) goto fail_dma; ei_start_dma(dev); return 0; fail_dma: return err; }\nstatic int rather_probe(struct platform_device *pdev) { fe_features_config(ei_local); fe_architecture_config(ei_local); return 0; }\n'
@@ -50,9 +61,9 @@ def mini():
 
 class BuiltinGateTests(unittest.TestCase):
     def test_fixed_disjoint_case_function_and_actual_object_scopes(self):
-        self.assertEqual({c:sum(o['component']==c for _,o in g.CASES)for c in g.COMPONENTS},{'raeth': 45, 'nor': 31, 'proc': 29, 'runtime': 49, 'qtx': 31, 'ioctl': 74})
-        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.OBJECTS)),(259, 34, 9))
-        self.assertEqual((sum(len(c['functions'])for c in g.COMPONENTS.values()),sum(len(c['source_only_functions'])for c in g.COMPONENTS.values())),(65, 9))
+        self.assertEqual({c:sum(o['component']==c for _,o in g.CASES)for c in g.COMPONENTS},{'raeth': 45, 'nor': 31, 'proc': 29, 'runtime': 51, 'qtx': 31, 'ioctl': 78, 'reset_core': 17, 'mdio': 34, 'remove': 20, 'esw': 32})
+        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.OBJECTS)),(368, 57, 13))
+        self.assertEqual((sum(len(c['functions'])for c in g.COMPONENTS.values()),sum(len(c['source_only_functions'])for c in g.COMPONENTS.values())),(98, 17))
         self.assertIn('ei_init',g.OBJECTS['raeth_driver'][2]);self.assertIn('proc_remove',g.OBJECTS['proc_generic'][2])
         for label in ('raeth_driver','raeth_aggregate','raeth_builtin'):
             self.assertIn('ei_receive_tasklet',g.OBJECTS[label][2]);self.assertNotIn('ei_receive',g.OBJECTS[label][2])
@@ -63,10 +74,16 @@ class BuiltinGateTests(unittest.TestCase):
     def test_exact_typed_case_observations_reject_bool_aliases(self):
         g.validate_rows(rows())
         for i,row in enumerate(rows()):
-            for key,value in row['observed'].items():
-                if type(value)is not int:continue
-                bad=rows();bad[i]['observed'][key]=bool(value)
-                with self.subTest(case=row['case'],field=key),self.assertRaises(ValueError):g.validate_rows(bad)
+            for path in integer_paths(row['observed']):
+                bad=rows();set_path(bad[i]['observed'],path,True)
+                with self.subTest(case=row['case'],field=path),self.assertRaises(ValueError):g.validate_rows(bad)
+        # Full MDIO command values and order are fixed, including nested arrays.
+        index=next(i for i,r in enumerate(rows()) if r['inputs']['component']=='mdio' and len(r['observed']['controller_writes'])>=4)
+        commands=rows()[index]['observed']['controller_writes']
+        variants=([True]+commands[1:],[-1]+commands[1:],[2**32]+commands[1:],commands+commands[:1],commands[:-1],list(reversed(commands)),[commands[0]^1]+commands[1:])
+        for altered in variants:
+            bad=rows();bad[index]['observed']['controller_writes']=altered
+            with self.subTest(commands=altered),self.assertRaises(ValueError):g.validate_rows(bad)
 
     def test_case_order_and_duplicate_missing_extra_rows_fail(self):
         r=rows()
@@ -77,12 +94,17 @@ class BuiltinGateTests(unittest.TestCase):
 
     def test_declared_mips_probes_are_static_strict_and_inert(self):
         self.assertEqual(g.FLAGS,('-static','-std=gnu99','-Wall','-Wextra','-Werror','-pthread'))
-        self.assertIn('physical DMA',' '.join(g.LIMITS));self.assertEqual(len(g.exports()),37)
+        self.assertEqual(set(g.COMPONENT_FLAGS),set(g.COMPONENTS))
+        for old in ('raeth','nor','proc','runtime','qtx','ioctl'):
+            self.assertEqual(g.COMPONENT_FLAGS[old],())
+        self.assertEqual(g.COMPONENT_FLAGS['mdio'],('-Wno-unused-parameter',))
+        self.assertEqual(g.COMPONENT_FLAGS['esw'],('-Wno-unused-variable','-Wno-unused-parameter','-Wno-unused-but-set-variable'))
+        self.assertIn('physical DMA',' '.join(g.LIMITS));self.assertEqual(len(g.exports()),57)
 
     def test_kernel_board_and_ring_constants_are_required(self):
         g.source_profile(profile_inputs())
         for key,old,new in (('raeth_header','NUM 4','NUM 2'),('kernel_config','RAETH=y','RAETH=m'),
-                           ('kernel_config','SPI_NOR=y','SPI_NOR=m'),('kernel_config','SOC_MT7621=y','SOC_MT7621=m'),('nor_header','BIT(0)','BIT(1)'),('nor_nor','40UL','50UL'),('proc_reg','mt7621','changed'),('proc_config','BIT(1)','BIT(2)'),('nor_header','READ=0','READ=1')):
+                           ('kernel_config','RESET_CONTROLLER=y','RESET_CONTROLLER=n'),('kernel_config','ESW_CONTROL=y','ESW_CONTROL=n'),('kernel_config','# CONFIG_RAETH_ETHTOOL is not set','CONFIG_RAETH_ETHTOOL=y'),('kernel_config','SPI_NOR=y','SPI_NOR=m'),('kernel_config','SOC_MT7621=y','SOC_MT7621=m'),('nor_header','BIT(0)','BIT(1)'),('nor_nor','40UL','50UL'),('proc_reg','mt7621','changed'),('proc_config','BIT(1)','BIT(2)'),('nor_header','READ=0','READ=1')):
             bad=profile_inputs();bad[key]=bad[key].replace(old,new)
             with self.subTest(key=key),self.assertRaises(ValueError):g.source_profile(bad)
 
@@ -134,6 +156,23 @@ class BuiltinGateTests(unittest.TestCase):
             for prefix in ('','#define REQUIRED_K2P_MODEL 1 //changed\n','#define REQUIRED_K2P_MODEL 1\n'*2):
                 inputs['driver']=prefix+original
                 with self.subTest(prefix=prefix),self.assertRaises(ValueError): g.generate(inputs,'raeth')
+
+        # Selected source declarations are rendered exactly once before helpers.
+        inputs,data,spec=mini()
+        data['SOURCE_DECLARATIONS']={r'^(#define MODEL_STATUS 17)$':'raeth'}
+        data['PREFIX']='SOURCE_DEFINITIONS\n'+data['PREFIX']
+        spec['model_data_sha256']=g.model.model_data_hash(data)
+        inputs['harness']='\n'.join(k+'='+repr(v)for k,v in data.items())
+        original=inputs['driver']
+        with patch.object(g,'SOURCE_PATHS',{'harness':'h.py','driver':'c.c'}),patch.object(g,'COMPONENTS',{'raeth':spec}),\
+             patch.object(g,'CASES',(('raeth:one',{'component':'raeth','selector':'one'}),)),patch.object(g,'EXPECTED',{'raeth:one':data['EXPECTED_ROWS']['one']}):
+            inputs['driver']='#define MODEL_STATUS 17\n'+original
+            code,*_=g.generate(inputs,'raeth')
+            self.assertEqual(code.count('#define MODEL_STATUS 17'),1)
+            self.assertLess(code.index('#define MODEL_STATUS 17'),code.index('work(void)'))
+            for declaration in ('','#define MODEL_STATUS 18\n','#define MODEL_STATUS 17\n'*2):
+                inputs['driver']=declaration+original
+                with self.subTest(declaration=declaration),self.assertRaises(ValueError):g.generate(inputs,'raeth')
 
     def test_function_lexer_rejects_ambiguous_source(self):
         for typename in ('int','bool','unsigned int','unsigned long'):

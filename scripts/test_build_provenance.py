@@ -101,8 +101,8 @@ state=Path(os.environ['FETCH_LOG']+'.state')
 fault=os.environ['FETCH_FAULT']
 if args[2]=='fetch':
     state.write_text(args[-1])
-active=(not fault.startswith(('second-','third-','fourth-','fifth-','sixth-','seventh-','eighth-')) or fault.startswith('second-') and state.read_text()=='3a404e1675467cab79af0ffac454061c1e9150ae' or fault.startswith('third-') and state.read_text()=='3ba292933a5cdbcaac3d5187d2454b387fbfbcc1' or fault.startswith('fourth-') and state.read_text()=='a23aaa4e11894cad9306bc87bbac3ed310dcf3de' or fault.startswith('fifth-') and state.read_text()=='5ce45fccc96d085f2786b509a51abcba2a136f80' or fault.startswith('sixth-') and state.read_text()=='c4d8e113ffba5f85eb5f37a75b3c5f23594ed193' or fault.startswith('seventh-') and state.read_text()=='6ae86c7a097cfcf8113a2e0d0c174216a5726806' or fault.startswith('eighth-') and state.read_text()=='5f7eca673b3791bf2f3f05c00ae03abc058dcdff')
-fault=fault.removeprefix('second-').removeprefix('third-').removeprefix('fourth-').removeprefix('fifth-').removeprefix('sixth-').removeprefix('seventh-').removeprefix('eighth-') if active else ''
+active=(not fault.startswith(('second-','third-','fourth-','fifth-','sixth-','seventh-','eighth-','ninth-')) or fault.startswith('second-') and state.read_text()=='3a404e1675467cab79af0ffac454061c1e9150ae' or fault.startswith('third-') and state.read_text()=='3ba292933a5cdbcaac3d5187d2454b387fbfbcc1' or fault.startswith('fourth-') and state.read_text()=='a23aaa4e11894cad9306bc87bbac3ed310dcf3de' or fault.startswith('fifth-') and state.read_text()=='5ce45fccc96d085f2786b509a51abcba2a136f80' or fault.startswith('sixth-') and state.read_text()=='c4d8e113ffba5f85eb5f37a75b3c5f23594ed193' or fault.startswith('seventh-') and state.read_text()=='6ae86c7a097cfcf8113a2e0d0c174216a5726806' or fault.startswith('eighth-') and state.read_text()=='5f7eca673b3791bf2f3f05c00ae03abc058dcdff' or fault.startswith('ninth-') and state.read_text()=='8371e9d2471d85199c8fefcff5fee43e2494094d')
+fault=fault.removeprefix('second-').removeprefix('third-').removeprefix('fourth-').removeprefix('fifth-').removeprefix('sixth-').removeprefix('seventh-').removeprefix('eighth-').removeprefix('ninth-') if active else ''
 if args[2]=='fetch':sys.exit(1 if fault=='fetch' else 0)
 if args[2]=='cat-file':sys.exit(1 if fault=='missing' else 0)
 if args[2]=='rev-parse':
@@ -134,7 +134,8 @@ raise SystemExit('Unexpected Git call')
                          '5ce45fccc96d085f2786b509a51abcba2a136f80',
                          'c4d8e113ffba5f85eb5f37a75b3c5f23594ed193',
                          '6ae86c7a097cfcf8113a2e0d0c174216a5726806',
-                         '5f7eca673b3791bf2f3f05c00ae03abc058dcdff'):
+                         '5f7eca673b3791bf2f3f05c00ae03abc058dcdff',
+                         '8371e9d2471d85199c8fefcff5fee43e2494094d'):
             expected += [prefix + ['fetch', '--no-tags', '--depth=1', 'origin', baseline],
                          prefix + ['rev-parse', '--verify', 'FETCH_HEAD^{commit}'],
                          prefix + ['cat-file', '-e', baseline + '^{commit}'],
@@ -142,12 +143,12 @@ raise SystemExit('Unexpected Git call')
         self.assertEqual(calls, expected)
 
     def test_failed_or_wrong_baseline_or_changed_candidate_stops_before_suite(self):
-        for stage in ('','second-','third-','fourth-','fifth-','sixth-','seventh-','eighth-'):
+        for stage in ('','second-','third-','fourth-','fifth-','sixth-','seventh-','eighth-','ninth-'):
             for fault, expected_calls in (('fetch', 1), ('wrong-fetch', 2), ('missing', 3), ('changed-head', 4)):
                 with self.subTest(fault=stage+fault):
                     result, calls, suite = self.baseline_fetch(fault=stage+fault)
                     self.assertNotEqual(result.returncode, 0)
-                    self.assertEqual(len(calls), expected_calls + (28 if stage=='eighth-'else 24 if stage=='seventh-'else 20 if stage=='sixth-'else 16 if stage=='fifth-'else 12 if stage=='fourth-'else 8 if stage=='third-'else 4 if stage else 0))
+                    self.assertEqual(len(calls), expected_calls + (32 if stage=='ninth-'else 28 if stage=='eighth-'else 24 if stage=='seventh-'else 20 if stage=='sixth-'else 16 if stage=='fifth-'else 12 if stage=='fourth-'else 8 if stage=='third-'else 4 if stage else 0))
                     self.assertFalse(suite)
 
     def test_susu_does_not_fetch_the_44_regression_baseline(self):
@@ -216,6 +217,7 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
         end=script.index('# Keep Linux /tmp rewriting',start);block=script[start:end]
         required=tuple(word.rstrip(';')for word in block.split()if word.startswith('test_'))
         self.assertIn('test_flash_persist',required);self.assertIn('test_mcu_precal',required)
+        self.assertTrue({'test_raeth_mdio','test_raeth_remove','test_reset_core','test_wsys_tlv','test_esw_error'}<=set(required))
         self.assertTrue({'test_cmd_queue','test_rx_transport','test_rx_pool','test_rx_startup','test_mtd_preflight','test_pci_lifecycle','test_token_init','test_ser_lifecycle','test_kthread_owner','test_init_transaction','test_dma_lifecycle','test_first_arm_unwind','test_wsc_init','test_dma_quarantine','test_dma_command_lifecycle','test_vif_lifecycle','test_probe_oom','test_cmwq_lifecycle','test_hdev_resource_init','test_wdev_lifecycle','test_raeth_init','test_nor_admission','test_raeth_proc','test_hwcmd_owner'}<=set(required))
         tests=self.root/'source/tests';tests.mkdir(parents=True,exist_ok=True)
         for name in required:(tests/(name+'.py')).touch()
