@@ -101,8 +101,8 @@ state=Path(os.environ['FETCH_LOG']+'.state')
 fault=os.environ['FETCH_FAULT']
 if args[2]=='fetch':
     state.write_text(args[-1])
-active=(not fault.startswith(('second-','third-','fourth-','fifth-')) or fault.startswith('second-') and state.read_text()=='3a404e1675467cab79af0ffac454061c1e9150ae' or fault.startswith('third-') and state.read_text()=='3ba292933a5cdbcaac3d5187d2454b387fbfbcc1' or fault.startswith('fourth-') and state.read_text()=='a23aaa4e11894cad9306bc87bbac3ed310dcf3de' or fault.startswith('fifth-') and state.read_text()=='5ce45fccc96d085f2786b509a51abcba2a136f80')
-fault=fault.removeprefix('second-').removeprefix('third-').removeprefix('fourth-').removeprefix('fifth-') if active else ''
+active=(not fault.startswith(('second-','third-','fourth-','fifth-','sixth-')) or fault.startswith('second-') and state.read_text()=='3a404e1675467cab79af0ffac454061c1e9150ae' or fault.startswith('third-') and state.read_text()=='3ba292933a5cdbcaac3d5187d2454b387fbfbcc1' or fault.startswith('fourth-') and state.read_text()=='a23aaa4e11894cad9306bc87bbac3ed310dcf3de' or fault.startswith('fifth-') and state.read_text()=='5ce45fccc96d085f2786b509a51abcba2a136f80' or fault.startswith('sixth-') and state.read_text()=='c4d8e113ffba5f85eb5f37a75b3c5f23594ed193')
+fault=fault.removeprefix('second-').removeprefix('third-').removeprefix('fourth-').removeprefix('fifth-').removeprefix('sixth-') if active else ''
 if args[2]=='fetch':sys.exit(1 if fault=='fetch' else 0)
 if args[2]=='cat-file':sys.exit(1 if fault=='missing' else 0)
 if args[2]=='rev-parse':
@@ -131,7 +131,8 @@ raise SystemExit('Unexpected Git call')
                          '3a404e1675467cab79af0ffac454061c1e9150ae',
                          '3ba292933a5cdbcaac3d5187d2454b387fbfbcc1',
                          'a23aaa4e11894cad9306bc87bbac3ed310dcf3de',
-                         '5ce45fccc96d085f2786b509a51abcba2a136f80'):
+                         '5ce45fccc96d085f2786b509a51abcba2a136f80',
+                         'c4d8e113ffba5f85eb5f37a75b3c5f23594ed193'):
             expected += [prefix + ['fetch', '--no-tags', '--depth=1', 'origin', baseline],
                          prefix + ['rev-parse', '--verify', 'FETCH_HEAD^{commit}'],
                          prefix + ['cat-file', '-e', baseline + '^{commit}'],
@@ -139,12 +140,12 @@ raise SystemExit('Unexpected Git call')
         self.assertEqual(calls, expected)
 
     def test_failed_or_wrong_baseline_or_changed_candidate_stops_before_suite(self):
-        for stage in ('','second-','third-','fourth-','fifth-'):
+        for stage in ('','second-','third-','fourth-','fifth-','sixth-'):
             for fault, expected_calls in (('fetch', 1), ('wrong-fetch', 2), ('missing', 3), ('changed-head', 4)):
                 with self.subTest(fault=stage+fault):
                     result, calls, suite = self.baseline_fetch(fault=stage+fault)
                     self.assertNotEqual(result.returncode, 0)
-                    self.assertEqual(len(calls), expected_calls + (16 if stage=='fifth-'else 12 if stage=='fourth-'else 8 if stage=='third-'else 4 if stage else 0))
+                    self.assertEqual(len(calls), expected_calls + (20 if stage=='sixth-'else 16 if stage=='fifth-'else 12 if stage=='fourth-'else 8 if stage=='third-'else 4 if stage else 0))
                     self.assertFalse(suite)
 
     def test_susu_does_not_fetch_the_44_regression_baseline(self):
@@ -172,6 +173,7 @@ with open(os.environ['GATE_LOG'],'a') as log:log.write(json.dumps(sys.argv[1:])+
 if '--preflight'not in sys.argv:
     required=('--wifi-report','--io-report')if 'check_target_wifi_calibration_integrity.py'in sys.argv[1]else('--wifi-report',)if any(name in sys.argv[1]for name in('check_target_wifi_file_io.py','check_target_rx_transport.py','check_target_pci_lifecycle.py','check_target_token_lifecycle.py','check_target_init_dma_lifecycle.py'))else()
     if 'check_target_mtd_preflight.py'in sys.argv[1]:required=('--mtd-backup-report','--image')
+    if 'check_target_builtin_lifecycle.py'in sys.argv[1]:required=('--spi-report',)
     if any(flag not in sys.argv or not Path(sys.argv[sys.argv.index(flag)+1]).is_file()for flag in required):sys.exit(97)
 if '--output'in sys.argv:
     output=Path(sys.argv[sys.argv.index('--output')+1]);output.parent.mkdir(parents=True,exist_ok=True)
@@ -181,6 +183,8 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
         entry.chmod(0o755)
         for name in('target-wifi-factory.json','target-wifi-file-io.json','target-wifi-calibration-integrity.json','target-rx-transport.json','target-pci-lifecycle.json','target-mtd-backup.json','target-mtd-preflight.json'):
             (self.root/'diagnostics'/name).unlink(missing_ok=True)
+        parent=self.root/'diagnostics/target-spi-nor.json';parent.parent.mkdir(parents=True,exist_ok=True);parent.unlink(missing_ok=True)
+        if late and missing_parent!='target-spi-nor.json':parent.write_text('inert-kernel-image-parent')
         log=self.root/'gate-calls.jsonl';log.unlink(missing_ok=True)
         finished=self.root/'gate-finished';finished.unlink(missing_ok=True)
         env=dict(os.environ,PATH=str(tools)+os.pathsep+os.environ['PATH'],root=str(self.root),
@@ -194,7 +198,7 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
         return result,calls,finished.exists()
 
     def test_new_preflight_gates_are_mandatory_before_expensive_build(self):
-        names=['controller_clock','spi_dma','spi_lifecycle','nvram_mtd','mtd_mutation','wifi_factory','wifi_file_io','wifi_calibration_integrity','rx_transport','pci_lifecycle','token_lifecycle','init_dma_lifecycle','mtd_preflight']
+        names=['controller_clock','spi_dma','spi_lifecycle','nvram_mtd','mtd_mutation','wifi_factory','wifi_file_io','wifi_calibration_integrity','rx_transport','pci_lifecycle','token_lifecycle','init_dma_lifecycle','builtin_lifecycle','mtd_preflight']
         result,calls,done=self.new_target_gate_block()
         self.assertEqual(result.returncode,0,result.stderr);self.assertTrue(done)
         self.assertEqual([Path(call[0]).stem for call in calls],['check_target_'+name for name in names])
@@ -210,11 +214,11 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
         end=script.index('# Keep Linux /tmp rewriting',start);block=script[start:end]
         required=tuple(word.rstrip(';')for word in block.split()if word.startswith('test_'))
         self.assertIn('test_flash_persist',required);self.assertIn('test_mcu_precal',required)
-        self.assertTrue({'test_cmd_queue','test_rx_transport','test_rx_pool','test_rx_startup','test_mtd_preflight','test_pci_lifecycle','test_token_init','test_ser_lifecycle','test_kthread_owner','test_init_transaction','test_dma_lifecycle','test_first_arm_unwind','test_wsc_init','test_dma_quarantine','test_dma_command_lifecycle','test_vif_lifecycle','test_probe_oom','test_cmwq_lifecycle','test_hdev_resource_init','test_wdev_lifecycle'}<=set(required))
+        self.assertTrue({'test_cmd_queue','test_rx_transport','test_rx_pool','test_rx_startup','test_mtd_preflight','test_pci_lifecycle','test_token_init','test_ser_lifecycle','test_kthread_owner','test_init_transaction','test_dma_lifecycle','test_first_arm_unwind','test_wsc_init','test_dma_quarantine','test_dma_command_lifecycle','test_vif_lifecycle','test_probe_oom','test_cmwq_lifecycle','test_hdev_resource_init','test_wdev_lifecycle','test_raeth_init','test_nor_admission','test_raeth_proc','test_hwcmd_owner'}<=set(required))
         tests=self.root/'source/tests';tests.mkdir(parents=True,exist_ok=True)
         for name in required:(tests/(name+'.py')).touch()
         marker=self.root/'source-suite-started'
-        for missing in('', 'test_flash_persist','test_mcu_precal','test_cmd_queue','test_rx_transport','test_rx_pool','test_rx_startup','test_mtd_preflight','test_pci_lifecycle','test_token_init','test_ser_lifecycle','test_kthread_owner','test_init_transaction','test_dma_lifecycle','test_first_arm_unwind','test_wsc_init','test_dma_quarantine','test_dma_command_lifecycle','test_vif_lifecycle','test_probe_oom','test_cmwq_lifecycle','test_hdev_resource_init','test_wdev_lifecycle'):
+        for missing in('', 'test_flash_persist','test_mcu_precal','test_cmd_queue','test_rx_transport','test_rx_pool','test_rx_startup','test_mtd_preflight','test_pci_lifecycle','test_token_init','test_ser_lifecycle','test_kthread_owner','test_init_transaction','test_dma_lifecycle','test_first_arm_unwind','test_wsc_init','test_dma_quarantine','test_dma_command_lifecycle','test_vif_lifecycle','test_probe_oom','test_cmwq_lifecycle','test_hdev_resource_init','test_wdev_lifecycle','test_raeth_init','test_nor_admission','test_raeth_proc','test_hwcmd_owner'):
             marker.unlink(missing_ok=True)
             if missing:(tests/(missing+'.py')).unlink()
             result=subprocess.run(['bash','-c','set -euo pipefail\n'+block+'\ntouch "$SUITE_MARKER"\n'],
@@ -224,7 +228,7 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
             if missing:(tests/(missing+'.py')).touch()
 
     def test_late_gates_require_image_or_rootfs_binding_and_stop_publication_on_failure(self):
-        names=['controller_clock','spi_dma','spi_lifecycle','nvram_mtd','mtd_mutation','wifi_factory','wifi_file_io','wifi_calibration_integrity','rx_transport','pci_lifecycle','token_lifecycle','init_dma_lifecycle','mtd_backup','mtd_preflight']
+        names=['controller_clock','spi_dma','spi_lifecycle','nvram_mtd','mtd_mutation','wifi_factory','wifi_file_io','wifi_calibration_integrity','rx_transport','pci_lifecycle','token_lifecycle','init_dma_lifecycle','mtd_backup','mtd_preflight','builtin_lifecycle']
         result,calls,done=self.new_target_gate_block(late=True)
         self.assertEqual(result.returncode,0,result.stderr);self.assertTrue(done)
         self.assertEqual([Path(call[0]).stem for call in calls],['check_target_'+name for name in names])
@@ -240,7 +244,7 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
         self.assertIn('--wifi-report',calls[9])
         self.assertIn('--wifi-report',calls[11])
         self.assertIn('--rootfs',calls[13]);self.assertIn('--image',calls[13]);self.assertIn('--mtd-backup-report',calls[13])
-        for missing,count in(('target-wifi-factory.json',7),('target-wifi-file-io.json',8),('target-mtd-backup.json',14)):
+        for missing,count in(('target-wifi-factory.json',7),('target-wifi-file-io.json',8),('target-mtd-backup.json',14),('target-spi-nor.json',15)):
             result,missing_calls,done=self.new_target_gate_block(late=True,missing_parent=missing)
             self.assertEqual(result.returncode,97);self.assertEqual(len(missing_calls),count);self.assertFalse(done)
         for i,name in enumerate(names):

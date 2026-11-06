@@ -163,7 +163,18 @@ SOURCE_PATHS = {'init_tr': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt76
  'wdev_header': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/include/rtmp.h',
  'wdev_free': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/os/linux/rt_profile.c',
  'wdev_vendor_header': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/include/vendor.h',
- 'wdev_harness': 'tests/wdev_lifecycle_harness.py'}
+ 'wdev_harness': 'tests/wdev_lifecycle_harness.py',
+ 'hwcmd_basic': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/hw_ctrl/hw_ctrl_basic.c',
+ 'hwcmd_header': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/include/hw_ctrl.h',
+ 'hwcmd_task_header': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/include/rtmp_os.h',
+ 'hwcmd_os_header': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/include/os/rt_linux.h',
+ 'hwcmd_init': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/common/rtmp_init_inf.c',
+ 'hwcmd_cmd': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/hw_ctrl/hw_ctrl_cmd.c',
+ 'hwcmd_handler': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/hw_ctrl/hw_ctrl.c',
+ 'hwcmd_mcu_header': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/include/mcu/mt_cmd.h',
+ 'hwcmd_os': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/os/linux/rt_main_dev.c',
+ 'hwcmd_kernel_task': 'trunk/linux-4.4.x/kernel/kthread.c',
+ 'hwcmd_harness': 'tests/hwcmd_owner_harness.py'}
 
 COMPONENTS = {'init': {'paths': {'tr': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/common/cmm_data.c',
                     'basic': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/hw_ctrl/hw_ctrl_basic.c',
@@ -229,7 +240,7 @@ COMPONENTS = {'init': {'paths': {'tr': 'trunk/linux-4.4.x/drivers/net/wireless/m
                                     'RtmpDmaTeardownCheck': 'lifetime',
                                     'RtmpDmaQuarantine': 'lifetime'},
           'harness_key': 'init_harness',
-          'model_data_sha256': '9ce4fbd5d96ca8f498970edbfffd74c05e6f7cb186c2d94d037d81742e79bcb5',
+          'model_data_sha256': 'df57e44bdeb5917bc7cf4beed8d402c048eae51d1176ce8e3d0527f1b4337af1',
           'variants': ('current',)},
  'dma': {'paths': {'dma': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/common/cmm_mac_pci.c',
                    'asic': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/hw_ctrl/cmm_asic.c',
@@ -693,7 +704,47 @@ COMPONENTS = {'init': {'paths': {'tr': 'trunk/linux-4.4.x/drivers/net/wireless/m
                                     'RTMPFreeAdapter': 'free'},
           'harness_key': 'wdev_harness',
           'model_data_sha256': '7bbb28cda73bd1ffcbd5d258c874f9c21f52569859ff2127752c45d6ee85a29a',
-          'variants': ('current',)}}
+          'variants': ('current',)},
+ 'hwcmd': {'paths': {'basic': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/hw_ctrl/hw_ctrl_basic.c',
+                     'header': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/include/hw_ctrl.h',
+                     'task_header': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/include/rtmp_os.h',
+                     'os_header': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/include/os/rt_linux.h',
+                     'init': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/common/rtmp_init_inf.c',
+                     'cmd': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/hw_ctrl/hw_ctrl_cmd.c',
+                     'handler': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/hw_ctrl/hw_ctrl.c',
+                     'mcu_header': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/include/mcu/mt_cmd.h',
+                     'os': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/os/linux/rt_main_dev.c',
+                     'kernel_task': 'trunk/linux-4.4.x/kernel/kthread.c'},
+           'source_keys': {'basic': 'hwcmd_basic',
+                           'header': 'hwcmd_header',
+                           'task_header': 'hwcmd_task_header',
+                           'os_header': 'hwcmd_os_header',
+                           'init': 'hwcmd_init',
+                           'cmd': 'hwcmd_cmd',
+                           'handler': 'hwcmd_handler',
+                           'mcu_header': 'hwcmd_mcu_header',
+                           'os': 'hwcmd_os',
+                           'kernel_task': 'hwcmd_kernel_task'},
+           'functions': {'HwCtrlGetTemperature': 'handler',
+                         'HwCtrlDequeueCmd': 'basic',
+                         'free_hwcmd': 'basic',
+                         'HwCtrlCmdHandler': 'basic',
+                         'HwCtrlFlagHandler': 'basic',
+                         'HwCtrlThread': 'basic',
+                         'HwCtrlExit': 'basic',
+                         'HwCtrlEnqueueCmd': 'basic',
+                         'HwCtrlSetFlag': 'basic'},
+           'source_only_functions': {'HwCtrlValidCmd': 'basic',
+                                     'HwCtrlValidFlag': 'basic',
+                                     'rtmp_sys_init': 'init',
+                                     'rtmp_sys_task_exit': 'init',
+                                     'RTMPDrvClose': 'init',
+                                     'RTMP_GET_TEMPERATURE': 'cmd',
+                                     'RtmpDmaQuarantined': 'os',
+                                     'RtmpDmaQuarantine': 'os'},
+           'harness_key': 'hwcmd_harness',
+           'model_data_sha256': '09a9640241c703bb2e04681fb6eeb3673c529a49c22da6ca910eabfffea4b5c4',
+           'variants': ('current',)}}
 
 CASES = (('init:current:tr-oom1', {'component': 'init', 'variant': 'current', 'selector': 'tr-oom1'}),
  ('init:current:tr-oom2', {'component': 'init', 'variant': 'current', 'selector': 'tr-oom2'}),
@@ -1405,7 +1456,53 @@ CASES = (('init:current:tr-oom1', {'component': 'init', 'variant': 'current', 's
  ('wdev:current:exit-main-negative-index',
   {'component': 'wdev', 'variant': 'current', 'selector': 'exit-main-negative-index'}),
  ('wdev:current:exit-main-wrong-owner',
-  {'component': 'wdev', 'variant': 'current', 'selector': 'exit-main-wrong-owner'}))
+  {'component': 'wdev', 'variant': 'current', 'selector': 'exit-main-wrong-owner'}),
+ ('hwcmd:current:node-oom-sync', {'component': 'hwcmd', 'variant': 'current', 'selector': 'node-oom-sync'}),
+ ('hwcmd:current:node-oom-async', {'component': 'hwcmd', 'variant': 'current', 'selector': 'node-oom-async'}),
+ ('hwcmd:current:payload-oom-sync', {'component': 'hwcmd', 'variant': 'current', 'selector': 'payload-oom-sync'}),
+ ('hwcmd:current:payload-oom-async',
+  {'component': 'hwcmd', 'variant': 'current', 'selector': 'payload-oom-async'}),
+ ('hwcmd:current:response-oom', {'component': 'hwcmd', 'variant': 'current', 'selector': 'response-oom'}),
+ ('hwcmd:current:reject-stopped-sync',
+  {'component': 'hwcmd', 'variant': 'current', 'selector': 'reject-stopped-sync'}),
+ ('hwcmd:current:reject-stopped-async',
+  {'component': 'hwcmd', 'variant': 'current', 'selector': 'reject-stopped-async'}),
+ ('hwcmd:current:normal-sync', {'component': 'hwcmd', 'variant': 'current', 'selector': 'normal-sync'}),
+ ('hwcmd:current:normal-async', {'component': 'hwcmd', 'variant': 'current', 'selector': 'normal-async'}),
+ ('hwcmd:current:response-complete',
+  {'component': 'hwcmd', 'variant': 'current', 'selector': 'response-complete'}),
+ ('hwcmd:current:response-timeout-queued',
+  {'component': 'hwcmd', 'variant': 'current', 'selector': 'response-timeout-queued'}),
+ ('hwcmd:current:null-input', {'component': 'hwcmd', 'variant': 'current', 'selector': 'null-input'}),
+ ('hwcmd:current:null-response', {'component': 'hwcmd', 'variant': 'current', 'selector': 'null-response'}),
+ ('hwcmd:current:async-response', {'component': 'hwcmd', 'variant': 'current', 'selector': 'async-response'}),
+ ('hwcmd:current:exit-before-start',
+  {'component': 'hwcmd', 'variant': 'current', 'selector': 'exit-before-start'}),
+ ('hwcmd:current:flag-late-stop', {'component': 'hwcmd', 'variant': 'current', 'selector': 'flag-late-stop'}),
+ ('hwcmd:current:flag-after-stop', {'component': 'hwcmd', 'variant': 'current', 'selector': 'flag-after-stop'}),
+ ('hwcmd:current:active-worker-vs-exit',
+  {'component': 'hwcmd', 'variant': 'current', 'selector': 'active-worker-vs-exit'}),
+ ('hwcmd:current:exit-retirement-failure',
+  {'component': 'hwcmd', 'variant': 'current', 'selector': 'exit-retirement-failure'}),
+ ('hwcmd:current:repeat-exit', {'component': 'hwcmd', 'variant': 'current', 'selector': 'repeat-exit'}),
+ ('hwcmd:current:command-stop-before-handler',
+  {'component': 'hwcmd', 'variant': 'current', 'selector': 'command-stop-before-handler'}),
+ ('hwcmd:current:normal-callback', {'component': 'hwcmd', 'variant': 'current', 'selector': 'normal-callback'}),
+ ('hwcmd:current:response-handler-failure',
+  {'component': 'hwcmd', 'variant': 'current', 'selector': 'response-handler-failure'}),
+ ('hwcmd:current:response-no-handler',
+  {'component': 'hwcmd', 'variant': 'current', 'selector': 'response-no-handler'}),
+ ('hwcmd:current:response-exit-before-start',
+  {'component': 'hwcmd', 'variant': 'current', 'selector': 'response-exit-before-start'}),
+ ('hwcmd:current:temperature-too-large',
+  {'component': 'hwcmd', 'variant': 'current', 'selector': 'temperature-too-large'}),
+ ('hwcmd:current:temperature-null', {'component': 'hwcmd', 'variant': 'current', 'selector': 'temperature-null'}),
+ ('hwcmd:current:temperature-api-failure',
+  {'component': 'hwcmd', 'variant': 'current', 'selector': 'temperature-api-failure'}),
+ ('hwcmd:current:exit-without-threadfn',
+  {'component': 'hwcmd', 'variant': 'current', 'selector': 'exit-without-threadfn'}),
+ ('hwcmd:current:response-exit-without-threadfn',
+  {'component': 'hwcmd', 'variant': 'current', 'selector': 'response-exit-without-threadfn'}))
 
 EXPECTED = {'init:current:tr-oom1': [3, 1, 0, 1, 1, 0, 0, 0],
  'init:current:tr-oom2': [3, 1, 0, 1, 1, 0, 0, 0],
@@ -5052,14 +5149,50 @@ EXPECTED = {'init:current:tr-oom1': [3, 1, 0, 1, 1, 0, 0, 0],
  'wdev:current:exit-main-vie-owner': [1, 0, 0, 0, 0, 0, 1, 1],
  'wdev:current:exit-main-unregistered': [1, 0, 0, 0, 0, 1, 1, 1],
  'wdev:current:exit-main-negative-index': [1, 0, 0, 0, 0, 1, 1, 1],
- 'wdev:current:exit-main-wrong-owner': [1, 0, 0, 0, 0, 1, 1, 1]}
+ 'wdev:current:exit-main-wrong-owner': [1, 0, 0, 0, 0, 1, 1, 1],
+ 'hwcmd:current:node-oom-sync': [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 9, 0, 1],
+ 'hwcmd:current:node-oom-async': [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 9, 0, 1],
+ 'hwcmd:current:payload-oom-sync': [3, 1, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 9, 0, 1],
+ 'hwcmd:current:payload-oom-async': [3, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 9, 0, 1],
+ 'hwcmd:current:response-oom': [3, 2, 2, 0, 0, 1, 1, 0, 0, 0, 1, 0, 9, 0, 1],
+ 'hwcmd:current:reject-stopped-sync': [1, 2, 2, 0, 0, 1, 1, 0, 0, 0, 1, 0, 9, 0, 1],
+ 'hwcmd:current:reject-stopped-async': [1, 2, 2, 0, 0, 0, 0, 0, 0, 0, 1, 0, 9, 0, 1],
+ 'hwcmd:current:normal-sync': [0, 2, 2, 0, 0, 1, 1, 1, 0, 1, 1, 0, 9, 0, 1],
+ 'hwcmd:current:normal-async': [0, 2, 2, 0, 0, 0, 0, 1, 0, 1, 1, 0, 9, 2, 1],
+ 'hwcmd:current:response-complete': [0, 3, 3, 0, 0, 1, 1, 1, 0, 1, 1, 0, 77, 0, 1],
+ 'hwcmd:current:response-timeout-queued': [1, 3, 3, 0, 0, 1, 1, 1, 0, 1, 1, 0, 123, 3, 1],
+ 'hwcmd:current:null-input': [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 9, 0, 1],
+ 'hwcmd:current:null-response': [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 9, 0, 1],
+ 'hwcmd:current:async-response': [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 9, 0, 1],
+ 'hwcmd:current:exit-before-start': [0, 2, 2, 0, 0, 0, 0, 0, 0, 1, 1, 0, 9, 2, 1],
+ 'hwcmd:current:flag-late-stop': [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 9, 0, 1],
+ 'hwcmd:current:flag-after-stop': [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 9, 0, 1],
+ 'hwcmd:current:active-worker-vs-exit': [0, 4, 4, 0, 0, 0, 0, 1, 0, 2, 1, 0, 9, 0, 1],
+ 'hwcmd:current:exit-retirement-failure': [0, 2, 2, 0, 0, 0, 0, 0, 0, 1, 2, 1, 9, 2, 1],
+ 'hwcmd:current:repeat-exit': [0, 2, 2, 0, 0, 0, 0, 1, 0, 1, 1, 0, 9, 2, 1],
+ 'hwcmd:current:command-stop-before-handler': [1, 2, 2, 0, 0, 0, 0, 0, 0, 0, 1, 0, 9, 0, 1],
+ 'hwcmd:current:normal-callback': [0, 2, 2, 0, 0, 0, 0, 1, 1, 1, 1, 0, 9, 2, 1],
+ 'hwcmd:current:response-handler-failure': [3, 3, 3, 0, 0, 1, 1, 1, 0, 1, 1, 0, 9, 0, 1],
+ 'hwcmd:current:response-no-handler': [1, 3, 3, 0, 0, 1, 1, 0, 0, 1, 1, 0, 9, 0, 1],
+ 'hwcmd:current:response-exit-before-start': [1, 3, 3, 0, 0, 1, 1, 0, 0, 1, 1, 0, 9, 0, 1],
+ 'hwcmd:current:temperature-too-large': [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 9, 0, 1],
+ 'hwcmd:current:temperature-null': [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 9, 0, 1],
+ 'hwcmd:current:temperature-api-failure': [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 9, 0, 1],
+ 'hwcmd:current:exit-without-threadfn': [0, 2, 2, 0, 0, 0, 0, 0, 0, 1, 1, 0, 9, 2, 1],
+ 'hwcmd:current:response-exit-without-threadfn': [1, 3, 3, 0, 0, 1, 1, 0, 0, 1, 1, 0, 9, 0, 1]}
 
 COMPILED_OBJECTS = {'data': ('drivers/net/wireless/mediatek/mt7615/embedded/common/cmm_data.o',
           'init_tr',
           ('tr_ctl_init', 'tr_ctl_exit')),
  'basic': ('drivers/net/wireless/mediatek/mt7615/embedded/hw_ctrl/hw_ctrl_basic.o',
            'init_basic',
-           ('ser_init', 'ser_exit', 'HwCtrlSerExit', 'HwCtrlInit', 'HwCtrlExit')),
+           ('ser_init',
+            'ser_exit',
+            'HwCtrlSerExit',
+            'HwCtrlInit',
+            'HwCtrlExit',
+            'HwCtrlEnqueueCmd',
+            'HwCtrlSetFlag')),
  'mgmt': ('drivers/net/wireless/mediatek/mt7615/os/linux/rt_rbus_pci_drv.o',
           'init_mgmt',
           ('RtmpMgmtTaskInit', 'RtmpMgmtTaskExit', 'RTMPInitPCIeDevice')),
@@ -5214,7 +5347,10 @@ COMPILED_OBJECTS = {'data': ('drivers/net/wireless/mediatek/mt7615/embedded/comm
  'wdev_apcli': ('drivers/net/wireless/mediatek/mt7615/embedded/ap/ap_apcli.o', 'wdev_apcli', ('APCli_Init',)),
  'wdev_vendor': ('drivers/net/wireless/mediatek/mt7615/embedded/common/vendor.o',
                  'wdev_vendor',
-                 ('init_vie_ctrl', 'deinit_vie_ctrl', 'add_vie', 'find_oui_oitype'))}
+                 ('init_vie_ctrl', 'deinit_vie_ctrl', 'add_vie', 'find_oui_oitype')),
+ 'hwcmd_handler': ('drivers/net/wireless/mediatek/mt7615/embedded/hw_ctrl/hw_ctrl.o',
+                   'hwcmd_handler',
+                   ('HwCtrlGetTemperature',))}
 
 PARENT_EXPORTS = ('target-wifi-built.ko', 'target-wifi-shipped.ko', 'target-wifi-module.cmd', 'target-wifi-link.cmd')
 
@@ -5485,7 +5621,33 @@ SOURCE_ABI = {'chip_hif_type_fragment': 'MT7615_ChipCap.hif_type = HIF_MT;',
                                                '\t\t!RtmpDmaFinalReleaseCheck(pAd))\n'
                                                '\t\treturn;',
                                                'for (IdBss = FIRST_MBSSID; IdBss < sizeof(pAd->ApCfg.MBSSID) /\n'
-                                               '\t\t\tsizeof(pAd->ApCfg.MBSSID[0]); IdBss++) {')}}
+                                               '\t\t\tsizeof(pAd->ApCfg.MBSSID[0]); IdBss++) {')},
+ 'hwcmd_boundary': {'native_pthread_one_selected_worker_exit_race': True,
+                    'kernel_thread_or_DMA_executed': False,
+                    'SER_hooks_are_inert': True,
+                    'external_raw_adapter_callers_are_not_proven_drained': True,
+                    'callback_argument_borrowing_not_generalized': True,
+                    'only_one_serialized_teardown_owner': True,
+                    'kernel_threadfn_skip_is_source_bound_inert_schedule': True,
+                    'all_functions_whole_current_bodies': True},
+ 'hwcmd_declarations': {'typedef struct _HwCmdQElmt \\{[\\s\\S]*?\\} HwCmdQElmt, \\*PHwCmdQElmt;': 'header',
+                        'typedef struct _HwCmdQ \\{[\\s\\S]*?\\} HwCmdQ, \\*PHwCmdQ;': 'header',
+                        'typedef struct _HwFlagCtrl \\{[\\s\\S]*?\\} HwFlagCtrl, \\*PHwFlagCtrl;': 'header',
+                        'typedef struct _HW_CTRL_TXD \\{[\\s\\S]*?\\} HW_CTRL_TXD;': 'header',
+                        'typedef struct _HWCTRL_OP \\{[\\s\\S]*?\\} HWCTRL_OP;': 'header',
+                        'typedef struct _HW_CTRL_T \\{[\\s\\S]*?\\} HW_CTRL_T;': 'header',
+                        'typedef enum _RTMP_TASK_STATUS_ \\{[\\s\\S]*?\\} RTMP_TASK_STATUS;': 'task_header',
+                        '^#define RTMP_TASK_CAN_DO_INSERT[^\\n]*': 'task_header',
+                        '^#define HWCTRL_CMD_TIMEOUT[^\\n]*': 'header',
+                        '^INT32 MtCmdGetThermalSensorResult\\(struct _RTMP_ADAPTER \\*pAd, UINT8 ActionIdx, UINT32 \\*SensorResult\\);': 'mcu_header'},
+ 'hwcmd_status_declarations': {'^#define NDIS_STATUS_SUCCESS\\s+(0x[0-9a-fA-F]+)\\s*$': 0,
+                               '^#define NDIS_STATUS_FAILURE\\s+(0x[0-9a-fA-F]+)\\s*$': 1,
+                               '^#define NDIS_STATUS_RESOURCES\\s+(0x[0-9a-fA-F]+)\\s*$': 3},
+ 'hwcmd_threadfn_skip_fragment': 'if (!test_bit(KTHREAD_SHOULD_STOP, &self.flags)) {\n'
+                                 '\t\tcgroup_kthread_ready();\n'
+                                 '\t\t__kthread_parkme(&self);\n'
+                                 '\t\tret = threadfn(data);\n'
+                                 '\t}'}
 
 ROLE = 'Current initialization, failed-idle containment, command, VIF, probe, workqueue, hardware-resource and wdev ownership inert adapters'
 
@@ -5704,7 +5866,7 @@ def collect_compiled(trunk, wifi_report):
 def function(source, name):
     token = r'"(?:\\[\s\S]|[^"\\])*"|\'(?:\\[\s\S]|[^\'\\])*\'|/\*[\s\S]*?\*/|//[^\n]*'
     masked = re.sub(token, lambda m: ' '*len(m.group()), source)
-    pattern = r'^(?:static\s+)?(?:inline\s+)?(?:VOID|INT|INT32|UINT32|UCHAR|BOOLEAN|NTSTATUS|NDIS_STATUS|int|void|bool|UINT|ULONG|PNET_DEV)\s+(?:(?:DEVINIT|DEVEXIT)\s+)?'+re.escape(name)+r'\s*\([^;{}]*\)\s*\{'
+    pattern = r'^(?:static\s+)?(?:inline\s+)?(?:VOID|INT|INT32|UINT32|UCHAR|BOOLEAN|NTSTATUS|NDIS_STATUS|HwCmdHdlr|HwFlagHdlr|int|void|bool|UINT|ULONG|PNET_DEV)\s+(?:(?:DEVINIT|DEVEXIT)\s+)?'+re.escape(name)+r'\s*\([^;{}]*\)\s*\{'
     found = list(re.finditer(pattern, masked, re.M))
     require(len(found) == 1, 'Missing/ambiguous current init/DMA function: '+name)
     start = found[0].start(); opening = masked.index('{', start); depth = 0
@@ -5719,11 +5881,11 @@ def function(source, name):
 def validate_contract():
     require(set(SOURCE_ABI.get('model_variants',{}))=={'probe','cmwq','resource','wdev'},
             'Exact reviewed probe/CMWQ/resource preprocessor profiles required')
-    require(set(COMPONENTS)=={'init','dma','unwind','quarantine','command','vif','probe','cmwq','resource','wdev'} and len(CASES)==489 and len(COMPILED_OBJECTS)==39,
+    require(set(COMPONENTS)=={'init','dma','unwind','quarantine','command','vif','probe','cmwq','resource','wdev','hwcmd'} and len(CASES)==519 and len(COMPILED_OBJECTS)==40,
             'Exact current init72/DMA29/unwind22/quarantine39/command40/VIF28/probe78/CMWQ42/resource85/WDEV54 object contract required')
-    require(len(SOURCE_PATHS)==150 and len({row[0]for row in COMPILED_OBJECTS.values()})==39 and
-            sum(len(row[2])for row in COMPILED_OBJECTS.values())==144 and
-            len({name for row in COMPILED_OBJECTS.values()for name in row[2]})==144,
+    require(len(SOURCE_PATHS)==161 and len({row[0]for row in COMPILED_OBJECTS.values()})==40 and
+            sum(len(row[2])for row in COMPILED_OBJECTS.values())==147 and
+            len({name for row in COMPILED_OBJECTS.values()for name in row[2]})==147,
             'Exact unique source/object/implementation-symbol inventory required')
     require(COMPILED_OBJECTS.get('probe_hdev')==(
             'drivers/net/wireless/mediatek/mt7615/embedded/hw_ctrl/hdev_ctrl.o','probe_hdev',
@@ -5734,7 +5896,7 @@ def validate_contract():
             ('bcn_buf_init','bcn_buf_deinit')),
             'Exact current beacon object/source/global-symbol binding required')
     require({key:sum(options['component']==key for _,options in CASES)for key in COMPONENTS}==
-            {'init': 72, 'dma': 29, 'unwind': 22, 'quarantine': 39, 'command': 40, 'vif': 28, 'probe': 78, 'cmwq': 42, 'resource': 85, 'wdev': 54},'Exact current init/DMA component counts differ')
+            {'init': 72, 'dma': 29, 'unwind': 22, 'quarantine': 39, 'command': 40, 'vif': 28, 'probe': 78, 'cmwq': 42, 'resource': 85, 'wdev': 54, 'hwcmd': 30},'Exact current init/DMA component counts differ')
     require(len(set(name for name,_ in CASES)) == len(CASES) and set(EXPECTED) == {name for name,_ in CASES},
             'Init/DMA exact case inventory differs')
     for name,options in CASES:
@@ -5868,6 +6030,7 @@ def source_selection(inputs):
         if name=='MBSS_Remove':
             require('bcn_buf_deinit('not in body,
                     'MBSS removal must retain embedded beacon owners for final adapter release')
+    hwcmd=hwcmd_source_profile(inputs)
     return {'status':'PASS','current_K2P_profile':True,'source_only_error_chain':True,
             'hardware_DMA_or_reset_executed':False,'model_preprocessor_is_reduced_control_flow':True,'outer_function_manifest':outer,
             'fw_init_callback_declaration_sha256':sha(callback[0].encode()),
@@ -5930,6 +6093,7 @@ def source_selection(inputs):
                 'RTNL_and_dev_close_are_inert_model_interfaces':True,
                 'fixture_struct_layout_is_real_kernel_ABI':False,
                 'real_netdev_kernel_or_device_execution_performed':False},
+            'hwcmd_variant_contract':hwcmd,
             'resource_variant_contract':{
                 'complete_current_source_functions':17,
                 'inert_model_ring_counts':[2,2],
@@ -5949,6 +6113,26 @@ def source_selection(inputs):
                 'opaque_consumer_public_accessor_required':True,
                 'struct_layout_is_real_kernel_ABI':False,
                 'real_driver_kernel_or_device_execution_performed':False}}
+
+
+def hwcmd_source_profile(inputs):
+    spec=COMPONENTS['hwcmd'];data=literal_data(inputs[spec['harness_key']])
+    exact(data.get('MODEL_BOUNDARY'),SOURCE_ABI['hwcmd_boundary'],'HW command inert boundary differs')
+    exact(data.get('SOURCE_DECLARATIONS'),SOURCE_ABI['hwcmd_declarations'],'HW command source declaration contract differs')
+    exact(data.get('STATUS_DECLARATIONS'),SOURCE_ABI['hwcmd_status_declarations'],'HW command status declaration contract differs')
+    declarations={};statuses={}
+    for pattern,key in SOURCE_ABI['hwcmd_declarations'].items():
+        found=re.findall(pattern,inputs[spec['source_keys'][key]],re.M)
+        require(len(found)==1 and type(found[0])is str,'HW command actual declaration missing/ambiguous')
+        declarations[pattern]=sha(found[0].encode())
+    for pattern,wanted in SOURCE_ABI['hwcmd_status_declarations'].items():
+        found=list(re.finditer(pattern,inputs[spec['source_keys']['os_header']],re.M))
+        require(len(found)==1 and int(found[0].group(1),16)==wanted,'HW command actual status differs')
+        statuses[pattern]=sha(found[0].group().encode())
+    fragment=SOURCE_ABI['hwcmd_threadfn_skip_fragment']
+    require(inputs[spec['source_keys']['kernel_task']].count(fragment)==1,'Actual kernel threadfn skip schedule differs')
+    return dict(SOURCE_ABI['hwcmd_boundary'],actual_declaration_sha256=declarations,status_declaration_sha256=statuses,
+                kernel_threadfn_skip_fragment_sha256=sha(fragment.encode()))
 
 
 def source_definitions(inputs,spec,data,prefix):

@@ -101,6 +101,101 @@ KERNEL_REFERENCE_BODIES = {'try_module_get': 'bool try_module_get(struct module 
                    '}'}
 
 
+HWCMD_DECLARATION_FIXTURES = {'typedef struct _HwCmdQElmt \\{[\\s\\S]*?\\} HwCmdQElmt, \\*PHwCmdQElmt;': 'typedef struct _HwCmdQElmt {\n'
+                                                                            '\tUINT32 type;\n'
+                                                                            '\tUINT32 command;\n'
+                                                                            '\tVOID *buffer;\n'
+                                                                            '\tUINT32 bufferlength;\n'
+                                                                            '\tBOOLEAN NeedWait;\n'
+                                                                            '\tRTMP_OS_COMPLETION ack_done;\n'
+                                                                            '\tVOID *RspBuffer;\n'
+                                                                            '\tUINT32 RspBufferLen;\n'
+                                                                            '\tHwCmdCb CallbackFun;\n'
+                                                                            '\tVOID *CallbackArgs;\n'
+                                                                            '\tNDIS_SPIN_LOCK lock;\n'
+                                                                            '\tos_kref refcnt;\n'
+                                                                            '\tNDIS_STATUS result;\n'
+                                                                            '#ifdef DBG_STARVATION\n'
+                                                                            '\tstruct starv_dbg starv;\n'
+                                                                            '#endif /*DBG_STARVATION*/\n'
+                                                                            '\tstruct _HwCmdQElmt *next;\n'
+                                                                            '} HwCmdQElmt, *PHwCmdQElmt;',
+ 'typedef struct _HwCmdQ \\{[\\s\\S]*?\\} HwCmdQ, \\*PHwCmdQ;': 'typedef struct _HwCmdQ {\n'
+                                                                '\tUINT32 size;\n'
+                                                                '\tHwCmdQElmt *head;\n'
+                                                                '\tHwCmdQElmt *tail;\n'
+                                                                '\tUINT32 CmdQState;\n'
+                                                                '} HwCmdQ, *PHwCmdQ;',
+ 'typedef struct _HwFlagCtrl \\{[\\s\\S]*?\\} HwFlagCtrl, \\*PHwFlagCtrl;': 'typedef struct _HwFlagCtrl {\n'
+                                                                            '\tBOOLEAN\tIsFlagSet;\n'
+                                                                            '\tUINT32\t\tFlagId;\n'
+                                                                            '} HwFlagCtrl, *PHwFlagCtrl;',
+ 'typedef struct _HW_CTRL_TXD \\{[\\s\\S]*?\\} HW_CTRL_TXD;': 'typedef struct _HW_CTRL_TXD {\n'
+                                                              '\tUINT32\t\t\tCmdType;\n'
+                                                              '\tUINT32\t\t\tCmdId;\n'
+                                                              '\tBOOLEAN\t\t\tNeedWait;\n'
+                                                              '\tUINT32\t\t\twait_time;\n'
+                                                              '\tVOID\t\t\t*pInformationBuffer;\n'
+                                                              '\tUINT32\t\t\tInformationBufferLength;\n'
+                                                              '\tVOID\t\t\t*pRespBuffer;\n'
+                                                              '\tUINT32\t\t\tRespBufferLength;\n'
+                                                              '\tHwCmdCb\t\tCallbackFun;\n'
+                                                              '\tVOID\t\t\t*CallbackArgs;\n'
+                                                              '} HW_CTRL_TXD;',
+ 'typedef struct _HWCTRL_OP \\{[\\s\\S]*?\\} HWCTRL_OP;': 'typedef struct _HWCTRL_OP {\n'
+                                                          '\tNTSTATUS (*wifi_sys_open)(struct WIFI_SYS_CTRL '
+                                                          '*wsys);\n'
+                                                          '\tNTSTATUS (*wifi_sys_close)(struct WIFI_SYS_CTRL '
+                                                          '*wsys);\n'
+                                                          '\tNTSTATUS (*wifi_sys_link_up)(struct '
+                                                          'WIFI_SYS_CTRL *wsys);\n'
+                                                          '\tNTSTATUS (*wifi_sys_link_down)(struct '
+                                                          'WIFI_SYS_CTRL *wsys);\n'
+                                                          '\tNTSTATUS (*wifi_sys_connt_act)(struct '
+                                                          'WIFI_SYS_CTRL *wsys);\n'
+                                                          '\tNTSTATUS (*wifi_sys_disconnt_act)(struct '
+                                                          'WIFI_SYS_CTRL *wsys);\n'
+                                                          '\tNTSTATUS (*wifi_sys_peer_update)(struct '
+                                                          'WIFI_SYS_CTRL *wsys);\n'
+                                                          '} HWCTRL_OP;',
+ 'typedef struct _HW_CTRL_T \\{[\\s\\S]*?\\} HW_CTRL_T;': 'typedef struct _HW_CTRL_T {\n'
+                                                          '\tHwCmdQ HwCtrlQ;\n'
+                                                          '\tHwFlagCtrl\tHwCtrlFlag;\n'
+                                                          '\tNDIS_SPIN_LOCK HwCtrlQLock;\t/* CmdQLock '
+                                                          'spinlock */\n'
+                                                          '\tRTMP_OS_TASK HwCtrlTask;\n'
+                                                          '\tUINT32 TotalCnt;\n'
+                                                          '\tHWCTRL_OP hwctrl_ops;\n'
+                                                          '#ifdef ERR_RECOVERY\n'
+                                                          '\tRTMP_OS_TASK ser_task;\n'
+                                                          '\tINT ser_func_state;\n'
+                                                          '\tUINT32 ser_status;\n'
+                                                          '\tNDIS_SPIN_LOCK ser_lock;\n'
+                                                          '\tBOOLEAN ser_initialized;\n'
+                                                          '\tUINT32 ser_times[SER_TIME_ID_END];\n'
+                                                          '#endif /* ERR_RECOVERY */\n'
+                                                          '#ifdef DBG_STARVATION\n'
+                                                          '\tstruct starv_dbg_block block;\n'
+                                                          '#endif /*DBG_STARVATION*/\n'
+                                                          '} HW_CTRL_T;',
+ 'typedef enum _RTMP_TASK_STATUS_ \\{[\\s\\S]*?\\} RTMP_TASK_STATUS;': 'typedef enum _RTMP_TASK_STATUS_ {\n'
+                                                                       '\tRTMP_TASK_STAT_UNKNOWN = 0,\n'
+                                                                       '\tRTMP_TASK_STAT_INITED = 1,\n'
+                                                                       '\tRTMP_TASK_STAT_RUNNING = 2,\n'
+                                                                       '\tRTMP_TASK_STAT_STOPED = 4,\n'
+                                                                       '} RTMP_TASK_STATUS;',
+ '^#define RTMP_TASK_CAN_DO_INSERT[^\\n]*': '#define RTMP_TASK_CAN_DO_INSERT\t\t(RTMP_TASK_STAT_INITED | '
+                                            'RTMP_TASK_STAT_RUNNING)',
+ '^#define HWCTRL_CMD_TIMEOUT[^\\n]*': '#define HWCTRL_CMD_TIMEOUT 100',
+ '^INT32 MtCmdGetThermalSensorResult\\(struct _RTMP_ADAPTER \\*pAd, UINT8 ActionIdx, UINT32 \\*SensorResult\\);': 'INT32 '
+                                                                                                                  'MtCmdGetThermalSensorResult(struct '
+                                                                                                                  '_RTMP_ADAPTER '
+                                                                                                                  '*pAd, '
+                                                                                                                  'UINT8 '
+                                                                                                                  'ActionIdx, '
+                                                                                                                  'UINT32 '
+                                                                                                                  '*SensorResult);'}
+
 def fixture():
     inputs={k:'inert '+k for k in g.SOURCE_PATHS};specs=copy.deepcopy(g.COMPONENTS);models={}
     for c,s in specs.items():
@@ -111,6 +206,11 @@ def fixture():
            'PREFIX':'/* inert model */\n','SUFFIX':'\n/* CASE_ADMISSION */\n'}
         d['SOURCE_ONLY_FUNCTION_SOURCES']=s.get('source_only_functions',{})
         if c in g.SOURCE_ABI.get('model_variants',{}):d['MODEL_VARIANT']=copy.deepcopy(g.SOURCE_ABI['model_variants'][c])
+        if c=='hwcmd':
+            d['MODEL_BOUNDARY']=copy.deepcopy(g.SOURCE_ABI['hwcmd_boundary'])
+            d['SOURCE_DECLARATIONS']=copy.deepcopy(g.SOURCE_ABI['hwcmd_declarations'])
+            d['STATUS_DECLARATIONS']=copy.deepcopy(g.SOURCE_ABI['hwcmd_status_declarations'])
+            d['PREFIX']='SOURCE_DEFINITIONS\n'
         models[c]=d;s['model_data_sha256']=g.model_data_hash(d)
         inputs[s['harness_key']]='\n'.join(k+'='+repr(v)for k,v in d.items())+'\ndef generate_source():\n raise AssertionError("Do not execute generator")\n'
         for name,local in {**s['functions'],**s.get('source_only_functions',{})}.items():
@@ -129,8 +229,13 @@ def fixture():
                 closing='}\n'*(fragments.count('{')-fragments.count('}'))
                 body='NDIS_STATUS '+name+'(void) {\n'+fragments+'\n'+closing+'return 0;\n}\n'
             if body not in inputs[key]:inputs[key]+=body
+    hw=specs['hwcmd']
+    for pattern,key in g.SOURCE_ABI['hwcmd_declarations'].items():
+        inputs[hw['source_keys'][key]]+='\n'+HWCMD_DECLARATION_FIXTURES[pattern]+'\n'
+    inputs[hw['source_keys']['kernel_task']]=g.SOURCE_ABI['hwcmd_threadfn_skip_fragment']
     inputs[specs['probe']['source_keys']['header']]+='\nBOOLEAN BcnContentLockInitialized;\n'
     inputs['os_header']='#define NDIS_STATUS_SUCCESS 0x00\n#define NDIS_STATUS_FAILURE 0x01\n#define NDIS_STATUS_INVALID_DATA 0x02\n#define NDIS_STATUS_RESOURCES 0x03\n#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 29)\n#define KTHREAD_SUPPORT 1\n#endif\n'
+    inputs[specs['hwcmd']['source_keys']['os_header']]=inputs['os_header']
     inputs['wifi_config']='\n'.join(g.SOURCE_ABI['enabled_config']+g.SOURCE_ABI['disabled_config'])+'\n'
     make='DRV_NAME = mt_7615e\nifeq ($(CONFIG_CHIP_MT7615E),y)\nEXTRA_CFLAGS += -DMT7615 -DRTMP_MAC_PCI -DRTMP_PCI_SUPPORT -DLINUX\nendif\n'
     inputs['flags']=inputs['wifi_makefile']=make
@@ -191,11 +296,11 @@ class InitDmaGateTests(unittest.TestCase):
             self.assertEqual(g.function(text,'lifecycle'),body)
             with self.assertRaises(ValueError):g.function(text+'\n'+body,'lifecycle')
 
-    def test_exact_current_ten_component_source_and_object_contract(self):
+    def test_exact_current_eleven_component_source_and_object_contract(self):
         g.validate_contract();g.validate_records(self.rows())
-        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.COMPILED_OBJECTS)),(489,150,39))
-        self.assertEqual((len(g.compiled_export_names()),sum(len(row[2])for row in g.COMPILED_OBJECTS.values())),(78,144))
-        self.assertEqual(set(g.COMPONENTS),{'init','dma','unwind','quarantine','command','vif','probe','cmwq','resource','wdev'})
+        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.COMPILED_OBJECTS)),(519,161,40))
+        self.assertEqual((len(g.compiled_export_names()),sum(len(row[2])for row in g.COMPILED_OBJECTS.values())),(80,147))
+        self.assertEqual(set(g.COMPONENTS),{'init','dma','unwind','quarantine','command','vif','probe','cmwq','resource','wdev','hwcmd'})
         self.assertNotIn('-DCONFIG_PROPRIETARY_DRIVER',g.REQUIRED_OBJECT_FLAGS)
         relative,key,names=g.COMPILED_OBJECTS['probe_hdev']
         self.assertIn('hc_get_os_cookie',names)

@@ -48,7 +48,8 @@ if [ "$flavor" = "k2p-4.4" ]; then
                              3a404e1675467cab79af0ffac454061c1e9150ae \
                              3ba292933a5cdbcaac3d5187d2454b387fbfbcc1 \
                              a23aaa4e11894cad9306bc87bbac3ed310dcf3de \
-                             5ce45fccc96d085f2786b509a51abcba2a136f80; do
+                             5ce45fccc96d085f2786b509a51abcba2a136f80 \
+                             c4d8e113ffba5f85eb5f37a75b3c5f23594ed193; do
     git -C "$root/source" fetch --no-tags --depth=1 origin "$regression_baseline"
     test "$(git -C "$root/source" rev-parse --verify 'FETCH_HEAD^{commit}')" = "$regression_baseline"
     git -C "$root/source" cat-file -e "$regression_baseline^{commit}"
@@ -84,7 +85,8 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_cmd_queue test_rx_transport test_rx_pool test_rx_startup \
                        test_mtd_preflight test_pci_lifecycle test_token_init test_ser_lifecycle test_kthread_owner \
                        test_init_transaction test_dma_lifecycle test_first_arm_unwind test_wsc_init test_dma_quarantine test_dma_command_lifecycle test_vif_lifecycle \
-                       test_probe_oom test_cmwq_lifecycle test_hdev_resource_init test_wdev_lifecycle; do
+                       test_probe_oom test_cmwq_lifecycle test_hdev_resource_init test_wdev_lifecycle \
+                       test_raeth_init test_nor_admission test_raeth_proc test_hwcmd_owner; do
     test -f "$root/source/tests/$required_test.py"
   done
 fi
@@ -150,6 +152,9 @@ if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/check_target_init_dma_lifecycle.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --output "$diagnostics/init-dma-lifecycle-preflight/target-init-dma-lifecycle.json"
+  python3 "$root/scripts/check_target_builtin_lifecycle.py" --preflight --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --output "$diagnostics/builtin-lifecycle-preflight/target-builtin-lifecycle.json"
   test -f "$root/source/tests/mtd_preflight_harness.py"
   python3 "$root/scripts/check_target_mtd_preflight.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
@@ -524,6 +529,9 @@ if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/check_target_mtd_preflight.py" --trunk "$trunk" --rootfs "$trunk/romfs" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" --image "${images[0]}" \
     --mtd-backup-report "$diagnostics/target-mtd-backup.json" --output "$diagnostics/target-mtd-preflight.json"
+  python3 "$root/scripts/check_target_builtin_lifecycle.py" --trunk "$trunk" \
+    --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    --spi-report "$diagnostics/target-spi-nor.json" --output "$diagnostics/target-builtin-lifecycle.json"
   python3 "$root/scripts/check_target_sr3.py" --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --spi-report "$diagnostics/target-spi-nor.json" --output "$diagnostics/target-sr3.json"
@@ -564,6 +572,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
   cp "$diagnostics/target-boot-storage"* "$dist/"
   cp "$diagnostics/target-token-lifecycle"* "$dist/"
   cp "$diagnostics/target-init-dma-lifecycle"* "$dist/"
+  cp "$diagnostics/target-builtin-lifecycle"* "$dist/"
   cp "$diagnostics/target-storage-cache"* "$dist/"
   cp "$diagnostics/target-collector"* "$dist/"
   cp "$diagnostics/target-resident-upgrade.json" "$dist/"
