@@ -236,7 +236,8 @@ SOURCE_PATHS = {'init_tr': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt76
  'tlv_core': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/mcu/andes_core.c',
  'tlv_header': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/include/mcu/mt_cmd.h',
  'tlv_sys': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/common/wifi_sys_info.c',
- 'tlv_os_header': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/include/os/rt_linux.h'}
+ 'tlv_os_header': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/include/os/rt_linux.h',
+ 'tlv_core_header': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/include/mcu/andes_core.h'}
 
 COMPONENTS = {'init': {'paths': {'tr': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/common/cmm_data.c',
                     'basic': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/hw_ctrl/hw_ctrl_basic.c',
@@ -1134,12 +1135,14 @@ COMPONENTS = {'init': {'paths': {'tr': 'trunk/linux-4.4.x/drivers/net/wireless/m
                    'core': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/mcu/andes_core.c',
                    'header': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/include/mcu/mt_cmd.h',
                    'sys': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/common/wifi_sys_info.c',
-                   'os_header': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/include/os/rt_linux.h'},
+                   'os_header': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/include/os/rt_linux.h',
+                   'core_header': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/embedded/include/mcu/andes_core.h'},
          'source_keys': {'fw': 'tlv_fw',
                          'core': 'tlv_core',
                          'header': 'tlv_header',
                          'sys': 'tlv_sys',
-                         'os_header': 'tlv_os_header'},
+                         'os_header': 'tlv_os_header',
+                         'core_header': 'tlv_core_header'},
          'functions': {'AndesAppendCmdMsg': 'core',
                        'AndesAppendHeadCmdMsg': 'core',
                        'AndesForceFreeCmdMsg': 'core',
@@ -1160,7 +1163,7 @@ COMPONENTS = {'init': {'paths': {'tr': 'trunk/linux-4.4.x/drivers/net/wireless/m
                        'CmdExtStaRecUpdate': 'fw',
                        'CmdExtStaRecBaUpdate': 'fw'},
          'source_only_functions': {'AndesSendCmdMsg': 'core', 'starec_feature_decision': 'sys'},
-         'model_data_sha256': '189451aa61629e63f36bd37c358c6fa6315d602a56a8b17db2c1447e64759a45'}}
+         'model_data_sha256': '2d7eed23d97c4ea73fa395cdb65d03070851db904d2fc1235c7b92823069e2d7'}}
 
 CASES = (('init:current:tr-oom1', {'component': 'init', 'variant': 'current', 'selector': 'tr-oom1'}),
  ('init:current:tr-oom2', {'component': 'init', 'variant': 'current', 'selector': 'tr-oom2'}),
@@ -7491,7 +7494,7 @@ def validate_contract():
             'Exact reviewed probe/CMWQ/resource preprocessor profiles required')
     require(set(COMPONENTS)=={'init','dma','unwind','quarantine','command','vif','probe','cmwq','resource','wdev','hwcmd','wsys','terminal','tlv'} and len(CASES)==769 and len(COMPILED_OBJECTS)==48,
             'Exact current init72/DMA29/unwind22/quarantine39/command40/VIF28/probe78/CMWQ42/resource85/WDEV54 object contract required')
-    require(len(SOURCE_PATHS)==223 and len({row[0]for row in COMPILED_OBJECTS.values()})==48 and
+    require(len(SOURCE_PATHS)==224 and len({row[0]for row in COMPILED_OBJECTS.values()})==48 and
             sum(len(row[2])for row in COMPILED_OBJECTS.values())==220 and
             len({name for row in COMPILED_OBJECTS.values()for name in row[2]})==220,
             'Exact unique source/object/implementation-symbol inventory required')

@@ -669,7 +669,7 @@ class InitDmaGateTests(unittest.TestCase):
 
     def test_exact_current_eleven_component_source_and_object_contract(self):
         g.validate_contract();g.validate_records(self.rows())
-        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.COMPILED_OBJECTS)),(769, 223, 48))
+        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.COMPILED_OBJECTS)),(769, 224, 48))
         self.assertEqual((len(g.compiled_export_names()),sum(len(row[2])for row in g.COMPILED_OBJECTS.values())),(96, 220))
         self.assertEqual(set(g.COMPONENTS),{'init','dma','unwind','quarantine','command','vif','probe','cmwq','resource','wdev','hwcmd','wsys','terminal','tlv'})
         self.assertNotIn('-DCONFIG_PROPRIETARY_DRIVER',g.REQUIRED_OBJECT_FLAGS)
