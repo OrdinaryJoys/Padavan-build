@@ -1121,7 +1121,7 @@ COMPONENTS = {'init': {'paths': {'tr': 'trunk/linux-4.4.x/drivers/net/wireless/m
                                         'UpdateDot11hForWdev': 'radar',
                                         'RTMP_COM_IoctlHandle': 'dispatch_core',
                                         'HwCtrlEnqueueCmd': 'basic'},
-              'model_data_sha256': 'ba347c64233de6c1cf23a50fe37a078f53b0823d3855898c81e5e191585d7ecc'}}
+              'model_data_sha256': '266689561f48e3fc5386869b00d96f7b488b3c35ad1bde4bb4770642cc83ff79'}}
 
 CASES = (('init:current:tr-oom1', {'component': 'init', 'variant': 'current', 'selector': 'tr-oom1'}),
  ('init:current:tr-oom2', {'component': 'init', 'variant': 'current', 'selector': 'tr-oom2'}),
