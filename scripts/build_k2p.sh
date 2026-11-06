@@ -91,7 +91,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_probe_oom test_cmwq_lifecycle test_hdev_resource_init test_wdev_lifecycle \
                        test_raeth_init test_nor_admission test_raeth_proc test_hwcmd_owner \
                        test_raeth_runtime test_raeth_qtx test_raeth_ioctl test_wsys_lifecycle test_wsys_teardown \
-                       test_raeth_mdio test_raeth_remove test_reset_core test_wsys_tlv test_esw_error; do
+                       test_raeth_mdio test_raeth_remove test_reset_core test_wsys_tlv test_esw_error test_reset_lifecycle test_esw_vlan; do
     test -f "$root/source/tests/$required_test.py"
   done
   for baseline_fixture in HwCtrlWifiSysClose HwCtrlWifiSysLinkDown HwCtrlWifiSysPeerLinkDown; do

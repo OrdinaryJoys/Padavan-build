@@ -7477,7 +7477,7 @@ def collect_compiled(trunk, wifi_report):
 def function(source, name):
     token = r'"(?:\\[\s\S]|[^"\\])*"|\'(?:\\[\s\S]|[^\'\\])*\'|/\*[\s\S]*?\*/|//[^\n]*'
     masked = re.sub(token, lambda m: ' '*len(m.group()), source)
-    pattern = r'^(?:static\s+)?(?:inline\s+)?(?:VOID|INT|INT32|UINT32|u32|UCHAR|BOOLEAN|NTSTATUS|NDIS_STATUS|HwCmdHdlr|HwFlagHdlr|int|void|bool|unsigned char|unsigned int|unsigned long|long|UINT|ULONG|PNET_DEV|MAC_TABLE_ENTRY|struct radio_dev|struct END_DEVICE)\s+(?:(?:DEVINIT|DEVEXIT)\s+)?\**\s*'+re.escape(name)+r'\s*\([^;{}]*\)\s*\{'
+    pattern = r'^(?:static\s+)?(?:inline\s+)?(?:VOID|INT|INT32|UINT32|u32|UCHAR|BOOLEAN|NTSTATUS|NDIS_STATUS|HwCmdHdlr|HwFlagHdlr|int|void|bool|unsigned char|unsigned int|unsigned long|long|UINT|ULONG|PNET_DEV|MAC_TABLE_ENTRY|struct radio_dev|struct END_DEVICE|struct reset_control)\s+(?:(?:DEVINIT|DEVEXIT)\s+)?\**\s*'+re.escape(name)+r'\s*\([^;{}]*\)\s*\{'
     found = list(re.finditer(pattern, masked, re.M))
     require(len(found) == 1, 'Missing/ambiguous current init/DMA function: '+name)
     start = found[0].start(); opening = masked.index('{', start); depth = 0

@@ -32,6 +32,9 @@ def profile_inputs():
             'SPINOR_OP_WREN':'0x06','SPINOR_OP_WRDI':'0x04','SPINOR_OP_CHIP_ERASE':'0xc7','SR_WIP':'BIT(0)','FSR_READY':'BIT(7)'}.items())+'\n'}
     result['runtime_raeth'] = 'static inline void ei_receive(void) { return; }\nstatic void ei_receive_tasklet(unsigned long unused) { ei_receive(); }\nstatic int fe_int_enable(struct net_device *dev) { if (ei_local->features & FE_INT_TASKLET) { tasklet_init(&ei_local->rx_tasklet, ei_receive_tasklet, 0); } return 0; }\nint ei_open(struct net_device *dev) { err = fe_int_enable(dev); if (err) goto fail_dma; ei_start_dma(dev); return 0; fail_dma: return err; }\nstatic int rather_probe(struct platform_device *pdev) { fe_features_config(ei_local); fe_architecture_config(ei_local); return 0; }\n'
     result['runtime_config'] = '#if defined(CONFIG_SOC_MT7621)\n#define CONFIG_GE1_RGMII_FORCE_1000\n//#define CONFIG_GE1_RGMII_FORCE_1200\n#define CONFIG_RA_NETWORK_TASKLET_BH\n#endif\n#ifdef\tCONFIG_RA_NETWORK_TASKLET_BH\n#define FE_INT_TASKLET\tBIT(7)\n#else\n#define FE_INT_TASKLET\t(0)\n#endif\n#define fe_features_config(end_device)\t\\\n{\\\nend_device->features = 0;\\\nend_device->features |= FE_INT_TASKLET;\\\n}\n'
+    result['esw_ioctl'] = 'static long mtk_esw_ioctl(struct file *file, unsigned int req, unsigned long arg) { return 0; }\nstatic const struct file_operations mtk_esw_fops = { .owner = THIS_MODULE, .unlocked_ioctl = mtk_esw_ioctl, .open = mtk_esw_open, .release = mtk_esw_release, };\nint esw_ioctl_init(void) { r = register_chrdev(MTK_ESW_DEVMAJOR, MTK_ESW_DEVNAME, &mtk_esw_fops); if (r < 0) { return r; } return 0; }\n'
+    result['esw_esw'] = '#include "ioctl.c"\n'
+    result['raeth_makefile'] = 'ifeq ($(CONFIG_RAETH_ESW_CONTROL),y)\nraeth-objs += mtk_esw/ioctl_mt762x.o\nendif\n'
     return result
 
 def optimizer_symbols():
@@ -61,15 +64,64 @@ def mini():
 
 class BuiltinGateTests(unittest.TestCase):
     def test_fixed_disjoint_case_function_and_actual_object_scopes(self):
-        self.assertEqual({c:sum(o['component']==c for _,o in g.CASES)for c in g.COMPONENTS},{'raeth': 45, 'nor': 31, 'proc': 29, 'runtime': 51, 'qtx': 31, 'ioctl': 78, 'reset_core': 17, 'mdio': 34, 'remove': 20, 'esw': 32})
-        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.OBJECTS)),(368, 57, 13))
-        self.assertEqual((sum(len(c['functions'])for c in g.COMPONENTS.values()),sum(len(c['source_only_functions'])for c in g.COMPONENTS.values())),(98, 17))
+        self.assertEqual({c:sum(o['component']==c for _,o in g.CASES)for c in g.COMPONENTS},{'raeth': 45, 'nor': 31, 'proc': 29, 'runtime': 51, 'qtx': 31, 'ioctl': 78, 'reset_core': 17, 'mdio': 34, 'remove': 20, 'esw': 32, 'reset_lifecycle': 48, 'esw_vlan': 42})
+        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.OBJECTS)),(458, 72, 13))
+        self.assertEqual((sum(len(c['functions'])for c in g.COMPONENTS.values()),sum(len(c['source_only_functions'])for c in g.COMPONENTS.values())),(169, 18))
         self.assertIn('ei_init',g.OBJECTS['raeth_driver'][2]);self.assertIn('proc_remove',g.OBJECTS['proc_generic'][2])
         for label in ('raeth_driver','raeth_aggregate','raeth_builtin'):
             self.assertIn('ei_receive_tasklet',g.OBJECTS[label][2]);self.assertNotIn('ei_receive',g.OBJECTS[label][2])
         self.assertIn('ei_receive',g.COMPONENTS['runtime']['functions'])
         self.assertNotIn('ei_receive_tasklet',g.COMPONENTS['runtime']['source_only_functions'])
         symbols=optimizer_symbols();self.assertIn('ei_receive_tasklet',symbols);self.assertNotIn('ei_receive',symbols)
+
+
+    def test_new_reset_scenarios_are_fixed_typed_and_bounded(self):
+        data={'CASE_NAMES':('one','two'),'SCENARIO_DATA':(('one',0,1,0,0,0,0,1,-1,0),('two',1,1,1,0,0,0,1,-1,0))}
+        suffix='before\nSCENARIOS\nafter'
+        rendered=g.reset_lifecycle_scenarios(data,suffix)
+        self.assertIn('{"one",0,1,0,0,0,0,1,-1,0}',rendered)
+        self.assertIn('{"two",1,1,1,0,0,0,1,-1,0}',rendered)
+        for value in (True,2**31,-2**31-1,'1'):
+            wrong=copy.deepcopy(data);rows=list(wrong['SCENARIO_DATA']);row=list(rows[0]);row[1]=value;rows[0]=tuple(row);wrong['SCENARIO_DATA']=tuple(rows)
+            with self.subTest(value=value),self.assertRaises(ValueError):g.reset_lifecycle_scenarios(wrong,suffix)
+        for rows in (data['SCENARIO_DATA'][:-1],tuple(reversed(data['SCENARIO_DATA'])),data['SCENARIO_DATA']+(data['SCENARIO_DATA'][0],)):
+            with self.subTest(rows=rows),self.assertRaises(ValueError):g.reset_lifecycle_scenarios(dict(data,SCENARIO_DATA=rows),suffix)
+        for altered in ('before','SCENARIOS SCENARIOS'):
+            with self.assertRaises(ValueError):g.reset_lifecycle_scenarios(data,altered)
+
+    def test_esw_actual_header_port_and_capability_source_insertions_are_checked(self):
+        names=('CONFIG_RAETH_ESW_PORT_WAN','CONFIG_RAETH_ESW_PORT_LAN1','CONFIG_RAETH_ESW_PORT_LAN2','CONFIG_RAETH_ESW_PORT_LAN3','CONFIG_RAETH_ESW_PORT_LAN4')
+        data=dict(HEADER_KEYS=('common','header','mt762x'),CONFIG_NAMES=names,SOURCE_DECLARATIONS={r'^#define CAP_NET_ADMIN [^\n]+$':'capheader'})
+        spec={'source_keys':{k:k for k in ('config','common','header','mt762x','capheader')}}
+        inputs=dict(config='CONFIG_MULTIUSER=y\n'+'\n'.join(n+'='+str(i)for i,n in enumerate(names)),common='/* actual common */',header='#include "esw_common.h"\n/* actual ioctl */',mt762x='/* actual MT762x */',capheader='#define CAP_NET_ADMIN 12\n')
+        value=g.esw_vlan_definitions(inputs,spec,data,'HEADERS_AND_DEFINITIONS\n')
+        self.assertIn('#define '+names[0]+' 0',value);self.assertIn('#define CAP_NET_ADMIN 12',value)
+        self.assertNotIn('#include "esw_common.h"',value)
+        for key,old,new in (('config','CONFIG_MULTIUSER=y','CONFIG_MULTIUSER=n'),('config',names[0]+'=0',names[0]+'=32'),('config',names[0]+'=0',names[0]+'=0\n'+names[0]+'=0'),('capheader','#define CAP_NET_ADMIN 12',''),('capheader','#define CAP_NET_ADMIN 12','#define CAP_NET_ADMIN 12\n#define CAP_NET_ADMIN 12')):
+            wrong=dict(inputs);wrong[key]=wrong[key].replace(old,new)
+            with self.subTest(key=key,new=new),self.assertRaises(ValueError):g.esw_vlan_definitions(wrong,spec,data,'HEADERS_AND_DEFINITIONS')
+        for wrong in (dict(data,HEADER_KEYS=tuple(reversed(data['HEADER_KEYS']))),dict(data,CONFIG_NAMES=names[:-1])):
+            with self.assertRaises(ValueError):g.esw_vlan_definitions(inputs,spec,wrong,'HEADERS_AND_DEFINITIONS')
+
+    def test_esw_static_callback_table_registration_and_actual_translation_unit_are_bound(self):
+        original=profile_inputs();proof=g.esw_ioctl_callback_binding(original)
+        self.assertEqual(proof['actual_object_label'],'esw');self.assertEqual(proof['callback_linkage'],'static')
+        self.assertTrue(proof['linked_vmlinux_symbol_required']);self.assertFalse(proof['relocated_callback_machine_code_equivalence_replayed'])
+        for key,old,new in (('esw_ioctl','static long mtk_esw_ioctl','long mtk_esw_ioctl'),('esw_ioctl','.unlocked_ioctl = mtk_esw_ioctl','.unlocked_ioctl = other_ioctl'),('esw_ioctl','&mtk_esw_fops','&other_fops'),('esw_ioctl','if (r < 0)','if (r > 0)'),('esw_esw','#include "ioctl.c"','#include "other.c"'),('raeth_makefile','mtk_esw/ioctl_mt762x.o','mtk_esw/ioctl.o')):
+            wrong=dict(original);wrong[key]=wrong[key].replace(old,new)
+            with self.subTest(key=key,new=new),self.assertRaises(ValueError):g.esw_ioctl_callback_binding(wrong)
+        wrong=dict(original);wrong['esw_esw']*=2
+        with self.assertRaises(ValueError):g.esw_ioctl_callback_binding(wrong)
+        for label,names in (('esw',('mtk_esw_ioctl','esw_ioctl_init')),('reset_core',('reset_control_assert','reset_control_deassert','reset_control_put','__devm_reset_control_get'))):
+            for name in names:self.assertIn(name,g.OBJECTS[label][2])
+        self.assertEqual(len(g.OBJECTS),13)
+
+    def test_reset_pointer_complete_body_parser_rejects_ambiguity_and_prototypes(self):
+        reader=g.model.function
+        body='static struct reset_control *__reset_control_get(void) { char *s="}"; /* { */ if (s) { return s; } return 0; }'
+        self.assertEqual(reader(body,'__reset_control_get'),body)
+        for text in (body+'\n'+body,'static struct reset_control *__reset_control_get(void);'):
+            with self.assertRaises(ValueError):reader(text,'__reset_control_get')
 
     def test_exact_typed_case_observations_reject_bool_aliases(self):
         g.validate_rows(rows())
@@ -99,7 +151,9 @@ class BuiltinGateTests(unittest.TestCase):
             self.assertEqual(g.COMPONENT_FLAGS[old],())
         self.assertEqual(g.COMPONENT_FLAGS['mdio'],('-Wno-unused-parameter',))
         self.assertEqual(g.COMPONENT_FLAGS['esw'],('-Wno-unused-variable','-Wno-unused-parameter','-Wno-unused-but-set-variable'))
-        self.assertIn('physical DMA',' '.join(g.LIMITS));self.assertEqual(len(g.exports()),57)
+        self.assertEqual(g.COMPONENT_FLAGS['esw_vlan'],g.COMPONENT_FLAGS['esw'])
+        self.assertEqual(g.COMPONENT_FLAGS['reset_lifecycle'],('-Wno-unused-parameter',))
+        self.assertIn('physical DMA',' '.join(g.LIMITS));self.assertEqual(len(g.exports()),63)
 
     def test_kernel_board_and_ring_constants_are_required(self):
         g.source_profile(profile_inputs())
@@ -109,7 +163,7 @@ class BuiltinGateTests(unittest.TestCase):
             with self.subTest(key=key),self.assertRaises(ValueError):g.source_profile(bad)
 
         proof=g.source_profile(profile_inputs())
-        self.assertEqual(proof['reference_functions'],2)
+        self.assertEqual(proof['reference_functions'],3)
         owner=proof['receive_callback_binding']
         self.assertEqual(owner['execution'],'source-only-not-run')
         self.assertFalse(owner['inline_callee_standalone_symbol_required'])
