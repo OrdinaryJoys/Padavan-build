@@ -10,7 +10,7 @@ def rows():
     return [dict(case=n,inputs=copy.deepcopy(o),observed=copy.deepcopy(g.EXPECTED[n]))for n,o in g.CASES]
 
 def profile_inputs():
-    return {'raeth_raeth':'.suppress_bind_attrs = true,','raeth_device_header':'bool suppress_bind_attrs;',
+    result = {'raeth_raeth':'.suppress_bind_attrs = true,','raeth_device_header':'bool suppress_bind_attrs;',
         'raeth_bus':'int bus_add_driver(void) { if (!drv->suppress_bind_attrs) { error = add_bind_files(drv); } return 0; }',
         'raeth_header':'#define MAX_RX_RING_NUM 4\n',
         'nor_nor':'#define DEFAULT_READY_WAIT_JIFFIES (40UL * HZ)\n',
@@ -19,6 +19,24 @@ def profile_inputs():
         'kernel_config':'CONFIG_RAETH=y\nCONFIG_MTD_SPI_NOR=y\nCONFIG_CPU_LITTLE_ENDIAN=y\nCONFIG_SOC_MT7621=y\n',
         'nor_header':'enum spi_nor_ops { SPI_NOR_OPS_READ=0,SPI_NOR_OPS_WRITE,SPI_NOR_OPS_ERASE,SPI_NOR_OPS_LOCK,SPI_NOR_OPS_UNLOCK,};\nenum spi_nor_option_flags {SNOR_F_USE_FSR=BIT(0),};\n'+'\n'.join('#define '+n+' '+v for n,v in {'SPINOR_OP_RDSR':'0x05','SPINOR_OP_RDFSR':'0x70',
             'SPINOR_OP_WREN':'0x06','SPINOR_OP_WRDI':'0x04','SPINOR_OP_CHIP_ERASE':'0xc7','SR_WIP':'BIT(0)','FSR_READY':'BIT(7)'}.items())+'\n'}
+    result['runtime_raeth'] = 'static inline void ei_receive(void) { return; }\nstatic void ei_receive_tasklet(unsigned long unused) { ei_receive(); }\nstatic int fe_int_enable(struct net_device *dev) { if (ei_local->features & FE_INT_TASKLET) { tasklet_init(&ei_local->rx_tasklet, ei_receive_tasklet, 0); } return 0; }\nint ei_open(struct net_device *dev) { err = fe_int_enable(dev); if (err) goto fail_dma; ei_start_dma(dev); return 0; fail_dma: return err; }\nstatic int rather_probe(struct platform_device *pdev) { fe_features_config(ei_local); fe_architecture_config(ei_local); return 0; }\n'
+    result['runtime_config'] = '#if defined(CONFIG_SOC_MT7621)\n#define CONFIG_GE1_RGMII_FORCE_1000\n//#define CONFIG_GE1_RGMII_FORCE_1200\n#define CONFIG_RA_NETWORK_TASKLET_BH\n#endif\n#ifdef\tCONFIG_RA_NETWORK_TASKLET_BH\n#define FE_INT_TASKLET\tBIT(7)\n#else\n#define FE_INT_TASKLET\t(0)\n#endif\n#define fe_features_config(end_device)\t\\\n{\\\nend_device->features = 0;\\\nend_device->features |= FE_INT_TASKLET;\\\n}\n'
+    return result
+
+def optimizer_symbols():
+    # A compiler-owned inline body may disappear while its escaped callback stays.
+    import subprocess, tempfile, shutil
+    compiler = shutil.which('cc'); nm = shutil.which('nm')
+    if not compiler or not nm: raise AssertionError('Native strict compiler/nm required')
+    source = ('static volatile unsigned long observed;\n'
+              'static inline void ei_receive(void) { observed++; }\n'
+              'static void ei_receive_tasklet(unsigned long unused) { (void)unused; ei_receive(); }\n'
+              'void (*owner)(unsigned long) = ei_receive_tasklet;\n')
+    with tempfile.TemporaryDirectory(prefix='builtin-inline-owner-') as temp:
+        unit = Path(temp)/'owner.c'; obj = Path(temp)/'owner.o'; unit.write_text(source)
+        subprocess.run([compiler,'-O2','-Wall','-Wextra','-Werror','-c',str(unit),'-o',str(obj)],check=True,capture_output=True)
+        return {line.split()[-1].removeprefix('_') for line in subprocess.check_output([nm,str(obj)],text=True).splitlines() if line.split()}
+
 
 def mini():
     data=dict(SOURCE_PATHS={'raeth':'c.c'},FUNCTION_SOURCES={'work':'raeth'},SOURCE_ONLY_FUNCTION_SOURCES={'never':'raeth'},
@@ -36,6 +54,11 @@ class BuiltinGateTests(unittest.TestCase):
         self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.OBJECTS)),(259, 34, 9))
         self.assertEqual((sum(len(c['functions'])for c in g.COMPONENTS.values()),sum(len(c['source_only_functions'])for c in g.COMPONENTS.values())),(65, 9))
         self.assertIn('ei_init',g.OBJECTS['raeth_driver'][2]);self.assertIn('proc_remove',g.OBJECTS['proc_generic'][2])
+        for label in ('raeth_driver','raeth_aggregate','raeth_builtin'):
+            self.assertIn('ei_receive_tasklet',g.OBJECTS[label][2]);self.assertNotIn('ei_receive',g.OBJECTS[label][2])
+        self.assertIn('ei_receive',g.COMPONENTS['runtime']['functions'])
+        self.assertNotIn('ei_receive_tasklet',g.COMPONENTS['runtime']['source_only_functions'])
+        symbols=optimizer_symbols();self.assertIn('ei_receive_tasklet',symbols);self.assertNotIn('ei_receive',symbols)
 
     def test_exact_typed_case_observations_reject_bool_aliases(self):
         g.validate_rows(rows())
@@ -62,6 +85,28 @@ class BuiltinGateTests(unittest.TestCase):
                            ('kernel_config','SPI_NOR=y','SPI_NOR=m'),('kernel_config','SOC_MT7621=y','SOC_MT7621=m'),('nor_header','BIT(0)','BIT(1)'),('nor_nor','40UL','50UL'),('proc_reg','mt7621','changed'),('proc_config','BIT(1)','BIT(2)'),('nor_header','READ=0','READ=1')):
             bad=profile_inputs();bad[key]=bad[key].replace(old,new)
             with self.subTest(key=key),self.assertRaises(ValueError):g.source_profile(bad)
+
+        proof=g.source_profile(profile_inputs())
+        self.assertEqual(proof['reference_functions'],2)
+        owner=proof['receive_callback_binding']
+        self.assertEqual(owner['execution'],'source-only-not-run')
+        self.assertFalse(owner['inline_callee_standalone_symbol_required'])
+        for key,old,new in (
+            ('runtime_raeth','{ ei_receive(); }','{ other_receive(); }'),
+            ('runtime_raeth','unsigned long unused','unsigned int unused'),
+            ('runtime_raeth','static void ei_receive_tasklet','static void removed_callback'),
+            ('runtime_raeth','ei_receive_tasklet, 0','ei_receive_workq, 0'),
+            ('runtime_raeth','features & FE_INT_TASKLET','features & FE_INT_WORKQ'),
+            ('runtime_raeth','if (err) goto fail_dma;','if (err) return 0;'),
+            ('runtime_raeth','fe_features_config(ei_local);','other_features(ei_local);'),
+            ('runtime_config','#define CONFIG_RA_NETWORK_TASKLET_BH','#define DISABLED_TASKLET'),
+            ('runtime_config','FE_INT_TASKLET\tBIT(7)','FE_INT_TASKLET\tBIT(6)'),
+            ('runtime_config','features |= FE_INT_TASKLET','features |= FE_INT_WORKQ')):
+            bad=profile_inputs();assert old in bad[key];bad[key]=bad[key].replace(old,new)
+            with self.subTest(callback_owner=(key,old)),self.assertRaises(ValueError):g.source_profile(bad)
+        for extra in ('\nstatic void ei_receive_tasklet(unsigned long unused) { ei_receive(); }\n',):
+            bad=profile_inputs();bad['runtime_raeth']+=extra
+            with self.assertRaises(ValueError):g.source_profile(bad)
 
     def test_manual_unbind_guard_requires_actual_flag_and_driver_core_consumer(self):
         for key in ('raeth_raeth','raeth_device_header','raeth_bus'):

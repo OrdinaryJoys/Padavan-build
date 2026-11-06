@@ -3970,7 +3970,7 @@ OBJECTS = {'raeth_driver': ('drivers/net/ethernet/raeth/raether.o',
                    'ei_uninit',
                    'ei_open',
                    'ei_close',
-                   'ei_receive',
+                   'ei_receive_tasklet',
                    'ei_ioctl',
                    'virtualif_ioctl'),
                   ('drivers/net/ethernet/raeth/raether.c',)),
@@ -3987,7 +3987,7 @@ OBJECTS = {'raeth_driver': ('drivers/net/ethernet/raeth/raether.o',
                       'debug_proc_exit',
                       'ei_open',
                       'ei_close',
-                      'ei_receive',
+                      'ei_receive_tasklet',
                       'fe_pdma_wait_dma_idle',
                       'fe_pdma_rx_dma_init',
                       'fe_pdma_rx_dma_deinit',
@@ -4023,7 +4023,7 @@ OBJECTS = {'raeth_driver': ('drivers/net/ethernet/raeth/raether.o',
                     'debug_proc_exit',
                     'ei_open',
                     'ei_close',
-                    'ei_receive',
+                    'ei_receive_tasklet',
                     'fe_pdma_wait_dma_idle',
                     'fe_pdma_rx_dma_init',
                     'fe_pdma_rx_dma_deinit',
@@ -4166,6 +4166,62 @@ def command(raw):
     require(type(raw) is bytes and 0 < len(raw) <= MAX_COMMAND and b'\0' not in raw, 'Built-in lifecycle command budget/type')
     return raw.decode()
 
+def receive_callback_binding(inputs):
+    # The inline callee remains whole-modeled; only its address-escaping owner
+    # is required to survive optimization as a standalone actual ELF symbol.
+    source = inputs['runtime_raeth']
+    callback = model.function(source, 'ei_receive_tasklet')
+    callee = model.function(source, 'ei_receive')
+    registration = model.function(source, 'fe_int_enable')
+    opened = model.function(source, 'ei_open')
+    constructor = model.function(source, 'rather_probe')
+    compact = lambda text: re.sub(r'\s+', '', text)
+    require(compact(callback) == 'staticvoidei_receive_tasklet(unsignedlongunused){ei_receive();}',
+            'Built-in receive callback body/callee differs')
+    require(re.fullmatch(r'static\s+inline\s+void\s+ei_receive\s*\(\s*void\s*\)\s*', callee.split('{', 1)[0]) is not None,
+            'Built-in receive whole-modeled inline callee differs')
+    callsite = 'if(ei_local->features&FE_INT_TASKLET){tasklet_init(&ei_local->rx_tasklet,ei_receive_tasklet,0);}'
+    require(compact(registration).count(callsite) == 1 and
+            len(re.findall(r'\btasklet_init\s*\(\s*&ei_local->rx_tasklet\s*,', registration)) == 1,
+            'Built-in receive callback registration differs')
+    require(compact(opened).count('err=fe_int_enable(dev);if(err)gotofail_dma;ei_start_dma(dev);') == 1,
+            'Built-in receive callback open/admission chain differs')
+    require(compact(constructor).count('fe_features_config(ei_local);fe_architecture_config(ei_local);') == 1,
+            'Built-in receive callback feature constructor differs')
+    config = inputs['runtime_config']
+    selected = '#if defined(CONFIG_SOC_MT7621)\n#define CONFIG_GE1_RGMII_FORCE_1000\n//#define CONFIG_GE1_RGMII_FORCE_1200\n#define CONFIG_RA_NETWORK_TASKLET_BH\n#endif'
+    feature = '#ifdef\tCONFIG_RA_NETWORK_TASKLET_BH\n#define FE_INT_TASKLET\tBIT(7)\n#else\n#define FE_INT_TASKLET\t(0)\n#endif'
+    require(config.count(selected) == 1 and config.count(feature) == 1 and
+            len(re.findall(r'^#define[ \t]+CONFIG_RA_NETWORK_TASKLET_BH[ \t]*$', config, re.M)) == 1 and
+            not re.search(r'^#define[ \t]+CONFIG_RA_NETWORK_WORKQUEUE_BH\b', config, re.M),
+            'Built-in receive callback MT7621 tasklet selection differs')
+    definitions = list(re.finditer(r'^#define[ \t]+fe_features_config\(end_device\)', config, re.M))
+    require(len(definitions) == 1, 'Built-in receive feature macro missing/ambiguous')
+    body = []
+    for line in config[definitions[0].start():].splitlines(keepends=True):
+        body.append(line)
+        if not line.rstrip().endswith('\\'): break
+    feature_macro = ''.join(body).rstrip('\n')
+    require(compact(feature_macro).count('end_device->features=0;') == 1 and
+            compact(feature_macro).count('end_device->features|=FE_INT_TASKLET;') == 1,
+            'Built-in receive tasklet feature assignment differs')
+    require(inputs['kernel_config'].splitlines().count('CONFIG_SOC_MT7621=y') == 1,
+            'Built-in receive callback compiled board selection differs')
+    return {'source': SOURCE_PATHS['runtime_raeth'], 'execution': 'source-only-not-run',
+            'callback': 'ei_receive_tasklet', 'callee': 'ei_receive',
+            'callback_full_body_sha256': sha(callback.encode()),
+            'callee_whole_body_sha256': sha(callee.encode()),
+            'registration_function': 'fe_int_enable', 'registration_full_body_sha256': sha(registration.encode()),
+            'open_function': 'ei_open', 'open_full_body_sha256': sha(opened.encode()),
+            'constructor_function': 'rather_probe', 'constructor_full_body_sha256': sha(constructor.encode()),
+            'selected_tasklet_block_sha256': sha(selected.encode()), 'tasklet_feature_block_sha256': sha(feature.encode()),
+            'feature_macro_sha256': sha(feature_macro.encode()),
+            'actual_symbol': 'ei_receive_tasklet',
+            'actual_object_labels': ['raeth_driver', 'raeth_aggregate', 'raeth_builtin'],
+            'linked_vmlinux_symbol_required': True,
+            'inline_callee_standalone_symbol_required': False,
+            'relocated_callee_machine_code_equivalence_replayed': False}
+
 def source_profile(inputs):
     constants={}
     def macro(text,name,wanted,one=True):
@@ -4200,6 +4256,7 @@ def source_profile(inputs):
     return {'RAETH_builtin':True, 'MAX_RX_RING_NUM':4, 'MTD_SPI_NOR_builtin':True,
             'CPU_LITTLE_ENDIAN':True, 'NOR_macros':macros,'source_constant_sha256':constants, 'model_layout_is_real_kernel_ABI':False,
             'model_variants':{c:v['model_variant']for c,v in COMPONENTS.items()},
+            'reference_functions':2, 'receive_callback_binding':receive_callback_binding(inputs),
             'manual_bind_unbind_guard':{'driver_flag':True,'kernel_consumer_execution':'source-only-not-run',
                 'bus_add_driver_full_body_sha256':sha(bus.encode()),'driver_field_sha256':sha(field[0].encode())}}
 
