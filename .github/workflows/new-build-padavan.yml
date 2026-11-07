@@ -55,7 +55,7 @@ jobs:
             libtool-bin automake autopoint pkg-config gperf cmake fakeroot \
             kmod cpio iproute2 python3 python3-docutils help2man xz-utils patch \
             zlib1g-dev libgmp-dev libmpc-dev libmpfr-dev libncurses5-dev \
-            libltdl-dev libc6-i386 ca-certificates qemu-user squashfs-tools
+            libltdl-dev libc6-i386 ca-certificates gnupg qemu-user squashfs-tools
           echo /usr/lib/llvm-14/bin >> "$GITHUB_PATH"
           /usr/lib/llvm-14/bin/clang --version > diagnostics/host-compiler.txt
           /usr/lib/llvm-14/bin/clang -print-resource-dir >> diagnostics/host-compiler.txt
@@ -65,6 +65,42 @@ jobs:
           /usr/lib/llvm-14/bin/clang -Wall -Wextra -Werror -fsanitize=address,undefined \
             diagnostics/host-sanitizer-probe.c -o diagnostics/host-sanitizer-probe
           diagnostics/host-sanitizer-probe
+
+      - name: Install GNU16 host regression compiler
+        run: |
+          set -euo pipefail
+          mkdir -p diagnostics
+          # Numbered compiler only: retain Ubuntu22's default host compiler.
+          gcc16_version='16-20260315-1ubuntu1~22~ppa1'
+          gcc16_fingerprint='C8EC952E2A0E1FBDC5090F6A2C277A0A352154E5'
+          curl --fail --show-error --silent --location --connect-timeout 15 --max-time 60 --proto '=https' --proto-redir '=https' \
+            'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xC8EC952E2A0E1FBDC5090F6A2C277A0A352154E5' \
+            --output diagnostics/ubuntu-toolchain-r-test.asc
+          gpg --batch --show-keys --with-colons diagnostics/ubuntu-toolchain-r-test.asc \
+            > diagnostics/gcc16-signing-key.txt
+          test "$(awk -F: '$1=="pub"{n++}END{print n+0}' diagnostics/gcc16-signing-key.txt)" = 1
+          test "$(awk -F: '$1=="fpr"{print $10;exit}' diagnostics/gcc16-signing-key.txt)" = "$gcc16_fingerprint"
+          gpg --batch --yes --dearmor --output diagnostics/ubuntu-toolchain-r-test.gpg \
+            diagnostics/ubuntu-toolchain-r-test.asc
+          sudo install -m 0644 diagnostics/ubuntu-toolchain-r-test.gpg /usr/share/keyrings/ubuntu-toolchain-r-test.gpg
+          printf '%s\n' 'deb [arch=amd64 signed-by=/usr/share/keyrings/ubuntu-toolchain-r-test.gpg] https://ppa.launchpadcontent.net/ubuntu-toolchain-r/test/ubuntu jammy main' \
+            | sudo tee /etc/apt/sources.list.d/ubuntu-toolchain-r-test.list > /dev/null
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "gcc-16=$gcc16_version"
+          sudo dpkg-query --show --showformat='${binary:Package} ${Version} ${Architecture}\n' gcc-16 \
+            > diagnostics/gcc16-package.txt
+          sudo apt-cache policy gcc-16 > diagnostics/gcc16-package-policy.txt
+          command -v gcc-16 > diagnostics/host-gcc16.txt
+          gcc-16 --version >> diagnostics/host-gcc16.txt
+          gcc16_major=$(gcc-16 -dumpversion)
+          test "${gcc16_major%%.*}" = 16
+          gcc-16 -dumpmachine >> diagnostics/host-gcc16.txt
+          printf '%s\n' '#if !defined(__GNUC__) || __GNUC__ != 16 || defined(__clang__)' \
+            '#error GNU GCC16 is required for host regressions' '#endif' \
+            'int main(void) { return 0; }' > diagnostics/host-gcc16-probe.c
+          gcc-16 -std=gnu99 -O2 -Wall -Wextra -Werror diagnostics/host-gcc16-probe.c \
+            -o diagnostics/host-gcc16-probe
+          diagnostics/host-gcc16-probe
 
       - name: Check firmware validator
         run: |

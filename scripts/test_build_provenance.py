@@ -271,6 +271,91 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
                 result,calls,done=self.new_target_gate_block(late=True,fault=name)
                 self.assertEqual(result.returncode,23);self.assertEqual(len(calls),i+1);self.assertFalse(done)
 
+    def test_ci_gnu16_dependency_authenticates_key_and_requires_exact_compiler_and_probe(self):
+        workflow=(Path(__file__).parents[1]/'.github/workflows/new-build-padavan.yml').read_text()
+        begin=workflow.index('      - name: Install GNU16 host regression compiler\n')
+        end=workflow.index('      - name: Check firmware validator\n',begin)
+        self.assertLess(workflow.index('      - name: Install build dependencies\n'),begin)
+        body=workflow[begin:end].split('        run: |\n',1)[1]
+        self.assertTrue(all(not line.strip()or line.startswith('          ')for line in body.splitlines()))
+        block='\n'.join(line[10:]for line in body.splitlines())+'\n'
+        for token in ('signed-by=/usr/share/keyrings/ubuntu-toolchain-r-test.gpg',
+                      'https://ppa.launchpadcontent.net/ubuntu-toolchain-r/test/ubuntu jammy main',
+                      'C8EC952E2A0E1FBDC5090F6A2C277A0A352154E5',
+                      "gcc16_version='16-20260315-1ubuntu1~22~ppa1'",'__GNUC__ != 16','defined(__clang__)',
+                      '--connect-timeout 15','--max-time 60'):
+            self.assertIn(token,block)
+        for token in ('--insecure','trusted=yes','--allow-unauthenticated','update-alternatives','export CC=','|| true'):
+            self.assertNotIn(token,block)
+        tools=self.root/'gcc16-inert-tools';tools.mkdir()
+        stub=r'''#!/usr/bin/env python3
+import json,os,sys
+from pathlib import Path
+name=Path(sys.argv[0]).name;args=sys.argv[1:];fault=os.environ['CI_GCC16_FAULT']
+row={'program':name,'args':args}
+if name=='sudo' and args and args[0]=='tee':row['stdin']=sys.stdin.read()
+with open(os.environ['CI_GCC16_LOG'],'a')as log:log.write(json.dumps(row)+'\n')
+if name=='curl':
+ if fault=='download':sys.exit(23)
+ Path(args[args.index('--output')+1]).write_text('inert public signing key\n')
+elif name=='gpg':
+ if '--show-keys'in args:
+  print('pub:-:4096:1:352154E5:0:0::::')
+  print('fpr:::::::::'+('0'*40 if fault=='fingerprint'else'C8EC952E2A0E1FBDC5090F6A2C277A0A352154E5')+':')
+  if fault=='extra-key':print('pub:-:4096:1:OTHER:0:0::::\nfpr:::::::::'+'f'*40+':')
+ elif '--dearmor'in args:
+  if fault=='dearmor':sys.exit(23)
+  Path(args[args.index('--output')+1]).write_bytes(b'inert scoped keyring')
+ else:sys.exit(29)
+elif name=='sudo':
+ if 'apt-get'in args:
+  phase='install'if'install'in args else'update'
+  if fault=='apt-'+phase:sys.exit(23)
+ elif 'dpkg-query'in args:print('gcc-16 16-20260315-1ubuntu1~22~ppa1 amd64')
+ elif 'apt-cache'in args:print('gcc-16: Candidate: 16-20260315-1ubuntu1~22~ppa1')
+ elif not args or args[0]not in('install','tee'):sys.exit(29)
+elif name=='gcc-16':
+ if '--version'in args:print('inert GNU GCC16 package version')
+ elif '-dumpversion'in args:print('11.4.0'if fault=='major'else'16.0.1')
+ elif '-dumpmachine'in args:print('x86_64-linux-gnu')
+ elif '-o'in args:
+  if fault=='compile':sys.exit(23)
+  source=next(Path(v)for v in args if v.endswith('.c'))
+  if '__GNUC__ != 16'not in source.read_text():sys.exit(29)
+  output=Path(args[args.index('-o')+1])
+  output.write_text('#!/bin/sh\nprintf \'%s\\n\' \'{"program":"probe","args":[]}\' >> "$CI_GCC16_LOG"\nexit '+('17'if fault=='run'else'0')+'\n')
+  output.chmod(0o755)
+ else:sys.exit(29)
+else:sys.exit(29)
+'''
+        for name in ('curl','gpg','sudo','gcc-16'):
+            path=tools/name;path.write_text(stub);path.chmod(0o755)
+        for fault in ('','download','fingerprint','extra-key','dearmor','apt-update','apt-install','major','compile','run'):
+            with self.subTest(fault=fault):
+                work=self.root/('gcc16-case-'+(fault or 'positive'));work.mkdir()
+                log=work/'calls.jsonl';marker=work/'following-step'
+                result=subprocess.run(['bash','-c',block+'touch "$CI_GCC16_MARKER"\n'],cwd=work,
+                    env=dict(os.environ,PATH=str(tools)+os.pathsep+os.environ.get('PATH',''),
+                             CI_GCC16_LOG=str(log),CI_GCC16_FAULT=fault,CI_GCC16_MARKER=str(marker)),
+                    capture_output=True,text=True,timeout=10)
+                calls=[json.loads(line)for line in log.read_text().splitlines()]
+                self.assertEqual(result.returncode==0,not bool(fault),(result.stdout,result.stderr))
+                self.assertEqual(marker.exists(),not bool(fault))
+                if fault in ('download','fingerprint','extra-key','dearmor'):
+                    self.assertFalse(any(row['program']=='sudo'for row in calls))
+                if fault in ('apt-update','apt-install'):
+                    self.assertFalse(any(row['program']=='gcc-16'for row in calls))
+                if fault=='major':self.assertFalse((work/'diagnostics/host-gcc16-probe.c').exists())
+                if not fault:
+                    tee=next(row for row in calls if row['program']=='sudo'and row['args'][0]=='tee')
+                    self.assertEqual(tee['stdin'],'deb [arch=amd64 signed-by=/usr/share/keyrings/ubuntu-toolchain-r-test.gpg] https://ppa.launchpadcontent.net/ubuntu-toolchain-r/test/ubuntu jammy main\n')
+                    installs=[row for row in calls if row['program']=='sudo'and'apt-get'in row['args']and'install'in row['args']]
+                    self.assertEqual(len(installs),1);self.assertIn('gcc-16=16-20260315-1ubuntu1~22~ppa1',installs[0]['args'])
+                    compile_calls=[row for row in calls if row['program']=='gcc-16'and'-o'in row['args']]
+                    self.assertEqual(len(compile_calls),1)
+                    self.assertTrue({'-std=gnu99','-O2','-Wall','-Wextra','-Werror'}<=set(compile_calls[0]['args']))
+                    self.assertEqual(calls[-1]['program'],'probe')
+
     def test_wifi_module_and_object_evidence_is_copied_into_firmware_artifact(self):
         script=Path(__file__).with_name('build_k2p.sh').read_text()
         lines=[line for line in script.splitlines()if line.startswith('  cp "$diagnostics/target-wifi-')]
