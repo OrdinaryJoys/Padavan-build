@@ -36,7 +36,7 @@ EXPECTED_SOURCE_SHA256 = {
     'storage': 'b2e40a853fb308d7b7d773f903c034cf5ab32f67d92ceed542c130ac64f6d017',
     'dev_init': 'd6bc8c0d7ebc1f0a17fe00cdb1a0752d29899b1b417a3091d851cf5c0369aef9',
     'reset_ss': 'dbe46eb5391499bbf6b88f212ca9420870ce2b0158d5b185cc6fd01ed7edefd8',
-    'rc': '261cb624ee1446dcb28436f2397696886ce51ff22b2797230a9901f0aeaed80e',
+    'rc': '42faa099442a48dce222c9f399e85cf630bf9a8b356b958db1ed2f37cd876371',
     'init': '1d01ebbbd9a130d5d5cda3ed7ac20befb8624abec556aff6fbe439f14eadae52',
     'rc_header': '04002579c5c64f235a2b43682e4bb64e267406af725f0006d96956bcd04f711a',
     'runner': 'c847b8939ceeaddade736e57b0f9dd032d501a4c19f0c1c53db2140c060c0020',
