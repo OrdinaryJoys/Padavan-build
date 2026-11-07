@@ -571,6 +571,10 @@ class RxTransportGateTests(unittest.TestCase):
                 (tests / (name + '.py')).touch()
             baseline=tests/'fixtures/wsys-terminal';baseline.mkdir(parents=True)
             for name in ('HwCtrlWifiSysClose','HwCtrlWifiSysLinkDown','HwCtrlWifiSysPeerLinkDown'):(baseline/(name+'.c')).touch()
+            controls=tests/'fixtures/esw-controls';controls.mkdir(parents=True)
+            control_files=('change_led_mode.c','change_storm_control_broadcast.c','change_jumbo_frames_accept.c',
+                           'change_port_link_mode_uapi.c','esw_status_link_port.c','esw_status_speed_port_uapi.c','manifest.json')
+            for name in control_files:(controls/name).touch()
             for missing in ('', *new_suites):
                 marker.unlink(missing_ok=True)
                 if missing:
@@ -582,6 +586,14 @@ class RxTransportGateTests(unittest.TestCase):
                 self.assertEqual(marker.exists(), not bool(missing))
                 if missing:
                     (tests / (missing + '.py')).touch()
+            for name in control_files:
+                marker.unlink(missing_ok=True);path=controls/name;path.unlink()
+                result=subprocess.run(['bash','-c','set -euo pipefail\n'+block+'\ntouch "$RX_MARKER"\n'],
+                    env={**os.environ,'root':str(root),'flavor':'k2p-4.4','RX_MARKER':str(marker)},
+                    capture_output=True,text=True,timeout=10)
+                with self.subTest(missing_fixture=name):
+                    self.assertNotEqual(result.returncode,0);self.assertFalse(marker.exists())
+                path.touch()
 
             diagnostics, dist = root / 'exports', root / 'dist'
             diagnostics.mkdir(); dist.mkdir()
