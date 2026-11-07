@@ -64,9 +64,9 @@ def mini():
 
 class BuiltinGateTests(unittest.TestCase):
     def test_fixed_disjoint_case_function_and_actual_object_scopes(self):
-        self.assertEqual({c:sum(o['component']==c for _,o in g.CASES)for c in g.COMPONENTS},{'raeth': 45, 'nor': 31, 'proc': 29, 'runtime': 51, 'qtx': 31, 'ioctl': 78, 'reset_core': 17, 'mdio': 34, 'remove': 20, 'esw': 32, 'reset_lifecycle': 48, 'esw_vlan': 42})
-        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.OBJECTS)),(458, 72, 13))
-        self.assertEqual((sum(len(c['functions'])for c in g.COMPONENTS.values()),sum(len(c['source_only_functions'])for c in g.COMPONENTS.values())),(169, 18))
+        self.assertEqual({c:sum(o['component']==c for _,o in g.CASES)for c in g.COMPONENTS},{'raeth': 45, 'nor': 31, 'proc': 29, 'runtime': 51, 'qtx': 31, 'ioctl': 78, 'reset_core': 17, 'mdio': 34, 'remove': 20, 'esw': 32, 'reset_lifecycle': 48, 'esw_vlan': 68})
+        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.OBJECTS)),(484, 79, 13))
+        self.assertEqual((sum(len(c['functions'])for c in g.COMPONENTS.values()),sum(len(c['source_only_functions'])for c in g.COMPONENTS.values())),(174, 20))
         self.assertIn('ei_init',g.OBJECTS['raeth_driver'][2]);self.assertIn('proc_remove',g.OBJECTS['proc_generic'][2])
         for label in ('raeth_driver','raeth_aggregate','raeth_builtin'):
             self.assertIn('ei_receive_tasklet',g.OBJECTS[label][2]);self.assertNotIn('ei_receive',g.OBJECTS[label][2])

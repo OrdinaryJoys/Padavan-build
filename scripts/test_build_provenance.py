@@ -89,6 +89,7 @@ class ProvenanceTests(unittest.TestCase):
         self.assertEqual(block.count('3ba292933a5cdbcaac3d5187d2454b387fbfbcc1'), 1)
         self.assertEqual(block.count('a23aaa4e11894cad9306bc87bbac3ed310dcf3de'), 1)
         self.assertEqual(block.count('5ce45fccc96d085f2786b509a51abcba2a136f80'), 1)
+        self.assertEqual(block.count('97b961d3735c2452f64b34d916b3d6dfaf7dae96'), 1)
         tools = self.root / 'inert-tools'
         tools.mkdir(exist_ok=True)
         git = tools / 'git'
@@ -101,8 +102,8 @@ state=Path(os.environ['FETCH_LOG']+'.state')
 fault=os.environ['FETCH_FAULT']
 if args[2]=='fetch':
     state.write_text(args[-1])
-active=(not fault.startswith(('second-','third-','fourth-','fifth-','sixth-','seventh-','eighth-','ninth-')) or fault.startswith('second-') and state.read_text()=='3a404e1675467cab79af0ffac454061c1e9150ae' or fault.startswith('third-') and state.read_text()=='3ba292933a5cdbcaac3d5187d2454b387fbfbcc1' or fault.startswith('fourth-') and state.read_text()=='a23aaa4e11894cad9306bc87bbac3ed310dcf3de' or fault.startswith('fifth-') and state.read_text()=='5ce45fccc96d085f2786b509a51abcba2a136f80' or fault.startswith('sixth-') and state.read_text()=='c4d8e113ffba5f85eb5f37a75b3c5f23594ed193' or fault.startswith('seventh-') and state.read_text()=='6ae86c7a097cfcf8113a2e0d0c174216a5726806' or fault.startswith('eighth-') and state.read_text()=='5f7eca673b3791bf2f3f05c00ae03abc058dcdff' or fault.startswith('ninth-') and state.read_text()=='8371e9d2471d85199c8fefcff5fee43e2494094d')
-fault=fault.removeprefix('second-').removeprefix('third-').removeprefix('fourth-').removeprefix('fifth-').removeprefix('sixth-').removeprefix('seventh-').removeprefix('eighth-').removeprefix('ninth-') if active else ''
+active=(not fault.startswith(('second-','third-','fourth-','fifth-','sixth-','seventh-','eighth-','ninth-','tenth-')) or fault.startswith('second-') and state.read_text()=='3a404e1675467cab79af0ffac454061c1e9150ae' or fault.startswith('third-') and state.read_text()=='3ba292933a5cdbcaac3d5187d2454b387fbfbcc1' or fault.startswith('fourth-') and state.read_text()=='a23aaa4e11894cad9306bc87bbac3ed310dcf3de' or fault.startswith('fifth-') and state.read_text()=='5ce45fccc96d085f2786b509a51abcba2a136f80' or fault.startswith('sixth-') and state.read_text()=='c4d8e113ffba5f85eb5f37a75b3c5f23594ed193' or fault.startswith('seventh-') and state.read_text()=='6ae86c7a097cfcf8113a2e0d0c174216a5726806' or fault.startswith('eighth-') and state.read_text()=='5f7eca673b3791bf2f3f05c00ae03abc058dcdff' or fault.startswith('ninth-') and state.read_text()=='8371e9d2471d85199c8fefcff5fee43e2494094d' or fault.startswith('tenth-') and state.read_text()=='97b961d3735c2452f64b34d916b3d6dfaf7dae96')
+fault=fault.removeprefix('second-').removeprefix('third-').removeprefix('fourth-').removeprefix('fifth-').removeprefix('sixth-').removeprefix('seventh-').removeprefix('eighth-').removeprefix('ninth-').removeprefix('tenth-') if active else ''
 if args[2]=='fetch':sys.exit(1 if fault=='fetch' else 0)
 if args[2]=='cat-file':sys.exit(1 if fault=='missing' else 0)
 if args[2]=='rev-parse':
@@ -135,7 +136,8 @@ raise SystemExit('Unexpected Git call')
                          'c4d8e113ffba5f85eb5f37a75b3c5f23594ed193',
                          '6ae86c7a097cfcf8113a2e0d0c174216a5726806',
                          '5f7eca673b3791bf2f3f05c00ae03abc058dcdff',
-                         '8371e9d2471d85199c8fefcff5fee43e2494094d'):
+                         '8371e9d2471d85199c8fefcff5fee43e2494094d',
+                         '97b961d3735c2452f64b34d916b3d6dfaf7dae96'):
             expected += [prefix + ['fetch', '--no-tags', '--depth=1', 'origin', baseline],
                          prefix + ['rev-parse', '--verify', 'FETCH_HEAD^{commit}'],
                          prefix + ['cat-file', '-e', baseline + '^{commit}'],
@@ -143,12 +145,12 @@ raise SystemExit('Unexpected Git call')
         self.assertEqual(calls, expected)
 
     def test_failed_or_wrong_baseline_or_changed_candidate_stops_before_suite(self):
-        for stage in ('','second-','third-','fourth-','fifth-','sixth-','seventh-','eighth-','ninth-'):
+        for stage in ('','second-','third-','fourth-','fifth-','sixth-','seventh-','eighth-','ninth-','tenth-'):
             for fault, expected_calls in (('fetch', 1), ('wrong-fetch', 2), ('missing', 3), ('changed-head', 4)):
                 with self.subTest(fault=stage+fault):
                     result, calls, suite = self.baseline_fetch(fault=stage+fault)
                     self.assertNotEqual(result.returncode, 0)
-                    self.assertEqual(len(calls), expected_calls + (32 if stage=='ninth-'else 28 if stage=='eighth-'else 24 if stage=='seventh-'else 20 if stage=='sixth-'else 16 if stage=='fifth-'else 12 if stage=='fourth-'else 8 if stage=='third-'else 4 if stage else 0))
+                    self.assertEqual(len(calls), expected_calls + (36 if stage=='tenth-'else 32 if stage=='ninth-'else 28 if stage=='eighth-'else 24 if stage=='seventh-'else 20 if stage=='sixth-'else 16 if stage=='fifth-'else 12 if stage=='fourth-'else 8 if stage=='third-'else 4 if stage else 0))
                     self.assertFalse(suite)
 
     def test_susu_does_not_fetch_the_44_regression_baseline(self):
@@ -223,8 +225,12 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
         for name in required:(tests/(name+'.py')).touch()
         baseline=tests/'fixtures/wsys-terminal';baseline.mkdir(parents=True,exist_ok=True)
         for name in ('HwCtrlWifiSysClose','HwCtrlWifiSysLinkDown','HwCtrlWifiSysPeerLinkDown'):(baseline/(name+'.c')).touch()
+        controls=tests/'fixtures/esw-controls';controls.mkdir(parents=True,exist_ok=True)
+        control_files=('change_led_mode.c','change_storm_control_broadcast.c','change_jumbo_frames_accept.c',
+                       'change_port_link_mode_uapi.c','esw_status_link_port.c','esw_status_speed_port_uapi.c','manifest.json')
+        for name in control_files:(controls/name).touch()
         marker=self.root/'source-suite-started'
-        for missing in('', 'test_flash_persist','test_mcu_precal','test_cmd_queue','test_rx_transport','test_rx_pool','test_rx_startup','test_mtd_preflight','test_pci_lifecycle','test_token_init','test_ser_lifecycle','test_kthread_owner','test_init_transaction','test_dma_lifecycle','test_first_arm_unwind','test_wsc_init','test_dma_quarantine','test_dma_command_lifecycle','test_vif_lifecycle','test_probe_oom','test_cmwq_lifecycle','test_hdev_resource_init','test_wdev_lifecycle','test_raeth_init','test_nor_admission','test_raeth_proc','test_hwcmd_owner'):
+        for missing in('', 'test_flash_persist','test_mcu_precal','test_cmd_queue','test_rx_transport','test_rx_pool','test_rx_startup','test_mtd_preflight','test_pci_lifecycle','test_token_init','test_ser_lifecycle','test_kthread_owner','test_init_transaction','test_dma_lifecycle','test_first_arm_unwind','test_wsc_init','test_dma_quarantine','test_dma_command_lifecycle','test_vif_lifecycle','test_probe_oom','test_cmwq_lifecycle','test_hdev_resource_init','test_wdev_lifecycle','test_raeth_init','test_nor_admission','test_raeth_proc','test_hwcmd_owner','test_config_publish_names','test_esw_userspace_status','test_link_status_retry'):
             marker.unlink(missing_ok=True)
             if missing:(tests/(missing+'.py')).unlink()
             result=subprocess.run(['bash','-c','set -euo pipefail\n'+block+'\ntouch "$SUITE_MARKER"\n'],
@@ -232,6 +238,13 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
             with self.subTest(missing_source=missing):
                 self.assertEqual(result.returncode==0,not bool(missing));self.assertEqual(marker.exists(),not bool(missing))
             if missing:(tests/(missing+'.py')).touch()
+        for name in control_files:
+            marker.unlink(missing_ok=True);path=controls/name;path.unlink()
+            result=subprocess.run(['bash','-c','set -euo pipefail\n'+block+'\ntouch "$SUITE_MARKER"\n'],
+                env=dict(os.environ,root=str(self.root),flavor='k2p-4.4',SUITE_MARKER=str(marker)),capture_output=True,text=True,timeout=10)
+            with self.subTest(missing_fixture=name):
+                self.assertNotEqual(result.returncode,0);self.assertFalse(marker.exists())
+            path.touch()
 
     def test_late_gates_require_image_or_rootfs_binding_and_stop_publication_on_failure(self):
         names=['controller_clock','spi_dma','spi_lifecycle','nvram_mtd','mtd_mutation','wifi_factory','wifi_file_io','wifi_calibration_integrity','rx_transport','pci_lifecycle','token_lifecycle','init_dma_lifecycle','mtd_backup','mtd_preflight','builtin_lifecycle']

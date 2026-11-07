@@ -52,7 +52,8 @@ if [ "$flavor" = "k2p-4.4" ]; then
                              c4d8e113ffba5f85eb5f37a75b3c5f23594ed193 \
                              6ae86c7a097cfcf8113a2e0d0c174216a5726806 \
                              5f7eca673b3791bf2f3f05c00ae03abc058dcdff \
-                             8371e9d2471d85199c8fefcff5fee43e2494094d; do
+                             8371e9d2471d85199c8fefcff5fee43e2494094d \
+                             97b961d3735c2452f64b34d916b3d6dfaf7dae96; do
     git -C "$root/source" fetch --no-tags --depth=1 origin "$regression_baseline"
     test "$(git -C "$root/source" rev-parse --verify 'FETCH_HEAD^{commit}')" = "$regression_baseline"
     git -C "$root/source" cat-file -e "$regression_baseline^{commit}"
@@ -71,7 +72,7 @@ for required_test in test_independent_http_edges test_real_http_io test_request_
   test -f "$root/source/tests/$required_test.py"
 done
 if [ "$flavor" = "k2p-4.4" ]; then
-  for required_test in test_config_publish test_upgrade_storage_gate test_startup_capacity_linux \
+  for required_test in test_config_publish test_config_publish_names test_upgrade_storage_gate test_startup_capacity_linux \
                        test_dns_dynamic_config test_dns_snapshot test_hook_runner \
                        test_dns_runtime_files test_dns_runtime_consumers test_ntp_startup \
                        test_dns_log_backpressure test_dns_reload_transaction test_logmessage_backpressure \
@@ -91,8 +92,13 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_probe_oom test_cmwq_lifecycle test_hdev_resource_init test_wdev_lifecycle \
                        test_raeth_init test_nor_admission test_raeth_proc test_hwcmd_owner \
                        test_raeth_runtime test_raeth_qtx test_raeth_ioctl test_wsys_lifecycle test_wsys_teardown \
-                       test_raeth_mdio test_raeth_remove test_reset_core test_wsys_tlv test_esw_error test_reset_lifecycle test_esw_vlan; do
+                       test_raeth_mdio test_raeth_remove test_reset_core test_wsys_tlv test_esw_error test_reset_lifecycle test_esw_vlan \
+                       test_esw_userspace_status test_link_status_retry; do
     test -f "$root/source/tests/$required_test.py"
+  done
+  for baseline_fixture in change_led_mode.c change_storm_control_broadcast.c change_jumbo_frames_accept.c \
+                          change_port_link_mode_uapi.c esw_status_link_port.c esw_status_speed_port_uapi.c manifest.json; do
+    test -f "$root/source/tests/fixtures/esw-controls/$baseline_fixture"
   done
   for baseline_fixture in HwCtrlWifiSysClose HwCtrlWifiSysLinkDown HwCtrlWifiSysPeerLinkDown; do
     test -f "$root/source/tests/fixtures/wsys-terminal/$baseline_fixture.c"

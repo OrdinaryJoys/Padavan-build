@@ -1,7 +1,7 @@
 {
   "k2p-4.4": {
     "repository": "OrdinaryJoys/padavan-4.4",
-    "ref": "97b961d3735c2452f64b34d916b3d6dfaf7dae96",
+    "ref": "78b1a47c7a962bd513fb8edc8729158efb27c560",
     "base_commit": "51cc9417b749da9964b9a595a32ec77c38d7ad9f",
     "kernel": "4.4",
     "toolchain_directory": "toolchain-4.4.x",

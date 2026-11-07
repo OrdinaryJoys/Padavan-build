@@ -30,7 +30,7 @@ SOURCE_PATHS = {'storage': 'user/scripts/mtd_storage.sh',
                 'shell_common': 'user/busybox/busybox-1.24.x/shell/shell_common.c'}
 EXPECTED_SOURCE_SHA256 = {'storage': 'b2e40a853fb308d7b7d773f903c034cf5ab32f67d92ceed542c130ac64f6d017',
  'validator': 'f59b020c3ec02dcc06435a308516b75d2a6ff4f32bfabcb78df9da559e7039de',
- 'validator_header': '2ae303e59ff2b39f15075f7fa9fe585c91cb893f779925d351b0a51e369daeef',
+ 'validator_header': 'ce427fad937f54258a1daba6122682eddb0e1ab9c6018845f6d4cd90eacf812a',
  'validator_makefile': '11d3a7e40debdc342c31306f2b6aed0e701dffb458f5fad4b87c49f8a3be87d9',
  'busybox_template': '49789620f949cd362a6cfee16e2025672a30d71b08b9ca615b1d87e6044a7e70',
  'shell_common': '8f2f353859e3cee9c4b5aee07c855eb28e56e5c9f75a138eb7bec7fc9983f34f'}
