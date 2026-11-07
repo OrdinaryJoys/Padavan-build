@@ -14,6 +14,7 @@ import unittest
 from unittest.mock import patch
 
 import check_target_rx_transport as gate
+from test_build_provenance import required_fixture_paths
 from test_target_wifi_factory import module_elf as base_module_elf
 
 
@@ -564,17 +565,14 @@ class RxTransportGateTests(unittest.TestCase):
             start = script.rfind('if [ "$flavor" = "k2p-4.4" ]; then', 0, at)
             block = script[start:script.index('# Keep Linux /tmp rewriting', at)]
             required = tuple(word.rstrip(';') for word in block.split() if word.startswith('test_'))
-            new_suites = ('test_cmd_queue', 'test_rx_transport', 'test_rx_pool', 'test_rx_startup')
+            new_suites = ('test_cmd_queue', 'test_rx_transport', 'test_rx_pool', 'test_rx_startup', 'test_raeth_shutdown', 'test_raeth_phy_poll', 'test_pci_bind_guard', 'test_wtbl_tlv', 'test_fwd_lifecycle')
             self.assertTrue(set(new_suites) <= set(required))
             tests = root / 'source/tests'; tests.mkdir(parents=True)
             for name in required:
                 (tests / (name + '.py')).touch()
-            baseline=tests/'fixtures/wsys-terminal';baseline.mkdir(parents=True)
-            for name in ('HwCtrlWifiSysClose','HwCtrlWifiSysLinkDown','HwCtrlWifiSysPeerLinkDown'):(baseline/(name+'.c')).touch()
-            controls=tests/'fixtures/esw-controls';controls.mkdir(parents=True)
-            control_files=('change_led_mode.c','change_storm_control_broadcast.c','change_jumbo_frames_accept.c',
-                           'change_port_link_mode_uapi.c','esw_status_link_port.c','esw_status_speed_port_uapi.c','manifest.json')
-            for name in control_files:(controls/name).touch()
+            fixture_paths=required_fixture_paths(block)
+            for name in fixture_paths:
+                path=tests/name;path.parent.mkdir(parents=True,exist_ok=True);path.touch()
             for missing in ('', *new_suites):
                 marker.unlink(missing_ok=True)
                 if missing:
@@ -586,8 +584,8 @@ class RxTransportGateTests(unittest.TestCase):
                 self.assertEqual(marker.exists(), not bool(missing))
                 if missing:
                     (tests / (missing + '.py')).touch()
-            for name in control_files:
-                marker.unlink(missing_ok=True);path=controls/name;path.unlink()
+            for name in fixture_paths:
+                marker.unlink(missing_ok=True);path=tests/name;path.unlink()
                 result=subprocess.run(['bash','-c','set -euo pipefail\n'+block+'\ntouch "$RX_MARKER"\n'],
                     env={**os.environ,'root':str(root),'flavor':'k2p-4.4','RX_MARKER':str(marker)},
                     capture_output=True,text=True,timeout=10)

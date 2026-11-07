@@ -20,6 +20,21 @@ def set_path(value,path,replacement):
 def rows():
     return [dict(case=n,inputs=copy.deepcopy(o),observed=copy.deepcopy(g.EXPECTED[n]))for n,o in g.CASES]
 
+
+def shutdown_inputs():
+    return {
+        'shutdown_raeth':'static struct platform_driver raeth_driver = {\n.shutdown = raether_shutdown,\n};\nstatic void raether_shutdown(struct platform_device *pdev) { (void)pdev; }\n',
+        'shutdown_platform':'static void platform_drv_shutdown(struct device *_dev) { if (drv->shutdown) drv->shutdown(dev); dev_pm_domain_detach(_dev, true); }\nint __platform_driver_register(void) { drv->driver.shutdown = platform_drv_shutdown; return 0; }\n',
+        'shutdown_core':'void device_shutdown(void) { dev->driver->shutdown(dev); }\n',
+        'shutdown_reboot':'void kernel_restart_prepare(char *cmd) { device_shutdown(); }\n',
+    }
+
+
+def phy_poll_inputs():
+    return {'phy_poll_raeth':'static int phy_polling_thread(void *data) { return 0; }\nint ei_open(struct net_device *dev) { if (ei_local->chip_name == LEOPARD_FE) { kthread_create(phy_polling_thread, NULL, "phy_polling_kthread"); } return 0; }\n',
+            'phy_poll_header':'#define PHY_POLLING_MS\t\t(1000)\n',
+            'phy_poll_config':'CONFIG_SOC_MT7621=y\n'}
+
 def profile_inputs():
     result = {'raeth_raeth':'.suppress_bind_attrs = true,','raeth_device_header':'bool suppress_bind_attrs;',
         'raeth_bus':'int bus_add_driver(void) { if (!drv->suppress_bind_attrs) { error = add_bind_files(drv); } return 0; }',
@@ -35,6 +50,8 @@ def profile_inputs():
     result['esw_ioctl'] = 'static long mtk_esw_ioctl(struct file *file, unsigned int req, unsigned long arg) { return 0; }\nstatic const struct file_operations mtk_esw_fops = { .owner = THIS_MODULE, .unlocked_ioctl = mtk_esw_ioctl, .open = mtk_esw_open, .release = mtk_esw_release, };\nint esw_ioctl_init(void) { r = register_chrdev(MTK_ESW_DEVMAJOR, MTK_ESW_DEVNAME, &mtk_esw_fops); if (r < 0) { return r; } return 0; }\n'
     result['esw_esw'] = '#include "ioctl.c"\n'
     result['raeth_makefile'] = 'ifeq ($(CONFIG_RAETH_ESW_CONTROL),y)\nraeth-objs += mtk_esw/ioctl_mt762x.o\nendif\n'
+    result.update(shutdown_inputs())
+    result.update(phy_poll_inputs())
     return result
 
 def optimizer_symbols():
@@ -63,10 +80,76 @@ def mini():
     return inputs,data,spec
 
 class BuiltinGateTests(unittest.TestCase):
+
+    def test_shutdown_fixed_rows_keep_prior_contract_and_terminal_ownership(self):
+        import hashlib,json
+        previous=tuple(g.CASES[:484]);old={name:g.EXPECTED[name]for name,_ in previous}
+        self.assertEqual(hashlib.sha256(json.dumps([previous,old],sort_keys=True,separators=(',',':')).encode()).hexdigest(),'620d545f05878d60e6396a54df34b0d40647db95326cfc0bc77ca04397595a9e')
+        self.assertEqual(len([n for n,o in g.CASES if o['component']=='shutdown']),27)
+        self.assertEqual(g.COMPONENT_FLAGS['shutdown'],())
+        self.assertEqual(len(g.COMPONENTS['shutdown']['functions']),7)
+        self.assertEqual(len(g.COMPONENTS['shutdown']['source_only_functions']),3)
+        for case in ('pdma-busy','qdma-busy','both-busy','up-pseudo','repeat-idle','no-module-pin-up'):
+            row=g.EXPECTED['shutdown:'+case]
+            self.assertEqual((row['owners'],row['releases'],row['module_puts'],row['module_gets'],row['pm_detach']),(31,0,0,0,2 if case=='repeat-idle'else 1))
+        self.assertEqual(g.EXPECTED['shutdown:shutdown-close']['close_ret'],-16)
+        self.assertTrue(g.COMPONENTS['shutdown']['model_variant']['void_shutdown_cannot_veto_machine_reset'])
+
+    def test_shutdown_callback_registration_and_unconditional_platform_pm_detach_are_required(self):
+        good=shutdown_inputs();proof=g.shutdown_callback_binding(good)
+        self.assertEqual((proof['callback'],proof['actual_symbol']),('raether_shutdown','raether_shutdown'))
+        self.assertFalse(proof['platform_core_reboot_objects_bound']);self.assertFalse(proof['hardware_reset_executed'])
+        for key,old,new in (
+                ('shutdown_raeth','.shutdown = raether_shutdown,',''),
+                ('shutdown_raeth','.shutdown = raether_shutdown,','.shutdown = another_shutdown,'),
+                ('shutdown_raeth','static void raether_shutdown','void raether_shutdown'),
+                ('shutdown_platform','drv->driver.shutdown = platform_drv_shutdown;','drv->driver.shutdown = another_dispatch;'),
+                ('shutdown_platform','dev_pm_domain_detach(_dev, true);','if (success) dev_pm_domain_detach(_dev, true);')):
+            bad=dict(good);self.assertIn(old,bad[key]);bad[key]=bad[key].replace(old,new,1)
+            with self.subTest(key=key,mutation=new),self.assertRaises(ValueError):g.shutdown_callback_binding(bad)
+        bad=dict(good);bad['shutdown_raeth']+='\nstatic struct platform_driver raeth_driver = {\n.shutdown = raether_shutdown,\n};\n'
+        with self.assertRaises(ValueError):g.shutdown_callback_binding(bad)
+
+    def test_shutdown_static_owner_uses_existing_true_objects_and_compiled_variant_boundaries(self):
+        self.assertEqual(len(g.OBJECTS),13)
+        self.assertEqual(len({symbol for row in g.OBJECTS.values()for symbol in row[2]}),56)
+        for label in ('raeth_driver','raeth_aggregate','raeth_builtin'):
+            self.assertIn('raether_shutdown',g.OBJECTS[label][2])
+        self.assertEqual(g.OBJECTS['driver_core'][0],'drivers/base/dd.o')
+        self.assertNotIn('platform_core',g.OBJECTS)
+        self.assertTrue(g.COMPONENTS['shutdown']['model_variant']['forced_WORKQ_NAPI_are_nonshipping_variants'])
+        self.assertEqual(g.COMPONENTS['shutdown']['source_only_functions'],{'__platform_driver_register':'platform','device_shutdown':'core','kernel_restart_prepare':'reboot'})
+        self.assertEqual(tuple(g.COMPONENTS['shutdown']['functions']),('fe_pdma_wait_dma_idle','fe_qdma_wait_dma_idle','ei_stop_dma','fe_int_disable','ei_close','raether_shutdown','platform_drv_shutdown'))
+
+
+    def test_phy_poller_keeps_forced_variant_scope_and_strict_typed_rows(self):
+        self.assertEqual(sum(o['component']=='phy_poll'for _,o in g.CASES),52)
+        self.assertEqual(g.COMPONENT_FLAGS['phy_poll'],('-Wno-unused-parameter',))
+        spec=g.COMPONENTS['phy_poll']
+        self.assertEqual(spec['functions'],{'mii_resolve_flowctrl_fdx':'mii_header','phy_polling_thread':'raeth'})
+        self.assertEqual(spec['source_only_functions'],{'ei_open':'raeth','mii_mgr_read':'mdio','mii_mgr_read_cl45':'mdio'})
+        self.assertTrue(spec['model_variant']['LEOPARD_forced_variant_not_shipping_K2P_MT7621'])
+        for case in ('fail-link','fail-local-pause','fail-peer-pause','fail-speed','fail-local-eee','fail-peer-eee'):
+            row=g.EXPECTED['phy_poll:'+case];self.assertEqual((row['writes'],row['errors'],row['ticks']),(1,0,2))
+        for role in ('raeth_driver','raeth_aggregate','raeth_builtin'):self.assertIn('phy_polling_thread',g.OBJECTS[role][2])
+
+    def test_phy_poller_actual_source_guard_macro_and_nonshipping_claim_are_bound(self):
+        good=phy_poll_inputs();proof=g.phy_poll_callback_binding(good)
+        self.assertFalse(proof['current_K2P_thread_active'])
+        self.assertEqual(proof['actual_symbol'],'phy_polling_thread')
+        self.assertTrue(proof['MDIO_MMIO_scheduler_time_are_inert'])
+        for key,old,new in (('phy_poll_raeth','LEOPARD_FE','MT7621_FE'),
+                            ('phy_poll_raeth','kthread_create(phy_polling_thread,','kthread_create(other_thread,'),
+                            ('phy_poll_raeth','static int phy_polling_thread','int phy_polling_thread'),
+                            ('phy_poll_header','(1000)','(5000)'),
+                            ('phy_poll_config','MT7621=y','LEOPARD=y')):
+            bad=dict(good);bad[key]=bad[key].replace(old,new,1)
+            with self.subTest(key=key,new=new),self.assertRaises(ValueError):g.phy_poll_callback_binding(bad)
+
     def test_fixed_disjoint_case_function_and_actual_object_scopes(self):
-        self.assertEqual({c:sum(o['component']==c for _,o in g.CASES)for c in g.COMPONENTS},{'raeth': 45, 'nor': 31, 'proc': 29, 'runtime': 51, 'qtx': 31, 'ioctl': 78, 'reset_core': 17, 'mdio': 34, 'remove': 20, 'esw': 32, 'reset_lifecycle': 48, 'esw_vlan': 68})
-        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.OBJECTS)),(484, 79, 13))
-        self.assertEqual((sum(len(c['functions'])for c in g.COMPONENTS.values()),sum(len(c['source_only_functions'])for c in g.COMPONENTS.values())),(174, 20))
+        self.assertEqual({c:sum(o['component']==c for _,o in g.CASES)for c in g.COMPONENTS},{'raeth': 45, 'nor': 31, 'proc': 29, 'runtime': 51, 'qtx': 31, 'ioctl': 78, 'reset_core': 17, 'mdio': 34, 'remove': 20, 'esw': 32, 'reset_lifecycle': 48, 'esw_vlan': 68, 'shutdown': 27, 'phy_poll': 52})
+        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.OBJECTS)),(563, 97, 13))
+        self.assertEqual((sum(len(c['functions'])for c in g.COMPONENTS.values()),sum(len(c['source_only_functions'])for c in g.COMPONENTS.values())),(183, 26))
         self.assertIn('ei_init',g.OBJECTS['raeth_driver'][2]);self.assertIn('proc_remove',g.OBJECTS['proc_generic'][2])
         for label in ('raeth_driver','raeth_aggregate','raeth_builtin'):
             self.assertIn('ei_receive_tasklet',g.OBJECTS[label][2]);self.assertNotIn('ei_receive',g.OBJECTS[label][2])
@@ -153,7 +236,7 @@ class BuiltinGateTests(unittest.TestCase):
         self.assertEqual(g.COMPONENT_FLAGS['esw'],('-Wno-unused-variable','-Wno-unused-parameter','-Wno-unused-but-set-variable'))
         self.assertEqual(g.COMPONENT_FLAGS['esw_vlan'],g.COMPONENT_FLAGS['esw'])
         self.assertEqual(g.COMPONENT_FLAGS['reset_lifecycle'],('-Wno-unused-parameter',))
-        self.assertIn('physical DMA',' '.join(g.LIMITS));self.assertEqual(len(g.exports()),63)
+        self.assertIn('physical DMA',' '.join(g.LIMITS));self.assertEqual(len(g.exports()),69)
 
     def test_kernel_board_and_ring_constants_are_required(self):
         g.source_profile(profile_inputs())
