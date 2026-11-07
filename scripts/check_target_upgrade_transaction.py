@@ -675,7 +675,7 @@ def generate_source(inputs, fixture_root, owner_uid=0, adapter='components'):
         ('#define kill fixture_kill', '#define reboot fixture_reboot', '#define pause fixture_pause')
         if adapter == 'components' else
         ('#define ioctl fixture_ioctl', '#define reboot fake_reboot',
-         '#define mlockall fixture_mlockall', '#define sync fake_sync',
+         '#define mlockall fixture_mlockall', '#define munlockall fixture_munlockall', '#define sync fake_sync',
          'static int firmware_upgrade_spawn(', 'static int doSystem('))
     for boundary in boundaries:
         require(boundary in generated, 'Missing explicit inert adapter boundary: ' + boundary)

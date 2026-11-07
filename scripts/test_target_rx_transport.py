@@ -565,7 +565,7 @@ class RxTransportGateTests(unittest.TestCase):
             start = script.rfind('if [ "$flavor" = "k2p-4.4" ]; then', 0, at)
             block = script[start:script.index('# Keep Linux /tmp rewriting', at)]
             required = tuple(word.rstrip(';') for word in block.split() if word.startswith('test_'))
-            new_suites = ('test_cmd_queue', 'test_rx_transport', 'test_rx_pool', 'test_rx_startup', 'test_raeth_shutdown', 'test_raeth_phy_poll', 'test_pci_bind_guard', 'test_wtbl_tlv', 'test_fwd_lifecycle')
+            new_suites = ('test_cmd_queue', 'test_rx_transport', 'test_rx_pool', 'test_rx_startup', 'test_raeth_shutdown', 'test_raeth_phy_poll', 'test_pci_bind_guard', 'test_wtbl_tlv', 'test_fwd_lifecycle', 'test_restart_veto', 'test_mt7621_wdt')
             self.assertTrue(set(new_suites) <= set(required))
             tests = root / 'source/tests'; tests.mkdir(parents=True)
             for name in required:

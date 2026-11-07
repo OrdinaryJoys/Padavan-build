@@ -138,6 +138,13 @@ static int firmware_upgrade_spawn(const char *writer,const char *record,int leas
         row=next(row for row in rows if row['case']=='safe-no-child-spawn-failure')
         self.assertEqual(row['observed']['phase'],0)
         self.assertEqual(row['observed']['running'],[1]*7)
+        observed=row['observed'];trace=observed['trace']
+        self.assertEqual((observed['memory_pinned'],observed['unpin_inhibited'],observed['active'],observed['raw_shared_allowed']), (0,1,0,1))
+        self.assertLess(trace.index('unpin'),trace.index('start:crond'))
+        old=copy.deepcopy(rows)
+        old_row=next(row for row in old if row['case']=='safe-no-child-spawn-failure')
+        old_row['observed']['trace'].remove('unpin');old_row['observed']['trace'].append('unpin')
+        with self.assertRaisesRegex(ValueError,'mismatch'):upgrade.validate_records(old)
         row['observed']['phase']=1
         with self.assertRaisesRegex(ValueError,'mismatch'):upgrade.validate_records(rows)
 

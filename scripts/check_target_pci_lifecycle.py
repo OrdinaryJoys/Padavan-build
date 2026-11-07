@@ -29,18 +29,14 @@ SOURCE_PATHS = {
     'pci_core': 'trunk/linux-4.4.x/drivers/pci/pci-driver.c',
     'pci_header': 'trunk/linux-4.4.x/include/linux/pci.h',
 }
-COMPONENTS = {'pci': {
-    'paths': {
-        'pci': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/os/linux/pci_main_dev.c',
-        'config': 'trunk/configs/boards/K2P/kernel-4.4.x.config',
-        'flags': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/os/linux/Makefile.mt_wifi_ap',
-    },
-    'source_keys': {'pci': 'pci', 'config': 'wifi_config', 'flags': 'flags'},
-    'functions': {'rt_pci_remove': 'pci', 'rt_pci_shutdown': 'pci'},
-    'harness_key': 'harness',
-    'model_data_sha256': 'e2f668be92d4fc3c89be5bc62956f8e3149898fe7ce15e0dc22225a8593daf56',
-    'variants': ('current',),
-}}
+COMPONENTS = {'pci': {'paths': {'pci': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/os/linux/pci_main_dev.c',
+                   'config': 'trunk/configs/boards/K2P/kernel-4.4.x.config',
+                   'flags': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/os/linux/Makefile.mt_wifi_ap'},
+         'source_keys': {'pci': 'pci', 'config': 'wifi_config', 'flags': 'flags'},
+         'functions': {'rt_pci_remove': 'pci', 'rt_pci_shutdown': 'pci'},
+         'harness_key': 'harness',
+         'model_data_sha256': 'ddb023b096201aa1c28e0b2a165f2cf53980c7882745f6b0d8f82f1e81a1ac6c',
+         'variants': ('current',)}}
 CASES = (
     ('pci:current:remove-adapter', {'component': 'pci', 'variant': 'current', 'selector': 'remove-adapter'}),
     ('pci:current:remove-no-adapter', {'component': 'pci', 'variant': 'current', 'selector': 'remove-no-adapter'}),

@@ -180,12 +180,13 @@ def expected_trace(o):
     r = dict(phase=0, saves=0, hooks=0, time_calls=0, writes=0, logs=0, criticals=0,
              reboots=0, syncs=0, mlocks=0, munlocks=0, inhibited=int(o['marker']),
              hardware_opens=0, hardware_disables=0, hardware_closes=0, hardware_keepalives=0,
+             memory_pinned=0, start_enomems=0, unpin_inhibited=0, active=0, raw_shared_allowed=1,
              snapshot_revisions=[0, 0], stops=[0] * 7, starts=[0] * 7,
              running=original.copy(), trace=[])
     def log(critical=False):
         r['logs'] += 1; r['criticals'] += int(critical); r['trace'].append('log')
     if o['marker']:
-        r['phase'] = 1; log(); return r
+        r.update(phase=1, active=1); log(); return r
     r.update(saves=1, time_calls=1, trace=['time', 'save'])
     if o['first']:
         log(); return r
@@ -201,6 +202,7 @@ def expected_trace(o):
     r['mlocks'] = 1; r['trace'].append('pin')
     if o['pin_failure']:
         log(); return r
+    r['memory_pinned'] = 1
     r['syncs'] = 1; r['trace'].append('sync')
     for i, active in enumerate(original):
         if active:
@@ -224,6 +226,10 @@ def expected_trace(o):
         safe = o['kind'] in (1, 10)
     if safe:
         log()
+        # A proven prewrite abort must release memory policy while inhibited,
+        # before the first service fork/exec, then avoid a second unpin.
+        r.update(munlocks=1, memory_pinned=0, unpin_inhibited=1)
+        r['trace'].append('unpin')
         failed = False
         for i in reversed(range(7)):
             if original[i] and not r['running'][i]:
@@ -234,9 +240,8 @@ def expected_trace(o):
                     r['running'][i] = 1
         if failed:
             log(True)
-        r['munlocks'] = 1; r['trace'].append('unpin')
         return r
-    r.update(phase=1, inhibited=1)
+    r.update(phase=1, inhibited=1, active=1, raw_shared_allowed=0)
     return r
 
 
@@ -268,7 +273,9 @@ def execute_cases(command, fixture_root):
     records = []
     for name, options in CASES:
         prepare_fixture(fixture_root, options)
-        arguments = [str(options[key]) for key in ARGUMENT_KEYS]
+        # The 59 frozen target roles keep both new allocation/unpin fault
+        # seams off; source regressions exercise those explicit fault cases.
+        arguments = [str(options[key]) for key in ARGUMENT_KEYS] + ['0', '0']
         result = subprocess.run([*command, *arguments], capture_output=True, text=True, timeout=20)
         if result.returncode:
             raise RuntimeError(f'{name}: probe exit={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}')

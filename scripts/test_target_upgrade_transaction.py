@@ -66,7 +66,7 @@ def synthetic_inputs():
 def synthetic_module(transform=lambda text:text):
     boundaries = ('#define kill fixture_kill\n#define reboot fixture_reboot\n'
                   '#define pause fixture_pause\n#define ioctl fixture_ioctl\n'
-                  '#define reboot fake_reboot\n#define mlockall fixture_mlockall\n'
+                  '#define reboot fake_reboot\n#define mlockall fixture_mlockall\n#define munlockall fixture_munlockall\n'
                   '#define sync fake_sync\nstatic int firmware_upgrade_spawn(\nstatic int doSystem(\n')
     def generate(texts, fixture_root, owner_uid=0):
         if type(fixture_root) is not str or type(owner_uid) is not int:
@@ -231,6 +231,10 @@ class UpgradeTransactionDataControls(unittest.TestCase):
                                    return_value=synthetic_module(transform)):
                 with self.assertRaises(ValueError):
                     gate.generate_source(data, '/private-fixture-not-accessed')
+        with mock.patch.object(gate, 'load_checked_harness', return_value=synthetic_module(
+                lambda text:text.replace('#define munlockall fixture_munlockall', ''))):
+            with self.assertRaisesRegex(ValueError, 'inert adapter boundary'):
+                gate.generate_source(data, '/private-fixture-not-accessed', adapter='flash')
 
     def test_production_signal_globals_and_prototypes_are_not_fixture_assumptions(self):
         original = synthetic_inputs()

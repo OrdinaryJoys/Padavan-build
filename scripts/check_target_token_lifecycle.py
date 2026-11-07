@@ -87,7 +87,7 @@ COMPONENTS = {'token': {'paths': {'token': 'trunk/linux-4.4.x/drivers/net/wirele
                        'ser_exit': 'basic',
                        'RTMP_MAC_RECOVERY': 'command'},
          'harness_key': 'ser_harness',
-         'model_data_sha256': '93e02e20f176ec51464a8d504d8928f26060af3bfb578b077366043a150ce355',
+         'model_data_sha256': 'abfd90a45cc0554030141c0415f2649020066c75223dbe6f87ec0db738376f21',
          'variants': ('current',)},
  'task': {'paths': {'os': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/os/linux/rt_linux.c',
                     'os_header': 'trunk/linux-4.4.x/drivers/net/wireless/mediatek/mt7615/include/os/rt_linux.h',

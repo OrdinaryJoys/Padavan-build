@@ -54,7 +54,8 @@ if [ "$flavor" = "k2p-4.4" ]; then
                              5f7eca673b3791bf2f3f05c00ae03abc058dcdff \
                              8371e9d2471d85199c8fefcff5fee43e2494094d \
                              97b961d3735c2452f64b34d916b3d6dfaf7dae96 \
-                             60ae6bf98bd46b68c648620c599f1aa78073131e; do
+                             60ae6bf98bd46b68c648620c599f1aa78073131e \
+                             f9c361f682eb742423dd9ebd422a1952af2ec6e0; do
     git -C "$root/source" fetch --no-tags --depth=1 origin "$regression_baseline"
     test "$(git -C "$root/source" rev-parse --verify 'FETCH_HEAD^{commit}')" = "$regression_baseline"
     git -C "$root/source" cat-file -e "$regression_baseline^{commit}"
@@ -95,7 +96,8 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_raeth_runtime test_raeth_qtx test_raeth_ioctl test_wsys_lifecycle test_wsys_teardown \
                        test_raeth_mdio test_raeth_remove test_reset_core test_wsys_tlv test_esw_error test_reset_lifecycle test_esw_vlan \
                        test_esw_userspace_status test_link_status_retry \
-                       test_raeth_shutdown test_raeth_phy_poll test_pci_bind_guard test_wtbl_tlv test_fwd_lifecycle; do
+                       test_raeth_shutdown test_raeth_phy_poll test_pci_bind_guard test_wtbl_tlv test_fwd_lifecycle \
+                       test_restart_veto test_mt7621_wdt; do
     test -f "$root/source/tests/$required_test.py"
   done
   for baseline_fixture in change_led_mode.c change_storm_control_broadcast.c change_jumbo_frames_accept.c \
@@ -116,6 +118,15 @@ if [ "$flavor" = "k2p-4.4" ]; then
   done
   for baseline_fixture in wifi_fwd_register.c wifi_fwd_unregister.c Set_WifiFwdShowEntry.c manifest.json; do
     test -f "$root/source/tests/fixtures/fwd-lifecycle/$baseline_fixture"
+  done
+  for baseline_fixture in f9c361f-flash_firmware.c; do
+    test -f "$root/source/tests/fixtures/upgrade-recovery/$baseline_fixture"
+  done
+  for baseline_fixture in restart_veto_f9.json; do
+    test -f "$root/source/tests/fixtures/$baseline_fixture"
+  done
+  for baseline_fixture in f9.json; do
+    test -f "$root/source/tests/fixtures/mt7621-wdt/$baseline_fixture"
   done
 fi
 # Keep Linux /tmp rewriting exercised even if the runner sets another temp dir.

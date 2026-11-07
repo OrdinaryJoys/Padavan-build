@@ -42,7 +42,7 @@ def profile_inputs():
         'nor_nor':'#define DEFAULT_READY_WAIT_JIFFIES (40UL * HZ)\n',
         'proc_harness':'SOURCE_MACROS={\'PROCREG_DIR\':\'"mt7621"\'}\nSOURCE_FEATURE_MACROS={\'FE_HW_LRO\':\'BIT(1)\'}\n',
         'proc_reg':'#define PROCREG_DIR "mt7621"\n','proc_config':'#define FE_HW_LRO BIT(1)\n',
-        'kernel_config':'CONFIG_RAETH=y\nCONFIG_MTD_SPI_NOR=y\nCONFIG_CPU_LITTLE_ENDIAN=y\nCONFIG_SOC_MT7621=y\nCONFIG_RESET_CONTROLLER=y\nCONFIG_RAETH_ESW_CONTROL=y\n# CONFIG_RAETH_ETHTOOL is not set\n',
+        'kernel_config':'CONFIG_RAETH=y\nCONFIG_MTD_SPI_NOR=y\nCONFIG_CPU_LITTLE_ENDIAN=y\nCONFIG_SOC_MT7621=y\nCONFIG_RESET_CONTROLLER=y\nCONFIG_RAETH_ESW_CONTROL=y\nCONFIG_WATCHDOG=y\nCONFIG_MT7621_WDT=y\n# CONFIG_RAETH_ETHTOOL is not set\n',
         'nor_header':'enum spi_nor_ops { SPI_NOR_OPS_READ=0,SPI_NOR_OPS_WRITE,SPI_NOR_OPS_ERASE,SPI_NOR_OPS_LOCK,SPI_NOR_OPS_UNLOCK,};\nenum spi_nor_option_flags {SNOR_F_USE_FSR=BIT(0),};\n'+'\n'.join('#define '+n+' '+v for n,v in {'SPINOR_OP_RDSR':'0x05','SPINOR_OP_RDFSR':'0x70',
             'SPINOR_OP_WREN':'0x06','SPINOR_OP_WRDI':'0x04','SPINOR_OP_CHIP_ERASE':'0xc7','SR_WIP':'BIT(0)','FSR_READY':'BIT(7)'}.items())+'\n'}
     result['runtime_raeth'] = 'static inline void ei_receive(void) { return; }\nstatic void ei_receive_tasklet(unsigned long unused) { ei_receive(); }\nstatic int fe_int_enable(struct net_device *dev) { if (ei_local->features & FE_INT_TASKLET) { tasklet_init(&ei_local->rx_tasklet, ei_receive_tasklet, 0); } return 0; }\nint ei_open(struct net_device *dev) { err = fe_int_enable(dev); if (err) goto fail_dma; ei_start_dma(dev); return 0; fail_dma: return err; }\nstatic int rather_probe(struct platform_device *pdev) { fe_features_config(ei_local); fe_architecture_config(ei_local); return 0; }\n'
@@ -79,7 +79,75 @@ def mini():
               source_keys={'raeth':'driver'},harness_key='harness',model_data_sha256=g.model.model_data_hash(data))
     return inputs,data,spec
 
+def legacy_source_profile(inputs):
+    # Isolate the preexisting board/macro unit fixture from new exact f9 bytes.
+    # The new binding has its own positive and adversarial tests below.
+    with patch.object(g, 'restart_watchdog_binding', return_value={}):
+        return g.source_profile(inputs)
+
+
 class BuiltinGateTests(unittest.TestCase):
+
+    def test_restart_and_watchdog_whole_models_and_true_objects_are_required(self):
+        self.assertEqual((len(g.COMPONENTS['restart']['functions']), len(g.COMPONENTS['wdt']['functions'])), (23, 19))
+        self.assertEqual(g.OBJECTS['kernel_reboot'][0], 'kernel/reboot.o')
+        self.assertEqual(g.OBJECTS['ralink_reset'][0], 'arch/mips/ralink/reset.o')
+        self.assertEqual(g.OBJECTS['mt7621_wdt'][0], 'drivers/watchdog/mt7621_wdt.o')
+        self.assertEqual(g.OBJECTS['watchdog_core'][0], 'drivers/watchdog/watchdog_dev.o')
+        self.assertIn('watchdog_ioctl', g.OBJECTS['watchdog_core'][2])
+        self.assertIn('mt762x_wdt_probe', g.OBJECTS['mt7621_wdt'][2])
+        for name in ('reboot_dma_failure_report', 'reboot_dma_failures', 'reboot_dma_failure_check'):
+            self.assertIn(name, g.OBJECTS['kernel_reboot'][2])
+        for name in ('rt_wdt_r32', 'watchdog_stop', 'watchdog_active'):
+            self.assertNotIn(name, {symbol for value in g.OBJECTS.values() for symbol in value[2]})
+        self.assertEqual((g.EXPECTED['wdt:disable-stuck']['ret'], g.EXPECTED['wdt:disable-stuck']['active']), (-5, 1))
+        self.assertEqual((g.EXPECTED['wdt:disable-inactive-hardware-enabled']['ret'],
+                          g.EXPECTED['wdt:disable-inactive-hardware-enabled']['enabled'],
+                          g.EXPECTED['wdt:disable-inactive-hardware-enabled']['reads']), (0, 1, 0))
+        self.assertEqual(g.EXPECTED['wdt:probe-normal']['reset_calls'], 0)
+        self.assertEqual(g.EXPECTED['wdt:probe-declared-missing-provider']['ret'], -2)
+        self.assertEqual(g.EXPECTED['wdt:probe-declared-missing-provider']['register_calls'], 0)
+        self.assertFalse(g.COMPONENTS['restart']['model_variant']['power_loss_or_independent_watchdog_prevented'])
+        self.assertTrue(g.COMPONENTS['wdt']['model_variant']['probe_failure_may_leave_hardware_running'])
+
+    def test_restart_safe_renderer_uses_real_unique_ledger_and_complete_prototypes(self):
+        declaration = 'static atomic_t reboot_dma_failure_reasons = ATOMIC_INIT(0);'
+        inputs = {'source': declaration}
+        spec = {'source_keys': {'reboot': 'source'}}
+        bodies = {'work': 'void work(void) { return; }'}
+        rendered = g.restart_source_prefix(inputs, spec, bodies, 'FUNCTION_PROTOTYPES\n')
+        self.assertIn('void work(void);', rendered)
+        self.assertEqual(rendered.count(declaration), 1)
+        for bad in ('', declaration + '\n' + declaration):
+            with self.assertRaises(ValueError):
+                g.restart_source_prefix({'source': bad}, spec, bodies, 'FUNCTION_PROTOTYPES')
+        for bad in ('', 'FUNCTION_PROTOTYPES FUNCTION_PROTOTYPES'):
+            with self.assertRaises(ValueError):
+                g.restart_source_prefix(inputs, spec, bodies, bad)
+
+    def test_restart_watchdog_fixture_and_actual_callback_bindings_fail_closed(self):
+        import hashlib, json
+        commit = 'f9c361f682eb742423dd9ebd422a1952af2ec6e0'
+        inputs = {'wdt_core': '.unlocked_ioctl = watchdog_ioctl,', 'wdt_driver': '.stop = mt762x_wdt_stop,'}
+        components = copy.deepcopy(g.COMPONENTS)
+        for component, count, commit_key in (('restart', 20, 'commit'), ('wdt', 2, 'source_commit')):
+            body = 'void old(void) { return; }'
+            fixture = {commit_key: commit, 'functions': {str(i): {'body': body, 'sha256': hashlib.sha256(body.encode()).hexdigest()} for i in range(count)}}
+            raw = json.dumps(fixture)
+            inputs[components[component]['baseline_fixture_key']] = raw
+            components[component]['baseline_fixture_sha256'] = hashlib.sha256(raw.encode()).hexdigest()
+        with patch.object(g, 'COMPONENTS', components):
+            proof = g.restart_watchdog_binding(inputs)
+            self.assertEqual(proof['watchdog_actual_objects'], ['mt7621_wdt', 'watchdog_core'])
+            self.assertFalse(proof['probe_failure_guarantees_disarmed_hardware'])
+            self.assertFalse(proof['running_legacy_kernel_or_upgrade_bridge_proven'])
+            for key in inputs:
+                bad = dict(inputs)
+                bad[key] += 'broken' if key.endswith('fixture') else bad[key]
+                with self.subTest(key=key), self.assertRaises(ValueError):
+                    g.restart_watchdog_binding(bad)
+
+
 
     def test_shutdown_fixed_rows_keep_prior_contract_and_terminal_ownership(self):
         import hashlib,json
@@ -111,8 +179,8 @@ class BuiltinGateTests(unittest.TestCase):
         with self.assertRaises(ValueError):g.shutdown_callback_binding(bad)
 
     def test_shutdown_static_owner_uses_existing_true_objects_and_compiled_variant_boundaries(self):
-        self.assertEqual(len(g.OBJECTS),13)
-        self.assertEqual(len({symbol for row in g.OBJECTS.values()for symbol in row[2]}),56)
+        self.assertEqual(len(g.OBJECTS),17)
+        self.assertEqual(len({symbol for row in g.OBJECTS.values()for symbol in row[2]}),67)
         for label in ('raeth_driver','raeth_aggregate','raeth_builtin'):
             self.assertIn('raether_shutdown',g.OBJECTS[label][2])
         self.assertEqual(g.OBJECTS['driver_core'][0],'drivers/base/dd.o')
@@ -147,9 +215,9 @@ class BuiltinGateTests(unittest.TestCase):
             with self.subTest(key=key,new=new),self.assertRaises(ValueError):g.phy_poll_callback_binding(bad)
 
     def test_fixed_disjoint_case_function_and_actual_object_scopes(self):
-        self.assertEqual({c:sum(o['component']==c for _,o in g.CASES)for c in g.COMPONENTS},{'raeth': 45, 'nor': 31, 'proc': 29, 'runtime': 51, 'qtx': 31, 'ioctl': 78, 'reset_core': 17, 'mdio': 34, 'remove': 20, 'esw': 32, 'reset_lifecycle': 48, 'esw_vlan': 68, 'shutdown': 27, 'phy_poll': 52})
-        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.OBJECTS)),(563, 97, 13))
-        self.assertEqual((sum(len(c['functions'])for c in g.COMPONENTS.values()),sum(len(c['source_only_functions'])for c in g.COMPONENTS.values())),(183, 26))
+        self.assertEqual({c:sum(o['component']==c for _,o in g.CASES)for c in g.COMPONENTS},{'raeth': 45, 'nor': 31, 'proc': 29, 'runtime': 51, 'qtx': 31, 'ioctl': 78, 'reset_core': 17, 'mdio': 34, 'remove': 20, 'esw': 32, 'reset_lifecycle': 48, 'esw_vlan': 68, 'shutdown': 27, 'phy_poll': 52, 'restart': 30, 'wdt': 37})
+        self.assertEqual((len(g.CASES),len(g.SOURCE_PATHS),len(g.OBJECTS)),(630, 121, 17))
+        self.assertEqual((sum(len(c['functions'])for c in g.COMPONENTS.values()),sum(len(c['source_only_functions'])for c in g.COMPONENTS.values())),(225, 26))
         self.assertIn('ei_init',g.OBJECTS['raeth_driver'][2]);self.assertIn('proc_remove',g.OBJECTS['proc_generic'][2])
         for label in ('raeth_driver','raeth_aggregate','raeth_builtin'):
             self.assertIn('ei_receive_tasklet',g.OBJECTS[label][2]);self.assertNotIn('ei_receive',g.OBJECTS[label][2])
@@ -197,7 +265,7 @@ class BuiltinGateTests(unittest.TestCase):
         with self.assertRaises(ValueError):g.esw_ioctl_callback_binding(wrong)
         for label,names in (('esw',('mtk_esw_ioctl','esw_ioctl_init')),('reset_core',('reset_control_assert','reset_control_deassert','reset_control_put','__devm_reset_control_get'))):
             for name in names:self.assertIn(name,g.OBJECTS[label][2])
-        self.assertEqual(len(g.OBJECTS),13)
+        self.assertEqual(len(g.OBJECTS),17)
 
     def test_reset_pointer_complete_body_parser_rejects_ambiguity_and_prototypes(self):
         reader=g.model.function
@@ -236,16 +304,16 @@ class BuiltinGateTests(unittest.TestCase):
         self.assertEqual(g.COMPONENT_FLAGS['esw'],('-Wno-unused-variable','-Wno-unused-parameter','-Wno-unused-but-set-variable'))
         self.assertEqual(g.COMPONENT_FLAGS['esw_vlan'],g.COMPONENT_FLAGS['esw'])
         self.assertEqual(g.COMPONENT_FLAGS['reset_lifecycle'],('-Wno-unused-parameter',))
-        self.assertIn('physical DMA',' '.join(g.LIMITS));self.assertEqual(len(g.exports()),69)
+        self.assertIn('physical DMA',' '.join(g.LIMITS));self.assertEqual(len(g.exports()),83)
 
     def test_kernel_board_and_ring_constants_are_required(self):
-        g.source_profile(profile_inputs())
+        legacy_source_profile(profile_inputs())
         for key,old,new in (('raeth_header','NUM 4','NUM 2'),('kernel_config','RAETH=y','RAETH=m'),
-                           ('kernel_config','RESET_CONTROLLER=y','RESET_CONTROLLER=n'),('kernel_config','ESW_CONTROL=y','ESW_CONTROL=n'),('kernel_config','# CONFIG_RAETH_ETHTOOL is not set','CONFIG_RAETH_ETHTOOL=y'),('kernel_config','SPI_NOR=y','SPI_NOR=m'),('kernel_config','SOC_MT7621=y','SOC_MT7621=m'),('nor_header','BIT(0)','BIT(1)'),('nor_nor','40UL','50UL'),('proc_reg','mt7621','changed'),('proc_config','BIT(1)','BIT(2)'),('nor_header','READ=0','READ=1')):
+                           ('kernel_config','RESET_CONTROLLER=y','RESET_CONTROLLER=n'),('kernel_config','WATCHDOG=y','WATCHDOG=n'),('kernel_config','MT7621_WDT=y','MT7621_WDT=m'),('kernel_config','ESW_CONTROL=y','ESW_CONTROL=n'),('kernel_config','# CONFIG_RAETH_ETHTOOL is not set','CONFIG_RAETH_ETHTOOL=y'),('kernel_config','SPI_NOR=y','SPI_NOR=m'),('kernel_config','SOC_MT7621=y','SOC_MT7621=m'),('nor_header','BIT(0)','BIT(1)'),('nor_nor','40UL','50UL'),('proc_reg','mt7621','changed'),('proc_config','BIT(1)','BIT(2)'),('nor_header','READ=0','READ=1')):
             bad=profile_inputs();bad[key]=bad[key].replace(old,new)
-            with self.subTest(key=key),self.assertRaises(ValueError):g.source_profile(bad)
+            with self.subTest(key=key),self.assertRaises(ValueError):legacy_source_profile(bad)
 
-        proof=g.source_profile(profile_inputs())
+        proof=legacy_source_profile(profile_inputs())
         self.assertEqual(proof['reference_functions'],3)
         owner=proof['receive_callback_binding']
         self.assertEqual(owner['execution'],'source-only-not-run')
@@ -262,15 +330,15 @@ class BuiltinGateTests(unittest.TestCase):
             ('runtime_config','FE_INT_TASKLET\tBIT(7)','FE_INT_TASKLET\tBIT(6)'),
             ('runtime_config','features |= FE_INT_TASKLET','features |= FE_INT_WORKQ')):
             bad=profile_inputs();assert old in bad[key];bad[key]=bad[key].replace(old,new)
-            with self.subTest(callback_owner=(key,old)),self.assertRaises(ValueError):g.source_profile(bad)
+            with self.subTest(callback_owner=(key,old)),self.assertRaises(ValueError):legacy_source_profile(bad)
         for extra in ('\nstatic void ei_receive_tasklet(unsigned long unused) { ei_receive(); }\n',):
             bad=profile_inputs();bad['runtime_raeth']+=extra
-            with self.assertRaises(ValueError):g.source_profile(bad)
+            with self.assertRaises(ValueError):legacy_source_profile(bad)
 
     def test_manual_unbind_guard_requires_actual_flag_and_driver_core_consumer(self):
         for key in ('raeth_raeth','raeth_device_header','raeth_bus'):
             bad=profile_inputs();bad[key]=''
-            with self.subTest(key=key),self.assertRaises(ValueError):g.source_profile(bad)
+            with self.subTest(key=key),self.assertRaises(ValueError):legacy_source_profile(bad)
 
     def test_model_render_reads_data_without_calling_generator(self):
         i,d,s=mini()
