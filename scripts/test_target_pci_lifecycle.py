@@ -15,32 +15,39 @@ from test_target_wifi_factory import module_elf
 from test_target_resident_upgrade import elf as static_elf
 
 
-DRIVER_DECLARATION = '''static struct pci_driver rt_pci_driver = {
-name:
-\tRTMP_DRV_NAME,
-id_table :
-\trt_pci_tbl,
-probe :
-\trt_pci_probe,
-shutdown :
-\trt_pci_shutdown,
-#if LINUX_VERSION_CODE >= 0x20412
-remove :
-\tDEVEXIT_P(rt_pci_remove),
-#else
-remove :
-\t__devexit(rt_pci_remove),
-#endif
-
-#if (KERNEL_VERSION(2, 5, 0) <= LINUX_VERSION_CODE)
-#ifdef CONFIG_PM
-suspend :
-\trt_pci_suspend,
-resume :
-\trt_pci_resume,
-#endif
-#endif
-};'''
+DRIVER_DECLARATION = ('static struct pci_driver rt_pci_driver = {\n'
+ '    /* A failed DMA stop retains owners, but the driver core still unbinds.\n'
+ '     * Keep manual bind/unbind unavailable until that transition is supported.\n'
+ '     * Normal module exit and PCI shutdown callbacks remain registered.\n'
+ '     */\n'
+ '    .driver = {\n'
+ '        .suppress_bind_attrs = true,\n'
+ '    },\n'
+ 'name:\n'
+ '\tRTMP_DRV_NAME,\n'
+ 'id_table :\n'
+ '\trt_pci_tbl,\n'
+ 'probe :\n'
+ '\trt_pci_probe,\n'
+ 'shutdown :\n'
+ '\trt_pci_shutdown,\n'
+ '#if LINUX_VERSION_CODE >= 0x20412\n'
+ 'remove :\n'
+ '\tDEVEXIT_P(rt_pci_remove),\n'
+ '#else\n'
+ 'remove :\n'
+ '\t__devexit(rt_pci_remove),\n'
+ '#endif\n'
+ '\n'
+ '#if (KERNEL_VERSION(2, 5, 0) <= LINUX_VERSION_CODE)\n'
+ '#ifdef CONFIG_PM\n'
+ 'suspend :\n'
+ '\trt_pci_suspend,\n'
+ 'resume :\n'
+ '\trt_pci_resume,\n'
+ '#endif\n'
+ '#endif\n'
+ '};')
 PCI_CORE_SHUTDOWN = '''static void pci_device_shutdown(struct device *dev)
 {
 \tstruct pci_dev *pci_dev = to_pci_dev(dev);
@@ -202,6 +209,38 @@ class PciLifecycleGateTests(unittest.TestCase):
                 current['model_data_sha256'] = gate.model_data_hash(data)
             with patch.dict(gate.COMPONENTS, {'pci': current}), self.subTest(fault=fault), self.assertRaises(ValueError):
                 gate.generate_component(local)
+
+
+    def test_current_initializer_matches_init_policy_and_resealed_unsafe_registration_is_rejected(self):
+        import re
+        import check_target_init_dma_lifecycle as current
+        from test_target_init_dma_lifecycle import native_boundary_fixture
+        inputs,_,_=selection_fixture();policy=current.SOURCE_ABI['native_boundaries']['pci'];keys=policy['source_keys']
+        native=native_boundary_fixture()
+        native_initializer=current.native_declaration(native[keys['pci']],r'^static\s+struct\s+pci_driver\s+rt_pci_driver\s*=\s*\{')
+        native[keys['pci']]=native[keys['pci']].replace(native_initializer,DRIVER_DECLARATION,1)
+        result=gate.source_selection(inputs);other=current.pci_bind_native_boundary(native)
+        self.assertIs(result['manual_bind_unbind_suppressed'],True)
+        self.assertEqual(result['driver_initializer_sha256'],other['initializer_sha256'])
+        self.assertEqual((other['native_case_count'],other['native_test_methods']),(5,7))
+        changes=(('.driver = {\n        .suppress_bind_attrs = true,\n    },','.driver = {},\n    .suppress_bind_attrs = true,'),
+                 ('.suppress_bind_attrs = true,',''),
+                 ('.suppress_bind_attrs = true,','.suppress_bind_attrs = false,'),
+                 ('.driver = {','.another_driver = {'),
+                 ('probe :\n\trt_pci_probe,','probe :\n\tabsent_probe,'),
+                 ('shutdown :\n\trt_pci_shutdown,','shutdown :\n\tabsent_shutdown,'),
+                 ('DEVEXIT_P(rt_pci_remove)','DEVEXIT_P(absent_remove)'),
+                 ('.suppress_bind_attrs = true,','/* .suppress_bind_attrs = true, */'),
+                 ('.suppress_bind_attrs = true,','".suppress_bind_attrs = true,"'))
+        for old,new in changes:
+            self.assertIn(old,inputs['pci']);bad=dict(inputs);bad['pci']=bad['pci'].replace(old,new,1)
+            declaration=re.findall(r'^static struct pci_driver rt_pci_driver = \{[\s\S]*?^\};',bad['pci'],re.M)[0]
+            with self.subTest(mutation=new),patch.dict(gate.SOURCE_ABI,driver_initializer_sha256=gate.sha(declaration.encode())),self.assertRaises(ValueError):gate.source_selection(bad)
+            if old.startswith('.suppress')or old.startswith('.driver'):
+                bad_native=dict(native);bad_native[keys['pci']]=native[keys['pci']].replace(DRIVER_DECLARATION,declaration,1)
+                with self.subTest(init_policy_mutation=new),self.assertRaises(ValueError):current.pci_bind_native_boundary(bad_native)
+        bad=dict(inputs);bad['pci']+='\n'+DRIVER_DECLARATION
+        with self.assertRaises(ValueError):gate.source_selection(bad)
 
     def test_actual_config_shutdown_registration_and_ordinary_reboot_boundary_are_bound(self):
         inputs, _, _ = selection_fixture()

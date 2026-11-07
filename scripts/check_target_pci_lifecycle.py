@@ -73,14 +73,21 @@ FLAGS = ('-std=gnu99', '-Os', '-static', '-s', '-Wall', '-Wextra', '-Werror', '-
 REQUIRED_OBJECT_FLAGS = ('-DMT7615', '-DRTMP_MAC_PCI', '-DRTMP_PCI_SUPPORT', '-fno-strict-aliasing')
 FORBIDDEN_OBJECT_FLAGS = ('-DINTELP6_SUPPORT', '-DWIFI_DIAG', '-DMEM_ALLOC_INFO_SUPPORT',
                           '-DCONFIG_WIFI_MSI_SUPPORT', '-DCONFIG_PM', '-fstrict-aliasing')
-SOURCE_ABI = {
-    'driver_initializer_sha256': 'ebb42fb57c892bdcee35873fb2e6734465ce8a5d1d5d8c4a21be759b32bf7e12',
-    'pci_core_shutdown_sha256': 'b42c687071cf3d3fc063e8db2b51efe1a008a9cbd6f71d384d444d731c79d522',
-    'pci_shutdown_declaration': 'void (*shutdown) (struct pci_dev *dev);',
-    'modern_exit_macros': '#if (KERNEL_VERSION(3, 8, 0) <= LINUX_VERSION_CODE)\n#define DEVEXIT\n#define DEVEXIT_P\n#define DEVINIT\n#define DEVINITDATA',
-    'enabled_config': ('CONFIG_RALINK_MT7621=y', 'CONFIG_PCI=y', 'CONFIG_CHIP_MT7615E=y', 'CONFIG_MT7615_AP=m'),
-    'disabled_config': ('# CONFIG_KEXEC is not set', '# CONFIG_PCI_MSI is not set', '# CONFIG_PM is not set'),
-}
+SOURCE_ABI = {'driver_initializer_sha256': 'e5aeeb4bb0e87e5d21473c577f951dc91410c1393815457603deab43e8789671',
+ 'pci_core_shutdown_sha256': 'b42c687071cf3d3fc063e8db2b51efe1a008a9cbd6f71d384d444d731c79d522',
+ 'pci_shutdown_declaration': 'void (*shutdown) (struct pci_dev *dev);',
+ 'modern_exit_macros': '#if (KERNEL_VERSION(3, 8, 0) <= LINUX_VERSION_CODE)\n'
+                       '#define DEVEXIT\n'
+                       '#define DEVEXIT_P\n'
+                       '#define DEVINIT\n'
+                       '#define DEVINITDATA',
+ 'enabled_config': ('CONFIG_RALINK_MT7621=y',
+                    'CONFIG_PCI=y',
+                    'CONFIG_CHIP_MT7615E=y',
+                    'CONFIG_MT7615_AP=m'),
+ 'disabled_config': ('# CONFIG_KEXEC is not set',
+                     '# CONFIG_PCI_MSI is not set',
+                     '# CONFIG_PM is not set')}
 ROLE = 'Two complete current PCI lifecycle functions in inert static MIPS userspace'
 LIMITS = (
     'PCI API operations, netdev/adapter frees, DMA ownership and DMA busy are inert recorders, not kernel or hardware execution.',
@@ -233,6 +240,22 @@ def validate_contract():
             'PCI actual object/symbol contract differs')
 
 
+
+def driver_bind_policy(initializer):
+    token=r'/\*[\s\S]*?\*/|//[^\n]*|"(?:\\[\s\S]|[^"\\])*"|\'(?:\\[\s\S]|[^\'\\])*\''
+    clean=re.sub(token,lambda m:' '*len(m.group()),initializer)
+    nested=re.findall(r'\.driver\s*=\s*\{([^{}]+)\}',clean)
+    require(len(nested)==1 and len(re.findall(r'\.suppress_bind_attrs\s*=\s*true\s*,',nested[0]))==1 and
+            len(re.findall(r'\.suppress_bind_attrs\s*=',clean))==1,
+            'PCI actual nested manual-bind suppression missing/ambiguous')
+    for field,callback in (('probe','rt_pci_probe'),('shutdown','rt_pci_shutdown')):
+        require(len(re.findall(r'\b'+field+r'\s*:\s*'+callback+r'\s*,',clean))==1,
+                'PCI actual callback registration differs: '+field)
+    require(re.search(r'#if\s+LINUX_VERSION_CODE\s*>=\s*0x20412\s+remove\s*:\s*DEVEXIT_P\(rt_pci_remove\)\s*,',clean)is not None,
+            'PCI actual configured removal callback/version branch differs')
+    return True
+
+
 def source_selection(inputs):
     require(set(inputs) == set(SOURCE_PATHS), 'PCI exact source inventory differs')
     config = inputs['wifi_config']
@@ -256,13 +279,14 @@ def source_selection(inputs):
     require(len(found) == 1 and sha(found[0].encode()) == SOURCE_ABI['driver_initializer_sha256'] and
             len(re.findall(r'\bshutdown\s*:\s*rt_pci_shutdown\s*,', found[0])) == 1,
             'PCI actual driver shutdown registration differs')
+    driver_bind_policy(found[0])
     core = function(inputs['pci_core'], 'pci_device_shutdown')
     require(sha(core.encode()) == SOURCE_ABI['pci_core_shutdown_sha256'] and
             '#ifdef CONFIG_KEXEC_CORE' in core and
             'if (kexec_in_progress && (pci_dev->current_state <= PCI_D3hot))\n\t\tpci_clear_master(pci_dev);' in core and
             core.count('pci_clear_master(pci_dev);') == 1, 'PCI real ordinary-reboot/kexec boundary differs')
     return {'status': 'PASS', 'driver_initializer_sha256': sha(found[0].encode()),
-            'shutdown_callback': 'rt_pci_shutdown', 'pci_core_shutdown_sha256': sha(core.encode()),
+            'shutdown_callback': 'rt_pci_shutdown', 'manual_bind_unbind_suppressed':True, 'pci_core_shutdown_sha256': sha(core.encode()),
             'ordinary_reboot_core_clears_master': False, 'kexec_config_enabled': False,
             'selected_profile': 'K2P Linux4.4 MT7615 PCI non-PM/non-MSI/non-IntelP6/non-diagnostic'}
 
