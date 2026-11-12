@@ -97,7 +97,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_raeth_mdio test_raeth_remove test_reset_core test_wsys_tlv test_esw_error test_reset_lifecycle test_esw_vlan \
                        test_esw_userspace_status test_link_status_retry \
                        test_raeth_shutdown test_raeth_phy_poll test_pci_bind_guard test_wtbl_tlv test_fwd_lifecycle \
-                       test_restart_veto test_mt7621_wdt test_raeth_mac test_restart_window; do
+                       test_restart_veto test_mt7621_wdt test_raeth_mac test_restart_window test_nor_address; do
     test -f "$root/source/tests/$required_test.py"
   done
   for baseline_fixture in change_led_mode.c change_storm_control_broadcast.c change_jumbo_frames_accept.c \
@@ -153,6 +153,10 @@ tar -xJf "$root/toolchain.tar.xz" -C "$toolchain"
 test -x "$toolchain/bin/mipsel-linux-uclibc-gcc"
 "$toolchain/bin/mipsel-linux-uclibc-gcc" --version > "$diagnostics/compiler.txt"
 if [ "$flavor" = "k2p-4.4" ]; then
+  # Actual NOR mode, scan, restore and driver bodies with a bounded bus model.
+  NOR_ADDRESS_TARGET_CC="$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    python3 -m unittest discover -s "$root/source/tests" -p 'test_nor_address.py' -v \
+    2>&1 | tee "$diagnostics/nor-address-target-tests.txt"
   # Whole board/gate bodies; cross-CPU reports use joined pthread seams.
   RESTART_WINDOW_TARGET_CC="$toolchain/bin/mipsel-linux-uclibc-gcc" \
     python3 -m unittest discover -s "$root/source/tests" -p 'test_restart_window.py' -v \
