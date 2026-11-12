@@ -97,7 +97,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_raeth_mdio test_raeth_remove test_reset_core test_wsys_tlv test_esw_error test_reset_lifecycle test_esw_vlan \
                        test_esw_userspace_status test_link_status_retry \
                        test_raeth_shutdown test_raeth_phy_poll test_pci_bind_guard test_wtbl_tlv test_fwd_lifecycle \
-                       test_restart_veto test_mt7621_wdt; do
+                       test_restart_veto test_mt7621_wdt test_raeth_mac; do
     test -f "$root/source/tests/$required_test.py"
   done
   for baseline_fixture in change_led_mode.c change_storm_control_broadcast.c change_jumbo_frames_accept.c \
@@ -153,6 +153,11 @@ tar -xJf "$root/toolchain.tar.xz" -C "$toolchain"
 test -x "$toolchain/bin/mipsel-linux-uclibc-gcc"
 "$toolchain/bin/mipsel-linux-uclibc-gcc" --version > "$diagnostics/compiler.txt"
 if [ "$flavor" = "k2p-4.4" ]; then
+  # Execute the same complete MAC callbacks with the pinned MIPS compiler.
+  # The model only replaces netdev state/MMIO; it never opens a device.
+  RAETH_MAC_TARGET_CC="$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    python3 -m unittest discover -s "$root/source/tests" -p 'test_raeth_mac.py' -v \
+    2>&1 | tee "$diagnostics/raeth-mac-target-tests.txt"
   test -f "$root/source/tests/spi_completion_harness.py"
   python3 "$root/scripts/check_target_spi_nor.py" --preflight --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \

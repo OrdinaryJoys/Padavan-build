@@ -53,6 +53,30 @@ def required_fixture_paths(block):
     return tuple(paths)
 
 class ProvenanceTests(unittest.TestCase):
+    def test_raeth_mac_target_failure_stops_the_locked_build(self):
+        script = Path(__file__).with_name('build_k2p.sh').read_text()
+        start = script.index('  RAETH_MAC_TARGET_CC=')
+        end = script.index('  test -f "$root/source/tests/spi_completion_harness.py"', start)
+        block = script[start:end]
+        tools = self.root/'mac-tools'; tools.mkdir()
+        mock = tools/'python3'
+        mock.write_text('#!/bin/sh\nprintf "%s\\n" "$RAETH_MAC_TARGET_CC" "$@" > "$MAC_CALL"\nexit "$MAC_EXIT"\n')
+        mock.chmod(0o755)
+        diagnostics = self.root/'mac-diagnostics'; diagnostics.mkdir()
+        for code in (0, 23):
+            call = self.root/('mac-call-'+str(code))
+            env = dict(os.environ, PATH=str(tools)+os.pathsep+os.environ['PATH'],
+                       root=str(self.root), toolchain=str(self.root/'pinned-toolchain'),
+                       diagnostics=str(diagnostics), MAC_CALL=str(call), MAC_EXIT=str(code))
+            result = subprocess.run(['bash','-euo','pipefail','-c',block+'echo reached'],
+                                    capture_output=True,text=True,env=env,timeout=10)
+            self.assertEqual(result.returncode,code)
+            self.assertEqual('reached' in result.stdout,code==0)
+            self.assertEqual(call.read_text().splitlines(),[
+                str(self.root/'pinned-toolchain/bin/mipsel-linux-uclibc-gcc'),
+                '-m','unittest','discover','-s',str(self.root/'source/tests'),
+                '-p','test_raeth_mac.py','-v'])
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix='k2p-provenance-')
         self.addCleanup(self.temporary.cleanup)
