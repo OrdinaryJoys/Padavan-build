@@ -176,7 +176,7 @@ COMPONENTS = {'raeth': {'paths': {'raeth': 'trunk/linux-4.4.x/drivers/net/ethern
                        'spi_nor_is_locked': 'nor'},
          'source_only_functions': {},
          'harness_key': 'nor_harness',
-         'model_data_sha256': '2700155b3fb7116a93dc1fba9d9a5427c2dc8f2167a08521c125485175d89dcb',
+         'model_data_sha256': 'b4a4f2709fc29bcbd27716d17bac7bfb2736f9d9a663ca15079f5bffa5135732',
          'model_variant': {}},
  'proc': {'paths': {'proc': 'trunk/linux-4.4.x/drivers/net/ethernet/raeth/ra_dbg_proc.c',
                     'generic': 'trunk/linux-4.4.x/fs/proc/generic.c',
