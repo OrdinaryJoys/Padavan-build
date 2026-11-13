@@ -335,6 +335,23 @@ class BuiltinGateTests(unittest.TestCase):
             bad=profile_inputs();bad['runtime_raeth']+=extra
             with self.assertRaises(ValueError):legacy_source_profile(bad)
 
+    def test_k2p_receive_requires_guard_before_dma_and_irq_unwind(self):
+        data = profile_inputs()
+        data['kernel_config'] += '\nCONFIG_K2P_RESET_GUARD=y\n'
+        guard = ('\n#ifdef CONFIG_K2P_RESET_GUARD\n'
+                 'if (!reboot_guard_admit(&ei_local->reset_dma)) {\n'
+                 '    err = -ESHUTDOWN; fe_int_disable(dev); goto fail_dma;\n'
+                 '}\n#endif\n')
+        data['runtime_raeth'] = data['runtime_raeth'].replace('ei_start_dma(dev);', guard + 'ei_start_dma(dev);')
+        self.assertEqual(legacy_source_profile(data)['receive_callback_binding']['open_function'], 'ei_open')
+        for before, after in ((guard, ''), ('!reboot_guard_admit', 'reboot_guard_admit'),
+                              ('fe_int_disable(dev);', ''), ('err = -ESHUTDOWN;', 'err = 0;'),
+                              ('goto fail_dma;\n}', 'return err;\n}'),
+                              ('ei_start_dma(dev);', 'ei_start_dma(dev); ei_start_dma(dev);')):
+            with self.subTest(mutation=before), self.assertRaisesRegex(ValueError, 'open/admission chain'):
+                changed = dict(data, runtime_raeth=data['runtime_raeth'].replace(before, after))
+                legacy_source_profile(changed)
+
     def test_manual_unbind_guard_requires_actual_flag_and_driver_core_consumer(self):
         for key in ('raeth_raeth','raeth_device_header','raeth_bus'):
             bad=profile_inputs();bad[key]=''

@@ -11105,7 +11105,17 @@ def receive_callback_binding(inputs):
     require(compact(registration).count(callsite) == 1 and
             len(re.findall(r'\btasklet_init\s*\(\s*&ei_local->rx_tasklet\s*,', registration)) == 1,
             'Built-in receive callback registration differs')
-    require(compact(opened).count('err=fe_int_enable(dev);if(err)gotofail_dma;ei_start_dma(dev);') == 1,
+    settings = inputs['kernel_config'].splitlines()
+    guard = 'CONFIG_K2P_RESET_GUARD'
+    guard_settings = [line for line in settings if line.startswith(guard + '=')]
+    require(guard_settings in ([], [guard + '=y']), 'Invalid built-in reset guard selection')
+    irq_open = 'err=fe_int_enable(dev);if(err)gotofail_dma;'
+    guarded = ('#ifdefCONFIG_K2P_RESET_GUARD'
+               'if(!reboot_guard_admit(&ei_local->reset_dma)){'
+               'err=-ESHUTDOWN;fe_int_disable(dev);gotofail_dma;}#endif')
+    chain = irq_open + (guarded if guard_settings else '') + 'ei_start_dma(dev);'
+    code = compact(opened)
+    require(code.count(chain) == code.count('ei_start_dma(dev);') == 1,
             'Built-in receive callback open/admission chain differs')
     require(compact(constructor).count('fe_features_config(ei_local);fe_architecture_config(ei_local);') == 1,
             'Built-in receive callback feature constructor differs')
