@@ -30,7 +30,7 @@ BASELINE_FUNCTION_HASHES = {'mt7621_spi_read': 'aed29c826bd8cf9e0e7e43ac3fded20c
  'mt7621_spi_write': 'f6e0a38ff7cfac843a87f3c9701ab3fc450d7414300900e700f7f5bc4f8bcc68',
  'mt7621_spi_probe': '0feb3856c859a08e88cd8c2e5ab1c39d7e444046c10da284dcd4724e73bb47de',
  'mt7621_spi_remove': '4e644f0dfda26caf30c9603e490b420c6d3d586dc2574a585d457e7f09cbd80e'}
-PRODUCTION_FRAGMENT_SHA256 = 'c75829f0090ac44e00323036a734735b3e96c5b1d1882188e5fed3254e73b0f2'
+PRODUCTION_FRAGMENT_SHA256 = 'a9523603ea6027b889ab1960df6f2ce7f699efdb1b49fc0914912e180848a640'
 CASES = (('current:probe-normal', {'baseline': False, 'selector': 'probe-normal'}),
  ('current:probe-map-error',
   {'baseline': False, 'selector': 'probe-map-error'}),
