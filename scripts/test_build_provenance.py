@@ -365,7 +365,7 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
 
     def test_late_gates_require_image_or_rootfs_binding_and_stop_publication_on_failure(self):
         names=['controller_clock','spi_dma','spi_lifecycle','nvram_mtd','mtd_mutation','wifi_factory','wifi_file_io','wifi_calibration_integrity','rx_transport','pci_lifecycle','token_lifecycle','init_dma_lifecycle','mtd_backup','mtd_preflight','builtin_lifecycle']
-        gates = ['check_target_' + name for name in names] + ['check_k2p_reset_guard']
+        gates = ['check_target_' + name for name in names] + ['check_k2p_reset_guard', 'check_device_lifetime']
         result,calls,done=self.new_target_gate_block(late=True)
         self.assertEqual(result.returncode,0,result.stderr);self.assertTrue(done)
         self.assertEqual([Path(call[0]).stem for call in calls],gates)

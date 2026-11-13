@@ -22,6 +22,9 @@ DRIVER_DECLARATION = ('static struct pci_driver rt_pci_driver = {\n'
  '     */\n'
  '    .driver = {\n'
  '        .suppress_bind_attrs = true,\n'
+ '#ifdef CONFIG_K2P_RESET_GUARD\n'
+ '        .no_forced_unbind = true,\n'
+ '#endif\n'
  '    },\n'
  'name:\n'
  '\tRTMP_DRV_NAME,\n'
@@ -223,7 +226,7 @@ class PciLifecycleGateTests(unittest.TestCase):
         self.assertIs(result['manual_bind_unbind_suppressed'],True)
         self.assertEqual(result['driver_initializer_sha256'],other['initializer_sha256'])
         self.assertEqual((other['native_case_count'],other['native_test_methods']),(5,7))
-        changes=(('.driver = {\n        .suppress_bind_attrs = true,\n    },','.driver = {},\n    .suppress_bind_attrs = true,'),
+        changes=(('.driver = {\n        .suppress_bind_attrs = true,\n#ifdef CONFIG_K2P_RESET_GUARD\n        .no_forced_unbind = true,\n#endif\n    },','.driver = {},\n    .suppress_bind_attrs = true,'),
                  ('.suppress_bind_attrs = true,',''),
                  ('.suppress_bind_attrs = true,','.suppress_bind_attrs = false,'),
                  ('.driver = {','.another_driver = {'),

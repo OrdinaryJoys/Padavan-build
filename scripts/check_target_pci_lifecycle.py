@@ -69,7 +69,7 @@ FLAGS = ('-std=gnu99', '-Os', '-static', '-s', '-Wall', '-Wextra', '-Werror', '-
 REQUIRED_OBJECT_FLAGS = ('-DMT7615', '-DRTMP_MAC_PCI', '-DRTMP_PCI_SUPPORT', '-fno-strict-aliasing')
 FORBIDDEN_OBJECT_FLAGS = ('-DINTELP6_SUPPORT', '-DWIFI_DIAG', '-DMEM_ALLOC_INFO_SUPPORT',
                           '-DCONFIG_WIFI_MSI_SUPPORT', '-DCONFIG_PM', '-fstrict-aliasing')
-SOURCE_ABI = {'driver_initializer_sha256': 'e5aeeb4bb0e87e5d21473c577f951dc91410c1393815457603deab43e8789671',
+SOURCE_ABI = {'driver_initializer_sha256': '7094c16bc084bf645ba9d663f0278efc2d8628e28b4c338514090e4f9b0b4fcb',
  'pci_core_shutdown_sha256': 'b42c687071cf3d3fc063e8db2b51efe1a008a9cbd6f71d384d444d731c79d522',
  'pci_shutdown_declaration': 'void (*shutdown) (struct pci_dev *dev);',
  'modern_exit_macros': '#if (KERNEL_VERSION(3, 8, 0) <= LINUX_VERSION_CODE)\n'

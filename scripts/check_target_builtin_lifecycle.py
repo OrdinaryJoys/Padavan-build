@@ -382,7 +382,7 @@ COMPONENTS = {'raeth': {'paths': {'raeth': 'trunk/linux-4.4.x/drivers/net/ethern
                           '__device_release_driver': 'core',
                           'raeth_init_pseudo': 'raeth'},
             'source_only_functions': {'rather_probe': 'raeth'},
-            'model_data_sha256': '13acc5e4728f68b6289ef1bc7280e0829803122cc52b57ac9278ddb081314986',
+            'model_data_sha256': 'fee5fa4747109750fd060be2173e15f0aafd03173982c694c3bf3792ebcd19ee',
             'model_variant': {'K2P_MT7621_builtin_tasklet_single_controller': True,
                               'whole_driver_core_unconditional_devres_release': True,
                               'hardware_MMIO_DMA_IRQ_threads_refcounts_are_inert': True,
