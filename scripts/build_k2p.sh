@@ -97,7 +97,8 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_raeth_mdio test_raeth_remove test_reset_core test_wsys_tlv test_esw_error test_reset_lifecycle test_esw_vlan \
                        test_esw_userspace_status test_link_status_retry \
                        test_raeth_shutdown test_raeth_phy_poll test_pci_bind_guard test_wtbl_tlv test_fwd_lifecycle \
-                       test_restart_veto test_mt7621_wdt test_raeth_mac test_restart_window test_nor_address; do
+                       test_restart_veto test_mt7621_wdt test_raeth_mac test_restart_window test_nor_address \
+                       test_k2p_reset_guard; do
     test -f "$root/source/tests/$required_test.py"
   done
   for baseline_fixture in change_led_mode.c change_storm_control_broadcast.c change_jumbo_frames_accept.c \
@@ -153,6 +154,9 @@ tar -xJf "$root/toolchain.tar.xz" -C "$toolchain"
 test -x "$toolchain/bin/mipsel-linux-uclibc-gcc"
 "$toolchain/bin/mipsel-linux-uclibc-gcc" --version > "$diagnostics/compiler.txt"
 if [ "$flavor" = "k2p-4.4" ]; then
+  K2P_RESET_GUARD_TARGET_CC="$toolchain/bin/mipsel-linux-uclibc-gcc" \
+    python3 -m unittest discover -s "$root/source/tests" -p 'test_k2p_reset_guard.py' -v \
+    2>&1 | tee "$diagnostics/k2p-reset-guard-target-tests.txt"
   # Actual NOR mode, scan, restore and driver bodies with a bounded bus model.
   NOR_ADDRESS_TARGET_CC="$toolchain/bin/mipsel-linux-uclibc-gcc" \
     python3 -m unittest discover -s "$root/source/tests" -p 'test_nor_address.py' -v \
@@ -584,6 +588,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
   python3 "$root/scripts/check_target_builtin_lifecycle.py" --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --spi-report "$diagnostics/target-spi-nor.json" --output "$diagnostics/target-builtin-lifecycle.json"
+  python3 "$root/scripts/check_k2p_reset_guard.py" --trunk "$trunk" --artifacts "$diagnostics"
   python3 "$root/scripts/check_target_sr3.py" --trunk "$trunk" \
     --compiler "$toolchain/bin/mipsel-linux-uclibc-gcc" \
     --spi-report "$diagnostics/target-spi-nor.json" --output "$diagnostics/target-sr3.json"
@@ -625,6 +630,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
   cp "$diagnostics/target-token-lifecycle"* "$dist/"
   cp "$diagnostics/target-init-dma-lifecycle"* "$dist/"
   cp "$diagnostics/target-builtin-lifecycle"* "$dist/"
+  cp "$diagnostics/target-k2p-reset-guard"* "$diagnostics/k2p-reset-guard-target-tests.txt" "$dist/"
   cp "$diagnostics/target-storage-cache"* "$dist/"
   cp "$diagnostics/target-collector"* "$dist/"
   cp "$diagnostics/target-resident-upgrade.json" "$dist/"
