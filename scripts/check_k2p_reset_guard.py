@@ -9,7 +9,7 @@ import shutil
 
 from check_target_builtin_lifecycle import embedded_config
 from check_target_spi_nor import inspect_elf, MAX_ELF
-from check_target_init_dma_lifecycle import command_member
+from check_target_init_dma_lifecycle import canonical_command, command_member
 
 PREFIX = "target-k2p-reset-guard"
 MT = "drivers/net/wireless/mediatek/mt7615"
@@ -63,7 +63,8 @@ def inspect(directory):
         stem = directory / (PREFIX + "-" + label)
         obj, cmd = stem.with_suffix(".o"), stem.with_suffix(".cmd")
         require(obj.stat().st_size <= MAX_ELF, "Guard object too large")
-        require(command_member(cmd.read_text(), relative), "Wrong compile command for " + label)
+        require(command_member(canonical_command(cmd.read_bytes()), relative),
+                "Wrong compile command for " + label)
         meta = inspect_elf(obj.read_bytes(), 1)
         linked = linked_wifi if relative.startswith(MT + "/") else linked_kernel
         objects[label] = {"sha256": meta["sha256"], "command_sha256": sha(cmd),
