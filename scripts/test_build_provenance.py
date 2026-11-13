@@ -365,9 +365,11 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
 
     def test_late_gates_require_image_or_rootfs_binding_and_stop_publication_on_failure(self):
         names=['controller_clock','spi_dma','spi_lifecycle','nvram_mtd','mtd_mutation','wifi_factory','wifi_file_io','wifi_calibration_integrity','rx_transport','pci_lifecycle','token_lifecycle','init_dma_lifecycle','mtd_backup','mtd_preflight','builtin_lifecycle']
+        gates = ['check_target_' + name for name in names] + ['check_k2p_reset_guard']
         result,calls,done=self.new_target_gate_block(late=True)
         self.assertEqual(result.returncode,0,result.stderr);self.assertTrue(done)
-        self.assertEqual([Path(call[0]).stem for call in calls],['check_target_'+name for name in names])
+        self.assertEqual([Path(call[0]).stem for call in calls],gates)
+        self.assertEqual(calls[-1][calls[-1].index('--artifacts')+1],str(self.root/'diagnostics'))
         self.assertTrue(all('--preflight'not in call for call in calls))
         self.assertTrue(all('--spi-report'in call for call in calls[:4]+calls[5:6]))
         self.assertTrue(all('--rootfs'in call for call in calls[4:6]))
@@ -383,7 +385,7 @@ sys.exit(23 if os.environ['GATE_FAULT'] and os.environ['GATE_FAULT'] in sys.argv
         for missing,count in(('target-wifi-factory.json',7),('target-wifi-file-io.json',8),('target-mtd-backup.json',14),('target-spi-nor.json',15)):
             result,missing_calls,done=self.new_target_gate_block(late=True,missing_parent=missing)
             self.assertEqual(result.returncode,97);self.assertEqual(len(missing_calls),count);self.assertFalse(done)
-        for i,name in enumerate(names):
+        for i,name in enumerate(gates):
             with self.subTest(gate=name):
                 result,calls,done=self.new_target_gate_block(late=True,fault=name)
                 self.assertEqual(result.returncode,23);self.assertEqual(len(calls),i+1);self.assertFalse(done)
