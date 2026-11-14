@@ -36,6 +36,7 @@ CASES = (
     ('success-short-writes', 'short', 0, 'VERIFIED', True),
     ('success-write-eintr', 'write-eintr', 0, 'VERIFIED', True),
     ('memory-lock-prewrite', 'memory-lock', 20, 'PREWRITE', False),
+    ('executable-lock-prewrite', 'executable-lock', 20, 'PREWRITE', False),
     ('image-read-prewrite', 'image-read', 20, 'PREWRITE', False),
     ('invalid-crc-prewrite', 'invalid-crc', 20, 'PREWRITE', False),
     ('readback-interface-prewrite', 'pre-read', 20, 'PREWRITE', False),
@@ -153,6 +154,8 @@ def expected_events(fault, image_bytes=IMAGE_BYTES):
     events += ['device-sync', 'memory-lock']
     if fault == 'memory-lock':
         return events + ['memory-free', 'memory-unlock']
+    if fault == 'executable-lock':
+        return events + ['executable-lock', 'memory-free', 'memory-unlock']
     events.append('snapshot-lock')
     if fault == 'snapshot-lock':
         return events + ['memory-free', 'memory-unlock']
@@ -186,7 +189,7 @@ def expected_requests(fault, image_bytes=IMAGE_BYTES):
     if fault and fault.startswith('oom-') and fault not in OOM_SUCCESS_FAULTS:
         return []
     if fault in ('global-lock','image-read','invalid-crc','pre-read','memory-lock',
-                 'maybe-write','maybe-dir-sync','unlock','erase','memory','snapshot-lock','readback-lock'):
+                 'maybe-write','maybe-dir-sync','unlock','erase','memory','snapshot-lock','readback-lock','executable-lock'):
         return []
     if fault == 'short':
         return [min(padded-offset,65536) for offset in range(0,padded,17)]
@@ -438,13 +441,13 @@ def check(trunk, rootfs, compiler, sysroot, output):
               'shipped_refusal_isolation': partial['shipped_refusal_isolation'],
               'filesystem_limits': {'tmp': 24 * 1024 * 1024},
               'limits': ['One actual shipped legacy mtd_write case refuses its removed protocol with21 and no status; no real MTD is opened.',
-                         'The44 core protocol cases cross-compile the production header through an inert ABI shim, not the resident finalizer main; ordinary-file device, IOCTL, memory-lock and reboot effects are inert.',
+                         'The45 core protocol cases cross-compile the production header through an inert ABI shim, not the resident finalizer main; ordinary-file device, IOCTL, memory-lock and reboot effects are inert.',
                          'Two large-image cases observe complete64KiB request sequences and later-block failure; this bounds requested mtdchar bounce allocation, not all kernel memory use or write latency.',
                          'Explicit snapshot and readback range mlock errors must abort before MAYBE; memory-lock effects in this ABI shim are inert. Full executable/stack residency and system memory pressure are not established.',
                          'The actual OOM guard body uses a private ordinary file and low-level syscall/fs substitutions; no real host or router OOM score is changed, and no kernel OOM survival is established.',
                          'No hardware write, erase, memory locking, reboot, power-loss safety or router boot is established.']}
     output.write_text(json.dumps(report, indent=2) + '\n')
-    print('Target firmware writer:45 exact cases PASS (one legacy refusal,44 inert core MIPS cases; resident finalizer requires its separate gate)')
+    print('Target firmware writer:46 exact cases PASS (one legacy refusal,45 inert core MIPS cases; resident finalizer requires its separate gate)')
     return report
 
 

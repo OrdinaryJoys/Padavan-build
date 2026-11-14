@@ -23,6 +23,7 @@ FIXED_EVENTS = {
     'success-short-writes': DEVICE_PREP + ERASE_THREE + ['write'] * 723 + ['device-sync', 'writer-close', 'readback', 'reader-close'],
     'success-write-eintr': DEVICE_PREP + ERASE_THREE + ['write', 'write', 'device-sync', 'writer-close', 'readback', 'reader-close'],
     'memory-lock-prewrite': MLOCK_ALL + ['memory-free', 'memory-unlock'],
+    'executable-lock-prewrite': MLOCK_ALL + ['executable-lock', 'memory-free', 'memory-unlock'],
     'image-read-prewrite': ['open-device', 'memory-free'],
     'invalid-crc-prewrite': ['open-device', 'memory-free'],
     'readback-interface-prewrite': ['open-device', 'memory-free'],
@@ -157,15 +158,15 @@ class TargetWriterTests(unittest.TestCase):
             self.assertEqual(result.stdout, '0\n')
             after = path.stat(); self.assertEqual((before.st_uid, before.st_ino), (after.st_uid, after.st_ino))
             path.write_text('controller final report'); self.assertEqual(path.read_text(), 'controller final report')
-    def test_exact_forty_five_records_are_accepted(self):
-        self.assertEqual(len(records()), 45)
+    def test_exact_forty_six_records_are_accepted(self):
+        self.assertEqual(len(records()), 46)
         self.assertEqual(set(FIXED_EVENTS),{row[0] for row in writer.CASES})
         self.assertEqual(set(FIXED_REQUESTS),set(FIXED_EVENTS))
         writer.validate_records(records())
 
-    def test_source_only_preflight_requires_exact_forty_four_cases_and_preserves_roles(self):
+    def test_source_only_preflight_requires_exact_forty_five_cases_and_preserves_roles(self):
         source = records()[1:]
-        self.assertEqual(len(source), 44)
+        self.assertEqual(len(source), 45)
         writer.validate_records(source, include_shipped=False)
         other_owner = copy.deepcopy(source)
         for row in other_owner: row['record_metadata']['uid'] = 99
@@ -227,7 +228,7 @@ class TargetWriterTests(unittest.TestCase):
             else: rows[11]['events'].append('memory-unlock')
             with self.assertRaises(ValueError): writer.validate_records(rows)
         for name in ('memory-lock-prewrite','image-read-prewrite','invalid-crc-prewrite','readback-interface-prewrite',
-                     'allocation-prewrite','snapshot-lock-prewrite','readback-lock-prewrite'):
+                     'allocation-prewrite','snapshot-lock-prewrite','readback-lock-prewrite','executable-lock-prewrite'):
             rows=records();row=next(row for row in rows if row['case']==name)
             row['events'].remove('memory-free')
             with self.subTest(case=name),self.assertRaises(ValueError):writer.validate_records(rows)
@@ -236,13 +237,18 @@ class TargetWriterTests(unittest.TestCase):
             row['events'].append('memory-free')
             with self.subTest(case=name),self.assertRaises(ValueError):writer.validate_records(rows)
 
+    def test_executable_lock_failure_event_is_required(self):
+        rows=records();row=next(row for row in rows if row['case']=='executable-lock-prewrite')
+        row['events'].remove('executable-lock')
+        with self.assertRaises(ValueError):writer.validate_records(rows)
+
     def test_both_checked_ranges_precede_write_and_failure_stays_prewrite(self):
         for name in ('success-supported-sync','success-large-chunked'):
             for step in ('snapshot-lock','readback-lock'):
                 rows=records();row=next(row for row in rows if row['case']==name)
                 row['events'].remove(step)
                 with self.subTest(case=name,removed=step),self.assertRaises(ValueError):writer.validate_records(rows)
-        for name in ('allocation-prewrite','snapshot-lock-prewrite','readback-lock-prewrite'):
+        for name in ('allocation-prewrite','snapshot-lock-prewrite','readback-lock-prewrite','executable-lock-prewrite'):
             for key,value in (('exit_code',21),('device_write_requests',[12288])):
                 rows=records();next(row for row in rows if row['case']==name)[key]=value
                 with self.subTest(case=name,key=key),self.assertRaises(ValueError):writer.validate_records(rows)
