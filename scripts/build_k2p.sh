@@ -170,11 +170,15 @@ if [ "$flavor" = "k2p-4.4" ]; then
     2>&1 | tee "$diagnostics/device-lifetime-target-tests.txt"
   python3 "$root/scripts/check_device_lifetime_execution.py" --artifacts "$diagnostics"
   K2P_RESET_GUARD_TARGET_CC="$toolchain/bin/mipsel-linux-uclibc-gcc" \
+  K2P_RESET_GUARD_TARGET_DIR="$diagnostics" \
     python3 -m unittest discover -s "$root/source/tests" -p 'test_k2p_reset_guard.py' -v \
     2>&1 | tee "$diagnostics/k2p-reset-guard-target-tests.txt"
   grep -Eq '^test_nor_shutdown_lock_timeout_retains_owner_and_vetoes_reset \(test_k2p_reset_guard\.K2pResetGuardTests\) \.\.\. ok$' "$diagnostics/k2p-reset-guard-target-tests.txt"
   grep -Eq '^Ran 7 tests in ' "$diagnostics/k2p-reset-guard-target-tests.txt"
   test "$(tail -n 1 "$diagnostics/k2p-reset-guard-target-tests.txt")" = OK
+  for evidence in target-nor-lock.c target-nor-lock.elf target-nor-lock-broken.c target-nor-lock-broken.elf; do
+    test -s "$diagnostics/$evidence"
+  done
   # Actual NOR mode, scan, restore and driver bodies with a bounded bus model.
   NOR_ADDRESS_TARGET_CC="$toolchain/bin/mipsel-linux-uclibc-gcc" \
     python3 -m unittest discover -s "$root/source/tests" -p 'test_nor_address.py' -v \
@@ -650,6 +654,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
   cp "$diagnostics/target-init-dma-lifecycle"* "$dist/"
   cp "$diagnostics/target-builtin-lifecycle"* "$dist/"
   cp "$diagnostics/target-k2p-reset-guard"* "$diagnostics/k2p-reset-guard-target-tests.txt" "$dist/"
+  cp "$diagnostics/target-nor-lock"* "$dist/"
   cp "$diagnostics/target-device-lifetime"* "$diagnostics/device-lifetime-target-tests.txt" "$dist/"
   cp "$diagnostics/target-exec-residency"* "$diagnostics/exec-residency-target-tests.txt" "$dist/"
   cp "$diagnostics/target-apcli-shutdown"* "$diagnostics/apcli-shutdown-target-tests.txt" "$dist/"
