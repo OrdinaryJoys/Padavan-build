@@ -172,6 +172,9 @@ if [ "$flavor" = "k2p-4.4" ]; then
   K2P_RESET_GUARD_TARGET_CC="$toolchain/bin/mipsel-linux-uclibc-gcc" \
     python3 -m unittest discover -s "$root/source/tests" -p 'test_k2p_reset_guard.py' -v \
     2>&1 | tee "$diagnostics/k2p-reset-guard-target-tests.txt"
+  grep -Eq '^test_nor_shutdown_lock_timeout_retains_owner_and_vetoes_reset \(test_k2p_reset_guard\.K2pResetGuardTests\) \.\.\. ok$' "$diagnostics/k2p-reset-guard-target-tests.txt"
+  grep -Eq '^Ran 7 tests in ' "$diagnostics/k2p-reset-guard-target-tests.txt"
+  test "$(tail -n 1 "$diagnostics/k2p-reset-guard-target-tests.txt")" = OK
   # Actual NOR mode, scan, restore and driver bodies with a bounded bus model.
   NOR_ADDRESS_TARGET_CC="$toolchain/bin/mipsel-linux-uclibc-gcc" \
     python3 -m unittest discover -s "$root/source/tests" -p 'test_nor_address.py' -v \
