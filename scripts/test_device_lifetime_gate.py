@@ -26,6 +26,11 @@ class LifetimeGateTests(unittest.TestCase):
   with self.assertRaises(ValueError):self.inspect(metadata=broken)
   (self.root/(gate.PREFIX+'-lifetime.o')).unlink()
   with self.assertRaises(FileNotFoundError):self.inspect()
+ def test_split_release_entry_and_body_are_both_required(self):
+  self.assertEqual(self.inspect()['status'],'PASS')
+  for name in ('device_release_driver', '__device_release_driver.part.6', 'driver_detach'):
+   broken=copy.deepcopy(self.metadata);del broken['function_symbols'][name]
+   with self.subTest(name=name),self.assertRaises(ValueError):self.inspect(metadata=broken)
  def test_compile_command_cannot_point_to_unrelated_object(self):
   self.assertEqual(self.inspect()['status'],'PASS')
   path=self.root/(gate.PREFIX+'-lifetime.cmd');path.write_text('cmd_test := gcc -c -o other.o test.c\n')

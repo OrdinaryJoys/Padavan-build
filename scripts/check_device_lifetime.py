@@ -14,7 +14,7 @@ from check_target_init_dma_lifecycle import canonical_command, command_member
 PREFIX = 'target-device-lifetime'
 OBJECTS = {
  'lifetime': ('drivers/base/device_lifetime.o', ('device_lifetime_probe_begin', 'device_lifetime_depend', 'device_lifetime_remove_begin', 'device_lifetime_detach_begin', 'device_lifetime_driver_remove', 'device_lifetime_devres_allowed')),
- 'dd': ('drivers/base/dd.o', ('really_probe', 'device_bind_driver', '__device_release_driver', 'driver_detach')),
+ 'dd': ('drivers/base/dd.o', ('really_probe', 'device_bind_driver', 'device_release_driver', '__device_release_driver.part.6', 'driver_detach')),
  'core': ('drivers/base/core.o', ('device_add', 'device_del', 'device_unregister', 'device_move')),
  'bus': ('drivers/base/bus.o', ('bus_add_driver', 'bus_remove_driver', 'bus_remove_device')),
  'driver': ('drivers/base/driver.o', ('driver_register', 'driver_unregister')),
