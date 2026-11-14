@@ -98,7 +98,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_esw_userspace_status test_link_status_retry \
                        test_raeth_shutdown test_raeth_phy_poll test_pci_bind_guard test_wtbl_tlv test_fwd_lifecycle \
                        test_restart_veto test_mt7621_wdt test_raeth_mac test_restart_window test_nor_address \
-                       test_k2p_reset_guard test_device_lifetime; do
+                       test_k2p_reset_guard test_device_lifetime test_busybox_usage_write; do
     test -f "$root/source/tests/$required_test.py"
   done
   for baseline_fixture in change_led_mode.c change_storm_control_broadcast.c change_jumbo_frames_accept.c \
