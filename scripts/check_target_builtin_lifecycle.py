@@ -685,7 +685,7 @@ COMPONENTS = {'raeth': {'paths': {'raeth': 'trunk/linux-4.4.x/drivers/net/ethern
                            'rt_pci_shutdown': 'pci',
                            'HwRecoveryFromErrorOwned': 'recovery'},
              'source_only_functions': {},
-             'model_data_sha256': 'ff79f6eff80cef554e20508f1dfcd377acb2051cf0f0a65a14b40357016beb35',
+             'model_data_sha256': '424701a2e718cc3895c249fcf74d4d0bec078f9a851da4bf71f8cb7423094983',
              'model_variant': {'whole_restart_shutdown_control_flow': True,
                                'real_native_atomic_and_pthread_seams': True,
                                'scheduler_MMIO_IRQ_terminal_escape_are_seams': True,
