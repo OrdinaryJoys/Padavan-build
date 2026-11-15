@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""Check target NOR shutdown watchdog tests and MIPS executable."""
+import argparse
+import hashlib
+import json
+import re
+from pathlib import Path
+from check_target_spi_nor import inspect_elf
+
+
+def require(value, message):
+    if not value:
+        raise ValueError(message)
+
+
+def inspect(directory):
+    log=(directory/'nor-shutdown-watch-target-tests.txt').read_bytes()
+    text=log.decode('utf-8')
+    require(text.count('NOR_SHUTDOWN_WATCH_TARGET=mipsel-linux-uclibc;RUNNER=qemu-mipsel')==1,
+            'MIPS target execution marker absent or duplicated')
+    for name in ('test_actual_shutdown_with_stalled_and_late_spi',
+                 'test_dropping_failure_report_is_detected'):
+        require(len(re.findall(r'^'+name+r'\s+\([^\n]+\)\s+\.\.\.\s+ok$',text,re.M))==1,
+                'Missing target test: '+name)
+    require(len(re.findall(r'^Ran 2 tests in ',text,re.M))==1 and text.rstrip().endswith('OK'),
+            'Target tests failed or skipped')
+    source=(directory/'target-nor-shutdown-watch.c').read_bytes()
+    elf=(directory/'target-nor-shutdown-watch.elf').read_bytes()
+    require(0<len(source)<=1024*1024,'Target source size')
+    meta=inspect_elf(elf,2)
+    return {'status':'PASS','tests':2,'source_sha256':hashlib.sha256(source).hexdigest(),
+            'elf_sha256':meta['sha256'],'log_sha256':hashlib.sha256(log).hexdigest()}
+
+
+def main():
+    p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--artifacts',type=Path,required=True)
+    p.add_argument('--write-report',action='store_true')
+    a=p.parse_args();result=inspect(a.artifacts);report=a.artifacts/'target-nor-shutdown-watch.json'
+    if a.write_report:
+        report.write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+    else:
+        require(json.loads(report.read_text())==result,'Target receipt differs')
+    print(json.dumps(result))
+
+if __name__=='__main__':
+    main()
