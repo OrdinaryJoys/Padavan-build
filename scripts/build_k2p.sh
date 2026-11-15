@@ -98,7 +98,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
                        test_esw_userspace_status test_link_status_retry \
                        test_raeth_shutdown test_raeth_phy_poll test_pci_bind_guard test_wtbl_tlv test_fwd_lifecycle \
                        test_restart_veto test_mt7621_wdt test_raeth_mac test_restart_window test_nor_address \
-                       test_k2p_reset_guard test_device_lifetime test_busybox_usage_write test_exec_residency test_apcli_shutdown_lock test_raeth_shutdown_rtnl test_watchdog_shutdown_lock test_nor_shutdown_watch test_raeth_k2p_thread_scope test_wireguard_verified_download; do
+                       test_k2p_reset_guard test_device_lifetime test_busybox_usage_write test_exec_residency test_apcli_shutdown_lock test_raeth_shutdown_rtnl test_watchdog_shutdown_lock test_nor_shutdown_watch test_kthread_stop_timeout test_raeth_k2p_thread_scope test_wireguard_verified_download; do
     test -f "$root/source/tests/$required_test.py"
   done
   for baseline_fixture in change_led_mode.c change_storm_control_broadcast.c change_jumbo_frames_accept.c \
@@ -179,6 +179,11 @@ if [ "$flavor" = "k2p-4.4" ]; then
     python3 -m unittest discover -s "$root/source/tests" -p test_nor_shutdown_watch.py -v \
     2>&1 | tee "$diagnostics/nor-shutdown-watch-target-tests.txt"
   python3 "$root/scripts/check_nor_shutdown_watch.py" --artifacts "$diagnostics" --write-report
+  K2P_KTHREAD_TIMEOUT_TARGET_CC="$toolchain/bin/mipsel-linux-uclibc-gcc" \
+  K2P_KTHREAD_TIMEOUT_TARGET_DIR="$diagnostics" \
+    python3 -m unittest discover -s "$root/source/tests" -p test_kthread_stop_timeout.py -v \
+    2>&1 | tee "$diagnostics/kthread-stop-timeout-target-tests.txt"
+  python3 "$root/scripts/check_kthread_stop_timeout.py" --artifacts "$diagnostics" --write-report
   K2P_LIFETIME_TARGET_CC="$toolchain/bin/mipsel-linux-uclibc-gcc" \
   K2P_LIFETIME_REPORT="$diagnostics/target-device-lifetime-execution.json" \
     python3 -m unittest discover -s "$root/source/tests" -p 'test_device_lifetime.py' -v \
@@ -676,6 +681,7 @@ if [ "$flavor" = "k2p-4.4" ]; then
   cp "$diagnostics/target-raeth-rtnl"* "$diagnostics/raeth-rtnl-target-tests.txt" "$dist/"
   cp "$diagnostics/target-wdt-shutdown-lock"* "$diagnostics/wdt-shutdown-lock-target-tests.txt" "$dist/"
   cp "$diagnostics/target-nor-shutdown-watch"* "$diagnostics/nor-shutdown-watch-target-tests.txt" "$dist/"
+  cp "$diagnostics/target-kthread-stop-timeout"* "$diagnostics/kthread-stop-timeout-target-tests.txt" "$dist/"
   cp "$diagnostics/target-storage-cache"* "$dist/"
   cp "$diagnostics/target-collector"* "$dist/"
   cp "$diagnostics/target-resident-upgrade.json" "$dist/"

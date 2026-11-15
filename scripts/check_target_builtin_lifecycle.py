@@ -589,7 +589,7 @@ COMPONENTS = {'raeth': {'paths': {'raeth': 'trunk/linux-4.4.x/drivers/net/ethern
               'source_only_functions': {'__platform_driver_register': 'platform',
                                         'device_shutdown': 'core',
                                         'kernel_restart_prepare': 'reboot'},
-              'model_data_sha256': '2901bf2a59ca81f8778637e98723860380aed23ea2f15bba76aea242e046b2f6',
+              'model_data_sha256': '735c939088e2001f79ecc7d21b5567c9d320bcc82f20976f4fc82def42265136',
               'model_variant': {'K2P_MT7621_builtin_tasklet_shutdown': True,
                                 'forced_WORKQ_NAPI_are_nonshipping_variants': True,
                                 'actual_platform_drv_shutdown_whole_executed': True,

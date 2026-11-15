@@ -13,7 +13,9 @@ class RaethRtnlGateTests(unittest.TestCase):
                   'test_real_shutdown_lock_interleavings_and_negative_control (case) ... ok\n'
                   'Ran 2 tests in 1.00s\n\nOK\n')
         (self.d/'raeth-rtnl-target-tests.txt').write_text(self.log)
-        (self.d/'target-raeth-rtnl.c').write_text('fixture source')
+        (self.d/'target-raeth-rtnl.c').write_text('#define CONFIG_K2P_RESET_GUARD 1\nfixture source')
+        (self.d/'target-raeth-rtnl-disabled.c').write_text('#undef CONFIG_K2P_RESET_GUARD\nfixture source')
+        (self.d/'target-raeth-rtnl-disabled.elf').write_bytes(b'fixture')
         (self.d/'target-raeth-rtnl.elf').write_bytes(b'fixture')
 
     def test_valid_and_incomplete_results(self):

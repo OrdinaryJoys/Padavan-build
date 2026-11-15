@@ -28,8 +28,13 @@ def inspect(directory):
     elf=(directory/'target-raeth-rtnl.elf').read_bytes()
     require(0<len(source)<=1024*1024,'Target source size')
     meta=inspect_elf(elf,2)
+    disabled_source=(directory/'target-raeth-rtnl-disabled.c').read_bytes()
+    disabled_elf=(directory/'target-raeth-rtnl-disabled.elf').read_bytes()
+    require(disabled_source == source.replace(b'#define CONFIG_K2P_RESET_GUARD 1', b'#undef CONFIG_K2P_RESET_GUARD', 1) and disabled_source != source, 'Guard-disabled source profile differs')
+    disabled_meta=inspect_elf(disabled_elf,2)
     return {'status':'PASS','tests':2,'source_sha256':hashlib.sha256(source).hexdigest(),
-            'elf_sha256':meta['sha256'],'log_sha256':hashlib.sha256(log).hexdigest()}
+            'elf_sha256':meta['sha256'],'disabled_source_sha256':hashlib.sha256(disabled_source).hexdigest(),
+            'disabled_elf_sha256':disabled_meta['sha256'],'log_sha256':hashlib.sha256(log).hexdigest()}
 
 
 def main():
